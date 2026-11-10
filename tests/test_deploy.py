@@ -11,7 +11,7 @@ OLD = "ghcr.io/example/pubmedgemini:old"
 NEW = "ghcr.io/example/pubmedgemini:new"
 ENV = f"POSTGRES_PASSWORD=dummy\nAPP_IMAGE={OLD}\nAPP_HOST=app.example.org\n"
 FAST = {"HEALTH_TRIES": "2", "HEALTH_INTERVAL": "0", "GATE_STABLE_INTERVAL": "0"}
-CLEAN = [".env", "backup.sh", "compose.yaml"]
+CLEAN = [".deploy.lock", ".env", "backup.sh", "compose.yaml"]  # the lock file is kept
 
 
 def _vps(tmp_path, env_text=ENV):
@@ -283,6 +283,70 @@ def test_stray_compose_copy_without_env_copy_is_discarded(tmp_path):
     r = _deploy(app, state, NEW, FAKE_UNHEALTHY_IMAGE=NEW)
     assert r.returncode != 0
     _assert_restored(app, state)
+
+
+# ---- one deploy at a time ----
+
+
+def test_a_second_deploy_while_one_is_running_is_refused_and_changes_nothing(tmp_path):
+    app, state = _vps(tmp_path)
+    env = _env(app, {"FAKE_BLOCK_ON": "pull"})
+    first = start_script("infra/deploy.sh", NEW, cwd=app, state=state, env=env,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        _wait_for(state / "blocked")
+        (app / ".deploy-tmp.inuse").write_text("the first deploy's\n")
+        names, env_now, calls = _names(app), (app / ".env").read_bytes(), docker_calls(state)
+        assert ".env.previous" in names  # the first one is mid-switch
+
+        second = _deploy(app, state, "ghcr.io/example/pubmedgemini:second")
+        assert second.returncode != 0
+        assert "another deploy is running" in second.stderr
+        assert len(second.stderr.strip().splitlines()) == 1
+        assert _names(app) == names  # nothing restored, nothing removed
+        assert (app / ".env").read_bytes() == env_now
+        assert docker_calls(state) == calls
+
+        (state / "release").write_text("")
+        _, err = first.communicate(timeout=30)
+    finally:
+        if first.poll() is None:
+            os.killpg(first.pid, signal.SIGKILL)
+    assert first.returncode == 0, err
+    assert (app / ".env").read_text() == ENV.replace(OLD, NEW)
+    assert (app / "compose.yaml").read_text() == "new compose\n"
+    assert _names(app) == CLEAN
+    assert _running(state) == NEW
+
+
+def test_a_lock_file_with_no_holder_does_not_block(tmp_path):
+    app, state = _vps(tmp_path)
+    (app / ".deploy.lock").write_text("left by an earlier deploy\n")
+    r = _deploy(app, state, NEW)
+    assert r.returncode == 0, r.stderr
+    assert _names(app) == CLEAN
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGKILL], ids=["TERM", "KILL"])
+def test_the_lock_is_released_however_a_deploy_ends(tmp_path, sig):
+    app, state = _vps(tmp_path)
+    code, _, _ = _interrupt(app, state, sig, "pull")
+    assert code != 0
+    (app / "compose.yaml.new").write_text("new compose\n")  # the workflow copies them again
+    (app / "backup.sh.new").write_text("new backup\n")
+    r = _deploy(app, state, NEW)
+    assert r.returncode == 0, r.stderr
+    assert (app / ".env").read_text() == ENV.replace(OLD, NEW)
+    assert _names(app) == CLEAN
+
+
+def test_workflow_queues_deploys_instead_of_running_two_at_once():
+    from pathlib import Path
+
+    import yaml
+
+    workflow = yaml.safe_load(Path(".github/workflows/deploy.yml").read_text())
+    assert workflow["concurrency"] == {"group": "deploy", "cancel-in-progress": False}
 
 
 # ---- the workflow's side ----

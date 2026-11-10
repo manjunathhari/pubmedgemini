@@ -10,6 +10,10 @@
 # starts the previous version again, removes its temporary files and exits non-zero.
 # backup.sh.new replaces backup.sh only after the new version is healthy.
 #
+# One deploy at a time: it holds an exclusive lock on APP_DIR/.deploy.lock from before it
+# looks at any earlier deploy's files until it exits, and a second deploy started meanwhile
+# exits non-zero without changing anything.
+#
 # If it was killed outright (no chance to clean up), .env.previous is still there at the
 # next run. That copy is complete by construction (written to a temporary file and moved
 # into place only after compose.yaml.previous), so the next run restores from it first and
@@ -28,6 +32,7 @@ handling=0  # 1 once a rollback or an interrupt is being handled
 new_image=""
 previous_image=""
 had_compose=0
+locked=0 # 1 once this run holds the lock; before that it must not touch any deploy file
 
 # Log to stderr. If stderr is gone (SSH dropped), send all further output to /dev/null
 # instead of dying on the write.
@@ -41,6 +46,7 @@ fail() {
 }
 
 cleanup_tmp() {
+  [ "$locked" = 1 ] || return 0
   rm -f .deploy-tmp.* 2>/dev/null || true
 }
 
@@ -216,6 +222,16 @@ if [ ! -r .env ] || [ ! -w .env ]; then
 fi
 [ -w . ] || fail "$APP_DIR cannot be written by $me"
 [ -f compose.yaml.new ] || fail "compose.yaml.new is missing; the workflow copies it first"
+
+# ---- one deploy at a time ----
+
+# Held on fd 9 for the life of the script; the kernel drops it when the last copy of fd 9
+# closes, however the script ends (even if killed outright). The file is kept: with no
+# holder, its presence alone never blocks.
+command -v flock >/dev/null 2>&1 || fail "flock is not installed (it is part of util-linux)"
+exec 9>>.deploy.lock || fail "cannot open $APP_DIR/.deploy.lock"
+flock -n 9 || fail "another deploy is running in $APP_DIR; nothing was changed, try again when it ends"
+locked=1
 
 # ---- an earlier deploy that was killed outright: go back to its saved state first ----
 
