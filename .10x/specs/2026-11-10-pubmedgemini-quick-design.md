@@ -56,6 +56,7 @@ Figures from a third-party page dated 19 Oct 2026 that cites Google AI Studio. G
 | `db` | Postgres 17 | `app` only. No published port |
 
 - Traefik, already on the VPS, terminates HTTPS and routes the web address to `gate`.
+- `gate` is pinned to oauth2-proxy v7.15.6 or later and has no skip-auth rules: every path needs sign-in through it. `/healthz` is called without sign-in only by the app container's own healthcheck, inside the internal network.
 - The app reads the signed-in email from the header `gate` sets. It is safe to trust because nothing else can reach `app`.
 - A user who passes Google sign-in but is not in the `users` table sees "You haven't been set up yet. Ask the owner to add you."
 
@@ -69,7 +70,7 @@ Figures from a third-party page dated 19 Oct 2026 that cites Google AI Studio. G
 
 **Logs.** Question text, search queries, abstracts and model replies are never written to logs. Logs hold counts and fixed kinds only, as in Incisive. The question and the answer are stored only in Postgres, so the owner can reopen past runs.
 
-**Deploy.** Work happens on branches and pull requests. Nothing is merged without the owner's explicit "merge it". On merge to `main`, GitHub Actions runs the tests, builds the image, pushes it to GitHub's container registry, then connects to the VPS with a deploy-only SSH key and runs `docker compose pull && docker compose up -d`. Rollback is the same command with the previous image tag.
+**Deploy.** Work happens on branches and pull requests. Nothing is merged without the owner's explicit "merge it". On merge to `main`, GitHub Actions runs the tests, builds the image, pushes it to GitHub's container registry, then connects to the VPS with a deploy-only SSH key and runs `infra/deploy.sh <image>`. That script switches `.env` and `compose.yaml`, then waits until the app is healthy on the new image and the gate is running steadily; if not, or if it is interrupted, it restores both files, brings the previous version back up and fails the deploy. A manual rollback is in `infra/README.md`.
 
 **Backups.** A nightly `pg_dump` on the VPS, keeping the last 7 days.
 
@@ -150,6 +151,8 @@ Plain HTML: headings, paragraphs, simple lists and one table style for outcomes.
 | No papers found | Ends the run "done" | "No relevant evidence found." |
 | App restarts mid-run | Marks the run "stopped" | "This run was stopped. Run again?" |
 | Out of time before the writer | Ends "partial" | The references, with a line saying the answer could not be written in time |
+| Database down, or start-up work (migrations, owner row) failed | `/healthz` answers 503 `database_unreachable` or `not_ready` (200 `ok` when ready); retries start-up at most every 5 s | "The database could not be reached..." or "The app could not finish starting..." |
+| A deploy's new version is not healthy, or the deploy is interrupted | `infra/deploy.sh` restores the previous `.env` and `compose.yaml` and starts the previous version | The previous version; the GitHub deploy shows as failed |
 
 ## 9. Stages
 
