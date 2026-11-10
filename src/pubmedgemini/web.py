@@ -1,6 +1,8 @@
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import psycopg
 from fastapi import APIRouter, Depends, FastAPI, Form, Request
@@ -25,6 +27,7 @@ NOT_SET_UP = (
 DB_DOWN = "The database could not be reached. Please try again in a minute."
 NOT_READY = "The app could not finish starting. Please try again in a minute."
 BOTH_DOWN = "PubMed and Europe PMC could not be reached. Please try again in a minute."
+CROSS_SITE = "This request did not come from this page. Open the page and search again."
 INTERNAL_ERROR = "Something went wrong. Please try again in a minute."
 SOURCE_NAMES = {"pubmed": "PubMed", "europepmc": "Europe PMC"}
 
@@ -35,6 +38,48 @@ class NotReady(Exception):
     def __init__(self, kind: str | None):
         super().__init__(kind)
         self.kind = kind
+
+
+class CrossSite(Exception):
+    """A form post another site made the browser send."""
+
+
+def _host_key(host: str) -> str:
+    """A host for comparing: lower case, without a default port (80 or 443)."""
+    h = host.strip().lower()
+    for port in (":443", ":80"):
+        if h.endswith(port):
+            return h[: -len(port)]
+    return h
+
+
+def is_cross_site(headers: Mapping[str, str]) -> bool:
+    """True only on positive evidence that another site sent this request, so no same-site
+    post is ever refused. `Sec-Fetch-Site` decides when present ("cross-site" only;
+    "same-origin", "same-site" and "none" are fine). Without it, an `Origin` whose host
+    differs from the request's own (`X-Forwarded-Host`, else `Host`). Neither header (old
+    browsers, curl), an Origin with no host ("null"), or no own host: allowed."""
+    site = headers.get("sec-fetch-site")
+    if site is not None:
+        return site.strip().lower() == "cross-site"
+    origin = headers.get("origin")
+    if origin is None:
+        return False
+    try:
+        origin_host = urlsplit(origin.strip()).netloc
+    except ValueError:
+        return False
+    own = (headers.get("x-forwarded-host") or "").split(",")[0] or headers.get("host") or ""
+    if not origin_host or not own.strip():
+        return False
+    return _host_key(origin_host) != _host_key(own)
+
+
+def refuse_cross_site(request: Request) -> None:
+    """FastAPI dependency, run before anything else on a form post."""
+    if is_cross_site(request.headers):
+        log.info("search kind=refused_cross_site")  # no header values
+        raise CrossSite
 
 
 def _message(request: Request, text: str, status_code: int) -> HTMLResponse:
@@ -113,7 +158,11 @@ def _log_search(result: PageResult) -> None:
     )
 
 
-@router.post("/search", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
+@router.post(
+    "/search",
+    response_class=HTMLResponse,
+    dependencies=[Depends(refuse_cross_site), Depends(require_ready)],
+)
 def search(
     request: Request,
     user: Annotated[User, Depends(current_user)],
@@ -162,6 +211,10 @@ def register(app: FastAPI) -> None:
     @app.exception_handler(NotSetUp)
     def not_set_up(request: Request, exc: NotSetUp):
         return _message(request, NOT_SET_UP, 403)
+
+    @app.exception_handler(CrossSite)
+    def cross_site(request: Request, exc: CrossSite):
+        return _message(request, CROSS_SITE, 403)
 
     @app.exception_handler(NotReady)
     def not_ready(request: Request, exc: NotReady):

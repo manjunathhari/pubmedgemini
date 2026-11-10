@@ -494,3 +494,66 @@ def test_efetch_failure_with_every_abstract_shown_has_no_titles_only_line(client
     assert sent_to(up, "efetch.fcgi")  # the fetch was tried and failed
     assert "No abstract available." not in r.text
     assert TITLES_ONLY not in r.text
+
+
+# ---------- cross-site form posts (review finding G) ----------
+
+CROSS_SITE = "This request did not come from this page. Open the page and search again."
+
+
+@pytest.mark.parametrize(("headers", "refused"), [
+    ({}, False),  # old browsers, tests, curl
+    ({"sec-fetch-site": "cross-site"}, True),
+    ({"sec-fetch-site": "Cross-Site"}, True),
+    ({"sec-fetch-site": "same-origin"}, False),
+    ({"sec-fetch-site": "same-site"}, False),
+    ({"sec-fetch-site": "none"}, False),
+    # Sec-Fetch-Site decides when present, whatever Origin says
+    ({"sec-fetch-site": "same-origin", "origin": "https://evil.example", "host": "app.test"}, False),
+    ({"sec-fetch-site": "cross-site", "origin": "https://app.test", "host": "app.test"}, True),
+    # no Sec-Fetch-Site: Origin against the request's own host
+    ({"origin": "https://app.test", "host": "app.test"}, False),
+    ({"origin": "https://APP.test", "host": "app.TEST"}, False),
+    ({"origin": "https://app.test", "host": "app.test:443"}, False),
+    ({"origin": "http://app.test", "host": "app.test:80"}, False),
+    ({"origin": "https://app.test:8443", "host": "app.test"}, True),
+    ({"origin": "https://evil.example", "host": "app.test"}, True),
+    ({"origin": "https://app.test", "host": "app:8000", "x-forwarded-host": "app.test"}, False),
+    ({"origin": "https://app.test", "host": "app.test", "x-forwarded-host": "other.test"}, True),
+    ({"origin": "https://app.test", "host": "x", "x-forwarded-host": "app.test, proxy.test"}, False),
+    ({"origin": "null", "host": "app.test"}, False),  # no host to compare: not evidence
+    ({"origin": "https://app.test"}, False),  # no own host to compare
+    ({"host": "app.test"}, False),
+])
+def test_is_cross_site(headers, refused):
+    from pubmedgemini.web import is_cross_site
+
+    assert is_cross_site(headers) is refused
+
+
+@pytest.mark.parametrize("headers", [
+    {"sec-fetch-site": "cross-site"},
+    {"origin": "https://evil.example"},
+])
+def test_cross_site_post_is_refused_before_anything_is_sent(client_search, upstream, caplog,
+                                                            headers):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    r = client_search.post("/search", data={"q": "zq7 mesh"}, headers=H | headers)
+    assert r.status_code == 403 and CROSS_SITE in r.text and upstream.sent == []
+    assert "zq7" not in r.text
+    lines = [x.getMessage() for x in caplog.records if x.getMessage().startswith("search ")]
+    assert lines == ["search kind=refused_cross_site"]
+    assert "evil" not in caplog.text and "cross-site" not in caplog.text
+
+
+@pytest.mark.parametrize("headers", [
+    {"sec-fetch-site": "same-origin", "origin": "http://testserver"},
+    {"sec-fetch-site": "none"},
+    {"origin": "http://testserver"},
+    {},
+])
+def test_same_site_post_is_served(client_search, headers):
+    r = client_search.post("/search", data={"q": "mesh"}, headers=H | headers)
+    assert r.status_code == 200 and BOTH_SEARCHED in r.text
