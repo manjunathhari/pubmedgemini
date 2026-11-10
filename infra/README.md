@@ -65,7 +65,7 @@ Do not edit that file.
 docker network inspect <TRAEFIK_NETWORK> --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'
 ```
 
-It prints one or more ranges such as `172.18.0.0/16`. Write it down as
+It prints one or more ranges, each written as `<address>/<size>`. Write it down as
 `TRAEFIK_SUBNET`; if it prints more than one, join them with a comma and no
 spaces. The gate trusts the forwarded headers only from this range.
 
