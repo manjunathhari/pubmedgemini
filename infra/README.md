@@ -207,6 +207,8 @@ gh secret set VPS_USER
 The plan keeps `.env` owned by root, so this user is root in practice. If you
 would rather use a separate user, tell me before you start; it changes step 3.
 
+**Deploy account: awaiting the owner's decision.**
+
 ### Step 6. Let the VPS pull the image
 
 6a. In GitHub, make a token that can only read packages: Settings, Developer
@@ -218,72 +220,107 @@ settings, Personal access tokens (classic), tick only `read:packages`.
 docker login ghcr.io -u <GITHUB_USER>
 ```
 
-### Step 7. Firewall (your choice; skip if you prefer)
+### Step 7. Firewall (optional: your choice, not required)
 
-This keeps only ports 22, 80 and 443 open. Turning it on is your decision.
-The order below allows SSH first, so you cannot lock yourself out.
+Nothing in this setup needs this step. Skip it unless you want it. If you are
+unsure, skip it and ask me.
 
-7a. On the VPS, check which port SSH really uses (this should be 22):
+7a. On the VPS, list what is listening now and write down every port:
+
+```
+ss -tlnp
+```
+
+Anything listed there other than SSH, 80 and 443 that is used from outside
+would be blocked by the firewall below.
+
+7b. In Hostinger's VPS panel, open its own Firewall page and look at what it
+already allows or blocks. If it already filters traffic, you may not need this
+step at all. Tell me what both 7a and 7b show before you go on.
+
+7c. If you decide to go ahead: check which port SSH really uses (this should
+be 22):
 
 ```
 ss -tlnp | grep sshd
 ```
 
-If it shows a different port, stop here and tell me. Use that port in 7b.
+If it shows a different port, stop here and tell me. Use that port in 7d.
 
-7b. Allow SSH first:
+7d. Allow SSH first, so you cannot lock yourself out:
 
 ```
 ufw allow 22/tcp
 ```
 
-7c. Allow web traffic:
+7e. Allow web traffic:
 
 ```
 ufw allow 80/tcp
 ```
 
-7d. Allow secure web traffic:
+7f. Allow secure web traffic:
 
 ```
 ufw allow 443/tcp
 ```
 
-7e. Read the list before you turn it on. It must show 22, 80 and 443:
+7g. Read the list before you turn it on. It must show 22, 80 and 443:
 
 ```
 ufw show added
 ```
 
-7f. Turn it on (only now):
+7h. Turn it on (only now):
 
 ```
 ufw enable
 ```
 
-7g. Open a second terminal and log in to the VPS again. If that works, you are
+7i. Open a second terminal and log in to the VPS again. If that works, you are
 safe. If it does not, in the first terminal run `ufw disable`.
 
 ```
 ssh <VPS_USER>@<VPS_ADDRESS>
 ```
 
-Note: other services on the VPS that use other ports will be blocked by this
-firewall. Docker's own published ports can bypass it. Check before you turn it
-on.
+Note: Docker's own published ports can bypass this firewall.
 
 ### Step 8. Nightly backup
 
-02:30 IST is 21:00 UTC. The VPS clock is usually UTC.
+The backup should run at 02:30 IST. Cron uses the VPS clock's time zone, so
+check that first.
 
-On the VPS:
+8a. On the VPS, look at the `Time zone:` line:
+
+```
+timedatectl
+```
+
+8b. Run only the one line below that matches what 8a showed.
+
+If it shows `Etc/UTC` or `UTC` (02:30 IST is 21:00 UTC the evening before):
 
 ```
 echo '0 21 * * * root /opt/pubmedgemini/backup.sh >> /var/log/pubmedgemini-backup.log 2>&1' > /etc/cron.d/pubmedgemini
 ```
 
+If it shows `Asia/Kolkata`:
+
+```
+echo '30 2 * * * root /opt/pubmedgemini/backup.sh >> /var/log/pubmedgemini-backup.log 2>&1' > /etc/cron.d/pubmedgemini
+```
+
+If it shows anything else, stop and tell me what it shows.
+
+8c. Check the line is in place:
+
+```
+cat /etc/cron.d/pubmedgemini
+```
+
 `backup.sh` arrives on the VPS with the first deploy. The first backup runs the
-night after that. It keeps 7 days in `/var/backups/pubmedgemini/`.
+night after that. It keeps the last 7 daily dumps in `/var/backups/pubmedgemini/`.
 
 ### Step 9. Check it works
 
@@ -372,17 +409,25 @@ ls -l /var/backups/pubmedgemini/
 BACKUP_DIR=/var/backups/pubmedgemini-before-restore ./backup.sh
 ```
 
+**Stop here unless the previous step printed `backup ok`.** Without that copy
+there is no way back. Tell me what it printed instead.
+
 4. Stop the app and the gate (the database keeps running):
 
 ```
 docker compose stop gate app
 ```
 
-5. Restore. Replace `<DATE>` with the date of the file you picked:
+5. Restore. Replace `<DATE>` with the date of the file you picked. It runs as
+one transaction and stops at the first error, so it either applies fully or
+changes nothing:
 
 ```
-docker compose exec -T db pg_restore -U postgres -d postgres --clean --if-exists < /var/backups/pubmedgemini/<DATE>.dump
+docker compose exec -T db pg_restore -U postgres -d postgres --clean --if-exists --single-transaction --exit-on-error < /var/backups/pubmedgemini/<DATE>.dump
 ```
+
+If it prints any error, the data is as it was before step 5. Go on to step 6
+to start the app again, and tell me the error.
 
 6. Start them again:
 
