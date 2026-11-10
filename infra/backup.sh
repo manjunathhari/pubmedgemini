@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Nightly Postgres dump. Keeps 7 days. Exits non-zero if the dump is empty.
+# Nightly Postgres dump. Keeps the last 7 daily dumps. Exits non-zero if the dump is empty.
 set -euo pipefail
+# Dumps hold user data: files 600, folder 700.
+umask 077
 
 COMPOSE_DIR="${COMPOSE_DIR:-/opt/pubmedgemini}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/pubmedgemini}"
+KEEP=7
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 cd "$COMPOSE_DIR"
 
 out="$BACKUP_DIR/$(date +%F).dump"
@@ -20,5 +24,11 @@ if [ ! -s "$tmp" ]; then
 fi
 
 mv "$tmp" "$out"
-find "$BACKUP_DIR" -name '*.dump' -type f -mtime +7 -delete
+
+# Names are YYYY-MM-DD.dump, so the glob lists them oldest first.
+shopt -s nullglob
+dumps=("$BACKUP_DIR"/????-??-??.dump)
+if [ "${#dumps[@]}" -gt "$KEEP" ]; then
+  rm -f -- "${dumps[@]:0:${#dumps[@]}-KEEP}"
+fi
 echo "backup ok: $out"

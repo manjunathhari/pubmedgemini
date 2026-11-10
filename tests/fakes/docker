@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# A fake docker for the shell-script tests. Records each call, one per line, in
+# $FAKE_DOCKER_LOG. Keeps what is "running" in $FAKE_DOCKER_STATE. Told to fail with:
+#   FAKE_FAIL_PULL=1        docker compose pull fails
+#   FAKE_FAIL_UP=1          docker compose up fails
+#   FAKE_UNHEALTHY_IMAGE=x  an app container running image x reports "unhealthy"
+#   FAKE_GATE_DOWN=1        the gate container is not running
+#   FAKE_DUMP_EMPTY=1       pg_dump writes nothing
+set -u
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+state="$FAKE_DOCKER_STATE"
+
+case "$*" in
+  "compose exec -T db pg_dump"*)
+    [ "${FAKE_DUMP_EMPTY:-}" = 1 ] || printf 'PGDMP fake dump\n'
+    exit 0 ;;
+  "compose pull"*)
+    [ "${FAKE_FAIL_PULL:-}" = 1 ] && exit 1
+    exit 0 ;;
+  "compose up -d"*)
+    [ "${FAKE_FAIL_UP:-}" = 1 ] && exit 1
+    sed -n 's/^APP_IMAGE=//p' .env | tail -n 1 > "$state/running_image"
+    exit 0 ;;
+  "compose ps -q app")
+    [ -s "$state/running_image" ] && echo fake-app-id
+    exit 0 ;;
+  "compose ps -q gate")
+    echo fake-gate-id
+    exit 0 ;;
+esac
+
+if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
+  format="$3" id="$4"
+  running="$(cat "$state/running_image" 2>/dev/null || true)"
+  case "$id:$format" in
+    fake-app-id:*Config.Image*) echo "$running" ;;
+    fake-app-id:*Health*)
+      if [ -n "${FAKE_UNHEALTHY_IMAGE:-}" ] && [ "$running" = "$FAKE_UNHEALTHY_IMAGE" ]; then
+        echo unhealthy
+      else
+        echo healthy
+      fi ;;
+    fake-gate-id:*State.Running*)
+      if [ "${FAKE_GATE_DOWN:-}" = 1 ]; then echo false; else echo true; fi ;;
+    *) echo "fake docker: unknown inspect $id $format" >&2; exit 1 ;;
+  esac
+  exit 0
+fi
+
+echo "fake docker: unexpected call: $*" >&2
+exit 1
