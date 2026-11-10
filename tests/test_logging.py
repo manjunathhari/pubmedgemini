@@ -84,3 +84,14 @@ def test_configuring_logging_twice_adds_one_handler(settings_prod):
     assert app_log.level == std_logging.INFO and len(app_log.handlers) == 1
     for name in ("psycopg", "psycopg.pool"):
         assert std_logging.getLogger(name).getEffectiveLevel() > std_logging.CRITICAL
+
+
+def test_httpx_loggers_are_silenced(settings_prod):  # Review Focus 2
+    from pubmedgemini.main import create_app
+
+    create_app(settings_prod)
+    # httpx logs every request URL (with its query string, the NCBI key included) at INFO.
+    for name in ("httpx", "httpcore", "httpcore.http11", "httpcore.connection"):
+        assert logging.getLogger(name).getEffectiveLevel() > logging.CRITICAL, name
+    for name in ("httpx", "httpcore"):
+        assert logging.getLogger(name).propagate is False, name

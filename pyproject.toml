@@ -12,10 +12,12 @@ dependencies = [
     "jinja2",
     "psycopg[binary,pool]",
     "pydantic-settings",
+    "httpx",
+    "python-multipart",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "httpx", "ruff", "pyyaml"]
+dev = ["pytest", "ruff", "pyyaml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -79,3 +79,25 @@ def test_import_with_owner_email_unset_does_not_print_the_password():
     assert "OWNER_EMAIL" in out
     for leak in ("Sekr3tPw_q9", "madeuprole_q9", "input_value"):
         assert leak not in out, leak
+
+
+def test_ncbi_settings_are_optional(monkeypatch):
+    monkeypatch.delenv("NCBI_API_KEY", raising=False)
+    monkeypatch.delenv("NCBI_EMAIL", raising=False)
+    s = load_settings()
+    assert (s.ncbi_api_key, s.ncbi_email) == (None, None)
+
+
+def test_blank_ncbi_settings_are_none(monkeypatch):
+    """What compose passes when the names are unset in .env."""
+    monkeypatch.setenv("NCBI_API_KEY", "")
+    monkeypatch.setenv("NCBI_EMAIL", "  ")
+    s = load_settings()
+    assert (s.ncbi_api_key, s.ncbi_email) == (None, None)
+
+
+def test_ncbi_key_is_never_shown(monkeypatch):
+    monkeypatch.setenv("NCBI_API_KEY", "k-q7-secret")
+    s = load_settings()
+    assert "k-q7-secret" not in repr(s) and "k-q7-secret" not in str(s)
+    assert s.ncbi_api_key.get_secret_value() == "k-q7-secret"

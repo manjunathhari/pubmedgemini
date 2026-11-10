@@ -5,9 +5,11 @@ APP_LOGGER = "pubmedgemini"
 HANDLER_NAME = "pubmedgemini-stderr"
 FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 
-# Their messages carry libpq text (host, port, role name). The app logs its own fixed kinds
-# (db_unreachable, migration_failed, db_error) instead.
-QUIET_LOGGERS = ("psycopg", "psycopg.pool")
+# psycopg's messages carry libpq text (host, port, role name). The app logs its own fixed kinds
+# (db_unreachable, migration_failed, db_error) instead. httpx logs every request URL at INFO,
+# query string included (the search text and the NCBI key), and httpcore logs connection
+# details at DEBUG; the literature client logs counts and fixed kinds instead.
+QUIET_LOGGERS = ("psycopg", "psycopg.pool", "httpx", "httpcore")
 
 
 class _StderrHandler(logging.StreamHandler):
@@ -26,7 +28,7 @@ class _StderrHandler(logging.StreamHandler):
 
 
 def configure_logging() -> None:
-    """The app's logger at INFO with one stderr handler; psycopg silenced. Safe to call again."""
+    """The app's logger at INFO with one stderr handler; QUIET_LOGGERS silenced. Safe to call again."""
     app_log = logging.getLogger(APP_LOGGER)
     app_log.setLevel(logging.INFO)
     if not any(h.get_name() == HANDLER_NAME for h in app_log.handlers):

@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import ValidationError, field_validator
+from pydantic import SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -16,6 +16,17 @@ class Settings(BaseSettings):
     database_url: str
     owner_email: str
     migrations_dir: Path = Path("migrations")
+    # Optional. NCBI allows 10 requests a second with a key, 3 without.
+    ncbi_api_key: SecretStr | None = None
+    ncbi_email: str | None = None
+
+    @field_validator("ncbi_api_key", "ncbi_email", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value: object) -> object:
+        """Compose passes an empty value when the name is unset in .env."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("database_url", "owner_email")
     @classmethod
