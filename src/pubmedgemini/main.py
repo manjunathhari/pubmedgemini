@@ -12,6 +12,7 @@ from pubmedgemini import web
 from pubmedgemini.config import Settings, load_settings
 from pubmedgemini.db import is_healthy, open_pool
 from pubmedgemini.identity import ensure_owner
+from pubmedgemini.lit.cache import prune as prune_paper_cache
 from pubmedgemini.logging_setup import configure_logging
 from pubmedgemini.migrate import apply_migrations
 from pubmedgemini.web import NotReady
@@ -43,7 +44,21 @@ def create_app(
     def start_up_work(app: FastAPI) -> None:
         apply_migrations(app.state.pool, settings.migrations_dir)
         ensure_owner(app.state.pool, settings.owner_email)
+        prune_once(app)
         app.state.ready = True
+
+    def prune_once(app: FastAPI) -> None:
+        """Old cached papers go at each start (the app restarts on every deploy). A failed
+        prune is logged and start-up carries on: the cache is not needed to serve."""
+        try:
+            pruned = prune_paper_cache(app.state.pool)
+        except psycopg.Error as exc:
+            sqlstate = getattr(exc, "sqlstate", None) or "none"
+            log.warning(
+                "paper_cache kind=prune_failed error=%s sqlstate=%s", type(exc).__name__, sqlstate
+            )
+        else:
+            log.info("paper_cache pruned=%d", pruned)
 
     def try_start_up(app: FastAPI) -> bool:
         """Run the start-up work once. Logs a fixed kind on failure, never the exception text."""

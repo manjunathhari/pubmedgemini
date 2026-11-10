@@ -40,6 +40,23 @@ def test_real_migrations_create_users(pool):
     assert table_exists(pool, "users")
 
 
+def test_real_migrations_create_papers(pool):
+    apply_migrations(pool, Path("migrations"))
+    assert table_exists(pool, "papers")
+    with pool.connection() as conn:
+        cols = conn.execute(
+            "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
+            "WHERE table_name = 'papers' ORDER BY ordinal_position"
+        ).fetchall()
+    assert cols == [
+        ("pmid", "text", "NO"), ("pmcid", "text", "YES"), ("doi", "text", "YES"),
+        ("title", "text", "NO"), ("authors", "ARRAY", "NO"), ("journal", "text", "YES"),
+        ("year", "integer", "YES"), ("pub_types", "ARRAY", "NO"), ("design", "text", "NO"),
+        ("abstract", "text", "YES"), ("retracted", "boolean", "NO"),
+        ("fetched_at", "timestamp with time zone", "NO"),
+    ]
+
+
 def test_users_email_must_be_lower_and_trimmed(pool):
     apply_migrations(pool, Path("migrations"))
     with pool.connection() as conn, pytest.raises(psycopg.errors.CheckViolation):
