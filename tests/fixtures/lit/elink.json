@@ -1,0 +1,42 @@
+{
+ "header": {
+  "type": "elink",
+  "version": "0.3"
+ },
+ "linksets": [
+  {
+   "dbfrom": "pubmed",
+   "ids": [
+    "31482863"
+   ],
+   "linksetdbs": [
+    {
+     "dbto": "pubmed",
+     "linkname": "pubmed_pubmed",
+     "links": [
+      {
+       "id": "24736447",
+       "score": 35021823
+      },
+      {
+       "id": "28130603",
+       "score": 34638521
+      },
+      {
+       "id": "31353033",
+       "score": 34431362
+      },
+      {
+       "id": "31022677",
+       "score": 33943687
+      },
+      {
+       "id": "23292669",
+       "score": 33867759
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

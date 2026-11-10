@@ -1,0 +1,138 @@
+{
+ "header": {
+  "type": "esummary",
+  "version": "0.3"
+ },
+ "result": {
+  "uids": [
+   "36262096",
+   "33763744",
+   "31696731",
+   "999999999"
+  ],
+  "36262096": {
+   "uid": "36262096",
+   "pubdate": "2023 Sep",
+   "epubdate": "2022 Oct 19",
+   "source": "ANZ J Surg",
+   "authors": [
+    {
+     "name": "Demetriou G",
+     "authtype": "Author"
+    },
+    {
+     "name": "Ahmad MS",
+     "authtype": "Author"
+    },
+    {
+     "name": "Robinson SJ",
+     "authtype": "Author"
+    }
+   ],
+   "title": "Laparoscopic mesh placement during inguinal hernia repair: a meta-analysis of two methods of repair.",
+   "fulljournalname": "ANZ journal of surgery",
+   "pubtype": [
+    "Meta-Analysis",
+    "Systematic Review",
+    "Journal Article"
+   ],
+   "articleids": [
+    {
+     "idtype": "pubmed",
+     "value": "36262096"
+    },
+    {
+     "idtype": "doi",
+     "value": "10.1111/ans.18124"
+    }
+   ]
+  },
+  "33763744": {
+   "uid": "33763744",
+   "pubdate": "2022 Feb",
+   "epubdate": "2021 Mar 24",
+   "source": "Surg Endosc",
+   "authors": [
+    {
+     "name": "Forester B",
+     "authtype": "Author"
+    },
+    {
+     "name": "Attaar M",
+     "authtype": "Author"
+    },
+    {
+     "name": "Lach M",
+     "authtype": "Author"
+    }
+   ],
+   "title": "Inguinal hernia mesh is safe in 1720 patients.",
+   "fulljournalname": "Surgical endoscopy",
+   "pubtype": [
+    "Journal Article"
+   ],
+   "articleids": [
+    {
+     "idtype": "pubmed",
+     "value": "33763744"
+    },
+    {
+     "idtype": "doi",
+     "value": "10.1007/s00464-021-08442-w"
+    },
+    {
+     "idtype": "pii",
+     "value": "10.1007/s00464-021-08442-w"
+    }
+   ]
+  },
+  "31696731": {
+   "uid": "31696731",
+   "pubdate": "2020 Feb",
+   "epubdate": "2019 Nov 7",
+   "source": "Ann R Coll Surg Engl",
+   "authors": [
+    {
+     "name": "Prodromidou A",
+     "authtype": "Author"
+    },
+    {
+     "name": "Machairas N",
+     "authtype": "Author"
+    },
+    {
+     "name": "Garoufalia Z",
+     "authtype": "Author"
+    }
+   ],
+   "title": "<script>alert(1)</script> Mesh repair",
+   "fulljournalname": "Annals of the Royal College of Surgeons of England",
+   "pubtype": [
+    "Journal Article",
+    "Systematic Review"
+   ],
+   "articleids": [
+    {
+     "idtype": "pubmed",
+     "value": "31696731"
+    },
+    {
+     "idtype": "pmc",
+     "value": "PMC6996425"
+    },
+    {
+     "idtype": "pmcid",
+     "value": "pmc-id: PMC6996425;"
+    },
+    {
+     "idtype": "doi",
+     "value": "10.1308/rcsann.2019.0137"
+    }
+   ]
+  },
+  "999999999": {
+   "uid": "999999999",
+   "error": "cannot get document summary"
+  }
+ }
+}
