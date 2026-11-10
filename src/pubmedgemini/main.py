@@ -4,6 +4,7 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
+import httpx
 import psycopg
 from fastapi import FastAPI
 from psycopg_pool import ConnectionPool, PoolTimeout
@@ -13,11 +14,16 @@ from pubmedgemini.config import Settings, load_settings
 from pubmedgemini.db import is_healthy, open_pool
 from pubmedgemini.identity import ensure_owner
 from pubmedgemini.lit.cache import prune as prune_paper_cache
+from pubmedgemini.lit.europepmc import EuropePmc
+from pubmedgemini.lit.http import LitClient, NcbiPacer, ncbi_min_interval
+from pubmedgemini.lit.pubmed import PubMed
+from pubmedgemini.lit.tools import LitTools
 from pubmedgemini.logging_setup import configure_logging
 from pubmedgemini.migrate import apply_migrations
 from pubmedgemini.web import NotReady
 
 log = logging.getLogger("pubmedgemini.main")
+lit_log = logging.getLogger("pubmedgemini.lit")
 
 # After a failed start-up attempt, requests get 503 at once for this long instead of each
 # waiting for the pool's connect timeout.
@@ -36,8 +42,12 @@ def _failure_kind(pool: ConnectionPool, exc: psycopg.Error) -> str:
 
 
 def create_app(
-    settings: Settings, clock: Callable[[], float] = time.monotonic
+    settings: Settings,
+    clock: Callable[[], float] = time.monotonic,
+    lit_transport: httpx.BaseTransport | None = None,
+    ncbi_gap_seconds: float | None = None,
 ) -> FastAPI:
+    """The app. Tests pass a fake `lit_transport` (no network) and an NCBI gap of 0."""
     configure_logging()
     state_lock = threading.Lock()
 
@@ -77,14 +87,27 @@ def create_app(
         app.state.next_attempt_at = clock() + RETRY_BACKOFF_SECONDS
         return False
 
+    def open_literature(app: FastAPI) -> LitClient:
+        """One NCBI pacer and one client for the whole process (one Uvicorn worker)."""
+        key = settings.ncbi_api_key.get_secret_value() if settings.ncbi_api_key else None
+        gap = ncbi_gap_seconds if ncbi_gap_seconds is not None else ncbi_min_interval(bool(key))
+        client = LitClient(lit_transport, pacer=NcbiPacer(gap))
+        pubmed = PubMed(client, key, settings.ncbi_email)
+        app.state.lit = LitTools(pubmed, EuropePmc(client), app.state.pool)
+        # Whether a key is set, never the key or the email (Incisive `main.rs`).
+        lit_log.info("literature ncbi_api_key=%s", "true" if key else "false")
+        return client
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.pool = open_pool(settings.database_url)
         app.state.ready = False
+        lit_client = open_literature(app)
         try_start_up(app)
         try:
             yield
         finally:
+            lit_client.close()
             app.state.pool.close()
 
     app = FastAPI(

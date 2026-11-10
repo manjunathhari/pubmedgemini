@@ -93,6 +93,18 @@ def client_dev(db_url):
         yield c
 
 
+def search_client(db_url, up, **settings_extra):
+    """A dev-mode app whose literature client talks to `up`, with no NCBI pacing."""
+    settings = Settings(app_env="dev", database_url=db_url, owner_email=OWNER, **settings_extra)
+    return TestClient(create_app(settings, lit_transport=up.transport, ncbi_gap_seconds=0))
+
+
+@pytest.fixture
+def client_search(db_url, upstream):
+    with search_client(db_url, upstream) as c:
+        yield c
+
+
 @pytest.fixture
 def client_db_down():
     settings = Settings(app_env="prod", database_url=UNREACHABLE_URL, owner_email=OWNER)

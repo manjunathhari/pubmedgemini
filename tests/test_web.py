@@ -15,7 +15,7 @@ def test_home_shows_signed_in_email(client_dev):
     r = client_dev.get("/", headers={"x-dev-user-email": "owner@example.com"})
     assert r.status_code == 200 and "Signed in as owner@example.com" in r.text
     assert "pubmedgemini" in r.text
-    assert "Search and answers arrive in the next stages." in r.text
+    assert "Answers written from these papers arrive in the next stages." in r.text
 
 
 def test_home_matches_gate_email_in_any_case_and_spaces(client_prod):  # Review Focus 3

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>pubmedgemini</h1>
+<p>Signed in as {{ email }}</p>
+{% include "_search_form.html" %}
+{% if rejected %}
+<p>{{ rejected }}</p>
+{% else %}
+<p>{{ status_line }}</p>
+<p>{{ counts_line }}</p>
+{% if result.abstracts_failed %}
+<p>Abstracts could not be fetched just now; titles only.</p>
+{% endif %}
+{% for paper in result.papers %}
+<article>
+<h2>{{ paper.title }}</h2>
+<p>{{ paper.facts }}</p>
+{% if paper.pub_types %}
+<p>Publication types: {{ paper.pub_types|join(", ") }}</p>
+{% endif %}
+{% if paper.pmid %}
+<p><a href="https://pubmed.ncbi.nlm.nih.gov/{{ paper.pmid }}/">PMID {{ paper.pmid }}</a></p>
+{% elif paper.doi %}
+<p><a href="https://doi.org/{{ paper.doi|urlencode }}">DOI {{ paper.doi }}</a></p>
+{% endif %}
+{% if paper.retracted %}
+<p><strong>Retracted</strong></p>
+{% endif %}
+{% for para in paper.paragraphs %}
+<p>{{ para }}</p>
+{% else %}
+<p>No abstract available.</p>
+{% endfor %}
+</article>
+{% else %}
+<p>No papers found.</p>
+{% endfor %}
+{% endif %}
+{% endblock %}

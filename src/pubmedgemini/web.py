@@ -3,12 +3,14 @@ from pathlib import Path
 from typing import Annotated
 
 import psycopg
-from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from pubmedgemini.db import is_healthy
 from pubmedgemini.identity import NotSetUp, NotSignedIn, User, current_user
+from pubmedgemini.lit.query import query_rejected_message
+from pubmedgemini.search import BothUnreachable, PageResult, QueryRejected, run_page_search
 
 log = logging.getLogger("pubmedgemini.web")
 
@@ -22,6 +24,8 @@ NOT_SET_UP = (
 )
 DB_DOWN = "The database could not be reached. Please try again in a minute."
 NOT_READY = "The app could not finish starting. Please try again in a minute."
+BOTH_DOWN = "PubMed and Europe PMC could not be reached. Please try again in a minute."
+SOURCE_NAMES = {"pubmed": "PubMed", "europepmc": "Europe PMC"}
 
 
 class NotReady(Exception):
@@ -46,6 +50,93 @@ def require_ready(request: Request) -> None:
 @router.get("/", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
 def home(request: Request, user: Annotated[User, Depends(current_user)]):
     return templates.TemplateResponse(request, "home.html", {"email": user.email})
+
+
+def drop_trailing_question_marks(text: str) -> str:
+    """Owner decision (10 Nov 2026), for the search page only: a typed question often ends
+    with "?", which the query rule refuses. Trailing question marks and the whitespace
+    around them are dropped quietly; a "?" anywhere else is left for the rule to refuse.
+    The tools and the rule are unchanged."""
+    trimmed = text.rstrip()
+    if not trimmed.endswith("?"):
+        return text
+    while trimmed.endswith("?"):
+        trimmed = trimmed[:-1].rstrip()
+    return trimmed
+
+
+def _status_line(result: PageResult) -> str:
+    """One line naming what was searched (spec §8)."""
+    if "pubmed" in result.not_run:
+        return "PubMed does not take the underscore; searched Europe PMC only"
+    if result.not_reached:
+        down = result.not_reached[0]
+        other = "europepmc" if down == "pubmed" else "pubmed"
+        return f"{SOURCE_NAMES[down]} could not be reached; searched {SOURCE_NAMES[other]} only"
+    return "Searched PubMed and Europe PMC (free sources)"
+
+
+def _counts_line(result: PageResult) -> str:
+    found = []
+    if result.pubmed_count is not None:
+        found.append(f"PubMed found {result.pubmed_count}")
+    if result.epmc_count is not None:
+        found.append(f"Europe PMC found {result.epmc_count}")
+    line = "; ".join(found) + "."
+    if result.papers:
+        line += f" Showing the first {len(result.papers)}."
+    return line
+
+
+def _log_search(result: PageResult) -> None:
+    """One line per search: fixed kinds and counts only."""
+    counts = []
+    if result.pubmed_count is not None:
+        counts.append(f"pubmed={result.pubmed_count}")
+    if result.epmc_count is not None:
+        counts.append(f"europepmc={result.epmc_count}")
+    shown = len(result.papers)
+    with_abstract = sum(1 for p in result.papers if p.abstract)
+    if not result.papers:
+        log.info("search kind=none %s", " ".join(counts))
+        return
+    if result.not_run:
+        kind = f"partial not_run={result.not_run[0]}"
+    elif result.not_reached:
+        kind = f"partial down={result.not_reached[0]}"
+    else:
+        kind = "ok"
+    log.info(
+        "search kind=%s %s shown=%d abstracts=%d cached=%d",
+        kind, " ".join(counts), shown, with_abstract, result.cached,
+    )
+
+
+@router.post("/search", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
+def search(
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
+    q: Annotated[str, Form()] = "",
+):
+    """The text arrives in the POST body only; the results come back in this response."""
+    text = drop_trailing_question_marks(q).strip()
+    context = {"email": user.email, "query": text}
+    try:
+        result = run_page_search(request.app.state.lit, text)
+    except QueryRejected as exc:
+        log.info("search kind=rejected reason=%s", exc.kind)
+        context["rejected"] = query_rejected_message(exc.kind, exc.source)
+        return templates.TemplateResponse(request, "results.html", context, status_code=400)
+    except BothUnreachable:
+        log.info("search kind=unavailable")
+        return _message(request, BOTH_DOWN, 503)
+    _log_search(result)
+    context |= {
+        "result": result,
+        "status_line": _status_line(result),
+        "counts_line": _counts_line(result),
+    }
+    return templates.TemplateResponse(request, "results.html", context)
 
 
 @router.get("/healthz")

@@ -129,6 +129,9 @@ class AbstractsResult:
     papers: tuple[AbstractRecord, ...]  # in the order asked
     not_found: tuple[str, ...]
     cached: int  # how many came from the cache; for logs only, not in the JSON
+    # esummary or efetch failed for some ids, so abstracts may be missing. For the page
+    # and logs only, not in the JSON (a difference from Incisive, which only logs it).
+    fetch_failed: bool = False
 
     def to_json(self) -> str:
         papers = []
@@ -263,35 +266,38 @@ class LitTools:
         count, papers = self.search_europepmc_papers(query, max_results)
         return SearchResult(count=count, items=tuple(Item.of(p, ids=True) for p in papers))
 
-    def _fetch_papers(self, pmids: list[str], tool: str) -> tuple[dict[str, Paper], int]:
+    def _fetch_papers(
+        self, pmids: list[str], tool: str
+    ) -> tuple[dict[str, Paper], int, bool]:
         """Incisive `LitTools::fetch_papers`: the cache first, then esummary and efetch for
-        the rest; what efetch returned is cached. Raises LitError only when esummary failed
-        and nothing was cached."""
+        the rest; what efetch returned is cached. Returns the papers by PMID, how many came
+        from the cache, and whether a lookup failed. Raises LitError only when esummary
+        failed and nothing was cached."""
         papers = {p.pmid: p for p in self._cached(pmids) if p.pmid in pmids}
         cached = len(papers)
         missing = [i for i in pmids if i not in papers]
         if not missing:
-            return papers, cached
+            return papers, cached, False
         try:
             summaries = self._pubmed.summaries(missing)
         except LitError as e:
             if not papers:
                 raise
             self._failed(tool, e)
-            summaries = []
+            return papers, cached, True
         # Only the ids asked for (a reply may carry others), once each.
         wanted: dict[str, Paper] = {}
         for p in summaries:
             if p.pmid in missing and p.pmid not in wanted:
                 wanted[p.pmid] = p
         if not wanted:
-            return papers, cached
+            return papers, cached, False
         try:
             details = self._pubmed.details(list(wanted))
         except LitError as e:
             self._failed(tool, e)  # summaries without abstracts; not cached
             papers.update(wanted)
-            return papers, cached
+            return papers, cached, True
         fetched: list[Paper] = []
         for pmid, p in wanted.items():
             rec = details.get(pmid)
@@ -304,14 +310,14 @@ class LitTools:
                 fetched.append(p)
             papers[pmid] = p
         self._store(fetched)
-        return papers, cached
+        return papers, cached, False
 
     def get_abstracts(self, pmids: object) -> AbstractsResult:
         """Abstracts for 1 to 20 PMIDs, in the order asked; unknown ids in `not_found`."""
         tool = "get_abstracts"
         ids = _pmids(pmids)
         try:
-            papers, cached = self._fetch_papers(ids, tool)
+            papers, cached, fetch_failed = self._fetch_papers(ids, tool)
         except LitError as e:
             raise self._failed(tool, e) from None
         out: list[AbstractRecord] = []
@@ -335,7 +341,9 @@ class LitTools:
                 )
             )
         log.info("lit tool=%s asked=%d cached=%d returned=%d", tool, len(ids), cached, len(out))
-        return AbstractsResult(papers=tuple(out), not_found=tuple(not_found), cached=cached)
+        return AbstractsResult(
+            papers=tuple(out), not_found=tuple(not_found), cached=cached, fetch_failed=fetch_failed
+        )
 
     def find_related(self, pmid: object, max_results: object) -> SearchResult:
         """PubMed's related articles for one PMID, best first; `count` is the items returned."""

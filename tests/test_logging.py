@@ -1,5 +1,7 @@
 import logging
 
+import pytest
+
 
 def test_no_email_in_logs(client_prod, caplog):
     caplog.set_level(logging.DEBUG)
@@ -95,3 +97,83 @@ def test_httpx_loggers_are_silenced(settings_prod):  # Review Focus 2
         assert logging.getLogger(name).getEffectiveLevel() > logging.CRITICAL, name
     for name in ("httpx", "httpcore"):
         assert logging.getLogger(name).propagate is False, name
+
+
+H = {"x-dev-user-email": "owner@example.com"}
+
+
+def test_search_text_and_key_never_logged(db_url, upstream, caplog):  # Review Focus 2
+    import re
+
+    from conftest import search_client
+
+    caplog.set_level(logging.DEBUG)  # root: every logger that propagates
+    with search_client(db_url, upstream, ncbi_api_key="key-q7",
+                       ncbi_email="dev-q7@example.org") as c:
+        r = c.post("/search", data={"q": "zq7 hernia mesh?"}, headers=H)
+    assert r.status_code == 200
+    assert upstream.sent[0].url.params["api_key"] == "key-q7"  # the key is used, never shown
+    for leak in ("zq7", "key-q7", "dev-q7", "Mesh repair", "hernia", "eutils", "ebi.ac.uk",
+                 "https://", "BACKGROUND"):
+        assert leak not in caplog.text, leak
+    messages = [r.getMessage() for r in caplog.records]
+    assert "literature ncbi_api_key=true" in messages
+    lines = [m for m in messages if m.startswith(("search ", "request "))]
+    assert lines[-1] == "request method=POST route=/search status=200"
+    assert re.fullmatch(
+        r"search kind=ok pubmed=\d+ europepmc=\d+ shown=\d+ abstracts=\d+ cached=\d+", lines[-2]
+    ), lines[-2]
+
+
+def test_start_up_says_no_key_when_unset(db_url, caplog):
+    from conftest import search_client
+    from lit_fakes import FakeUpstream
+
+    caplog.set_level(logging.INFO)
+    with search_client(db_url, FakeUpstream({})):
+        pass
+    assert "literature ncbi_api_key=false" in [r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.parametrize(
+    ("override", "line"),
+    [
+        ({"epmc": 503}, r"search kind=partial down=europepmc pubmed=\d+ shown=\d+ abstracts=\d+ cached=\d+"),
+        ({"esearch": 503}, r"search kind=partial down=pubmed europepmc=\d+ shown=\d+ abstracts=\d+ cached=\d+"),
+        ({"epmc": 503, "esearch": 503}, r"search kind=unavailable"),
+        ({"q": 'PUB_TYPE:"review"'}, r"search kind=partial not_run=pubmed europepmc=\d+ shown=\d+ abstracts=\d+ cached=\d+"),
+        ({"q": "hernia; zq7"}, r"search kind=rejected reason=character"),
+        ({"empty": True}, r"search kind=none pubmed=0 europepmc=0"),
+    ],
+)
+def test_each_search_logs_one_fixed_line(db_url, caplog, override, line):
+    import re
+
+    import httpx
+    from conftest import search_client
+    from lit_fakes import (
+        EPMC_HOST,
+        EPMC_SEARCH_PATH,
+        EUTILS_HOST,
+        EUTILS_PATH,
+        FakeUpstream,
+        europepmc_routes,
+        pubmed_routes,
+    )
+
+    routes = pubmed_routes() | europepmc_routes()
+    if "epmc" in override:
+        routes[(EPMC_HOST, EPMC_SEARCH_PATH)] = httpx.Response(override["epmc"])
+    if "esearch" in override:
+        routes[(EUTILS_HOST, EUTILS_PATH + "esearch.fcgi")] = httpx.Response(override["esearch"])
+    if "empty" in override:
+        routes[(EUTILS_HOST, EUTILS_PATH + "esearch.fcgi")] = httpx.Response(
+            200, json={"esearchresult": {"count": "0", "idlist": []}})
+        routes[(EPMC_HOST, EPMC_SEARCH_PATH)] = httpx.Response(
+            200, json={"hitCount": 0, "resultList": {"result": []}})
+    caplog.set_level(logging.INFO)
+    with search_client(db_url, FakeUpstream(routes)) as c:
+        c.post("/search", data={"q": override.get("q", "mesh")}, headers=H)
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("search ")]
+    assert len(lines) == 1 and re.fullmatch(line, lines[0]), lines
+    assert "zq7" not in caplog.text

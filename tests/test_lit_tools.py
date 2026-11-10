@@ -426,3 +426,15 @@ def test_failure_is_logged_with_its_kind_only(migrated_pool, caplog):
         tools.search_europepmc("zq7", 5)
     lines = [r.getMessage() for r in caplog.records if r.name.startswith("pubmedgemini")]
     assert lines == ["lit tool=search_europepmc error_kind=http"]
+
+
+def test_fetch_failed_is_set_only_when_a_lookup_failed(migrated_pool):
+    tools, _ = tools_with(migrated_pool)
+    assert tools.get_abstracts([ID1]).fetch_failed is False
+    assert tools.get_abstracts([ID1]).fetch_failed is False  # from the cache
+    efetch_down, _ = tools_with(migrated_pool, {EFETCH: httpx.Response(503)})
+    assert efetch_down.get_abstracts([ID2]).fetch_failed is True
+    esummary_down, _ = tools_with(migrated_pool, {ESUMMARY: httpx.Response(503)})
+    result = esummary_down.get_abstracts([ID1, ID3])
+    assert result.fetch_failed is True and result.not_found == (ID3,)
+    assert "fetch_failed" not in result.to_json()
