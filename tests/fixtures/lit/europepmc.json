@@ -1,0 +1,148 @@
+{
+ "version": "6.9",
+ "hitCount": 9672,
+ "resultList": {
+  "result": [
+   {
+    "id": "33763744",
+    "source": "MED",
+    "pmid": "33763744",
+    "doi": "10.1007/s00464-021-08442-w",
+    "title": "Inguinal hernia mesh is safe in 1720 patients.",
+    "authorString": "Forester B, Attaar M, Lach M, Chirayil S, Kuchta K, Denham W, Linn JG, Haggerty SP, Carbray J, Ujiki M.",
+    "authorList": {
+     "author": [
+      {
+       "fullName": "Forester B"
+      },
+      {
+       "fullName": "Attaar M"
+      },
+      {
+       "fullName": "Lach M"
+      }
+     ]
+    },
+    "journalInfo": {
+     "yearOfPublication": 2022,
+     "journal": {
+      "title": "Surgical endoscopy"
+     }
+    },
+    "pubYear": "2022",
+    "pubTypeList": {
+     "pubType": [
+      "Journal Article"
+     ]
+    },
+    "abstractText": "<h4>Background</h4>There is substantial media and patient interest in the safety of mesh for hernia repair. However, there is a lack of data regarding health-related quality of life (HRQOL) outcomes in patients who undergo inguinal hernia repair (IHR) with mesh. The purpose of this study is report short and long-term postoperative quality of life outcomes in patients following IHR with mesh.<h4>Methods</h4>We analyzed outcomes of 1720 patients who underwent IHR with mesh between 2008 and 2019 at a single institution from a prospectively maintained quality database. All surgeries were performed by four board-certified surgeons. HRQOL outcomes were measured using the Surgical Outcomes Measurement System (SOMS) and Carolinas Comfort Scale (CCS) surveys that were administered preoperatively, 3 weeks, 6 months, 1, 2, and 5 years postoperatively. Survey responses were summarized as mean with standard deviation or frequency with percentage. Postoperative SOMS scores were compared to preoperative scores using the two-tailed paired t test with a significance level of p < 0.05.<h4>Results</h4>One (0.1%) patient experienced a mesh infection postoperatively. In terms of complications, 159 (9.2%) developed a seroma, 31 (1.8%) a hematoma, and 36 (2.1%) patients experienced a recurrence. SOMS Pain Impact, SOMS Pain Quality, and SOMS Pain visual analog scale at 3 weeks, 6 months, 1 year, 2 years, and 5 years were all improved from preoperative (all p < 0.05). At 5 years postoperatively, only 3.9%, 3.2%, and 3.1% of patients reported severe or disabling sensation of mesh, pain, and movement limitations, respectively.<h4>Conclusion</h4>Inguinal hernia repair with mesh results in a low rate of complications. A minority of patients had severe or disabling symptoms at 5-year follow-up and generally reported improvements in pain impact and quality in long-term follow-up.",
+    "firstPublicationDate": "2021-03-24",
+    "isOpenAccess": "N"
+   },
+   {
+    "id": "39801280",
+    "source": "MED",
+    "doi": "10.1177/00494755241313152",
+    "title": "Inguinal hernia mesh infections: Chronic challenges, atypical pathogens and lessons in sterilisation.",
+    "authorString": "Purkayastha DS, Mallick AA, Das G, Purkayastha SS.",
+    "authorList": {
+     "author": [
+      {
+       "fullName": "Purkayastha DS"
+      },
+      {
+       "fullName": "Mallick AA"
+      },
+      {
+       "fullName": "Das G"
+      }
+     ]
+    },
+    "journalInfo": {
+     "yearOfPublication": 2025,
+     "journal": {
+      "title": "Tropical doctor"
+     }
+    },
+    "pubYear": "2025",
+    "pubTypeList": {
+     "pubType": [
+      "Journal Article",
+      "Case Reports"
+     ]
+    },
+    "abstractText": "Chronic mesh infections after inguinal hernia repair present significant clinical challenges due to biofilm-mediated resistance, involvement of multidrug-resistant and atypical pathogens, and gaps in preventive strategies. Our case series of four patients highlights critical research gaps, including the overlooked role of atypical pathogens such as <i>Mycobacterium tuberculosis</i>, diagnostic challenges in detecting slow-growing or resistant organisms and perioperative sterilisation lapses, especially inconsistent Glutaraldehyde use during late-day operations. Many patients suffered with persistent sinuses and recurrent hernias months after surgery. Microbiological analyses identified <i>Pseudomonas aeruginosa, Klebsiella pneumoniae, Mycobacterium tuberculosis</i> and mixed flora. Complete mesh removal and culture-directed antimicrobial therapy resolved all cases within 8-12 months. Our study underscores the need for robust sterilisation protocols, advanced diagnostic measures and biofilm-resistant biomaterials.",
+    "firstPublicationDate": "2025-01-13",
+    "isOpenAccess": "N"
+   },
+   {
+    "id": "PPR1174106",
+    "source": "PPR",
+    "doi": "10.21203/rs.3.rs-9087670/v1",
+    "title": "Clinical outcomes of open versus laparoscopic inguinal hernia mesh repair in Palestine: a multicenter retrospective cohort study",
+    "authorString": "Ballas IM, Abualwafa HN, AL-Shaer IH, Aljamal I, Tahboub A, Nazzal S, aljamal m.",
+    "authorList": {
+     "author": [
+      {
+       "fullName": "Ballas IM"
+      },
+      {
+       "fullName": "Abualwafa HN"
+      },
+      {
+       "fullName": "AL-Shaer IH"
+      }
+     ]
+    },
+    "pubYear": "2026",
+    "pubTypeList": {
+     "pubType": [
+      "Preprint"
+     ]
+    },
+    "abstractText": "<title>Abstract</title>  <p>  <bold>Background:</bold>  Inguinal hernia repair is one of the most frequently performed surgical procedures worldwide, accounting for approximately 75% of abdominal wall hernias, and predominantly occurring in males. Although it is a common procedure with generally favourable outcomes, the postoperative outcomes, such as chronic pain, recurrence, and surgical complications, remain important concerns. Due to the large number of procedures performed worldwide and the associated healthcare costs, the assessment of surgical outcomes and the factors that affect patients’ recovery are essential to optimize management strategies and improve long-term results. The aim of this study was to evaluate postoperative outcomes after inguinal hernia repair in terms of the incidence of complications and postoperative course in an attempt to determine which approach is associated with fewer complications  <bold>Method:</bold>  A retrospective cohort study was conducted to compare the outcomes between open vs laparoscopic inguinal hernia mesh repair. All patients who underwent inguinal hernia mesh repair in 3 hospitals from 2017 to 2025 were collected. Patients were divided into groups based on surgical technique (open repair vs laparoscopic repair). Demographic data, operative time, length of hospital stay, postoperative complications including hematoma, seroma, wound infection, hydrocele, urinary retention, vomiting, and recurrence, were extracted and analysed. Statistical analysis was performed by using SPSS to compare outcomes between the two groups, with a P- value <0.05 considered statistically significant.  <bold>Results:</bold>  A total of 609 patients underwent inguinal hernia repair with mesh. Open repair was more prevalent (77.2%), while laparoscopic repair represented 22.8% of cases. Laparoscopic repair was more frequently performed for direct hernias, whereas indirect hernias were more commonly treated with open repair (p = 0.037). Reducible and uncomplicated hernias were significantly associated with laparoscopic repair (p < 0.001, p = 0.006), while irreducible and strangulated hernias were predominantly managed with open surgery. Patients undergoing laparoscopic repair were younger (median 51.5 vs. 55 years, p = 0.001) and had shorter operative duration (median 101.5 vs. 113 minutes, p = 0.001). Urinary retention occurred more frequently after open repair (5.5% vs. 0.7%, p = 0.015), whereas postoperative nausea and vomiting were more common following laparoscopy (2.2% vs. 0.2%, p = 0.039). Overall postoperative complications were low and comparable between the two approaches (12.6% vs. 14.4%, p = 0.572), and recurrence rates were minimal with no significant difference between groups (1.1% vs. 1.4%, p = 0.709).  <bold>Conclusion:</bold>  Both open and laparoscopic inguinal hernia repair demonstrated favourable safety profiles in this cohort; however, postoperative complications, such as chronic pain, remain a problem for some patients. Careful patient selection, proper surgical technique, and early recognition of risk factors may help improve postoperative outcomes. Further research is needed to improve surgical techniques and reduce postoperative morbidity.  </p>",
+    "firstPublicationDate": "2026-04-06",
+    "isOpenAccess": "N"
+   },
+   {
+    "id": "42622923",
+    "source": "MED",
+    "pmid": "42622923",
+    "pmcid": "PMC13493447",
+    "doi": "10.1007/s10029-026-03823-3",
+    "title": "A randomized controlled trial of a <i>plastic-sheath</i> technique to facilitate self-gripping mesh placement in laparoscopic inguinal hernia repair.",
+    "authorString": "Jirasiritham J, Supsamutchai C, Poprom N, Janbavonkij T, Singhatat P, Thampongsa T, Wilasrusmee J, Meakleartmongkol T, Plangsiri S, Thepyasuwan P, Wilasrusmee C.",
+    "authorList": {
+     "author": [
+      {
+       "fullName": "Jirasiritham J"
+      },
+      {
+       "fullName": "Supsamutchai C"
+      },
+      {
+       "fullName": "Poprom N"
+      }
+     ]
+    },
+    "journalInfo": {
+     "yearOfPublication": 2026,
+     "journal": {
+      "title": "Hernia : the journal of hernias and abdominal wall surgery"
+     }
+    },
+    "pubYear": "2026",
+    "pubTypeList": {
+     "pubType": [
+      "research-article",
+      "Randomized Controlled Trial",
+      "Journal Article"
+     ]
+    },
+    "abstractText": "<h4>Background</h4>Self-gripping mesh reduces recurrence and postoperative pain but is difficult to deploy due to its adhesive properties.<h4>Methods</h4>We developed a plastic-sheath covering technique to facilitate mesh placement. In Phase I, prototypes were evaluated for placement time and surgeon satisfaction. In Phase II, a randomized controlled trial (NCT04394338) compared the optimized sheath with conventional placement in laparoscopic inguinal hernia repair.<h4>Results</h4>Prototype 4 achieved the shortest placement time in Phase I. In Phase II (n = 26), the plastic-sheath method significantly reduced mesh placement time (4.56 ± 1.80 vs. 7.40 ± 1.52 min; P = 0.005) and improved surgeon satisfaction (8.00 vs. 6.31; P = 0.003). Postoperative pain, hospital stay, and complication rates were comparable between groups.<h4>Conclusions</h4>The plastic-sheath method simplifies self-gripping mesh deployment, reduces operative time, and improves surgeon satisfaction without increasing complications.",
+    "firstPublicationDate": "2026-08-20",
+    "isOpenAccess": "Y"
+   }
+  ]
+ }
+}

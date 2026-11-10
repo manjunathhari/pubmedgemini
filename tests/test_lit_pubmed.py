@@ -267,16 +267,16 @@ def test_efetch_unknown_entity_kept_visible():
     xml = ("<PubmedArticleSet><PubmedArticle><MedlineCitation><PMID>5</PMID><Article><Abstract>"
            "<AbstractText>a&nbsp;b &amp; c&#8201;d &lt; e &unknown; f</AbstractText>"
            "</Abstract></Article></MedlineCitation></PubmedArticle></PubmedArticleSet>")
-    assert parse_efetch(xml)[0].abstract == "a b & c d < e &unknown; f"
+    assert parse_efetch(xml)[0].abstract == "a b & c\u2009d < e &unknown; f"
 
 
 def test_efetch_collapses_ascii_whitespace_only():
     xml = ("<PubmedArticleSet><PubmedArticle><MedlineCitation><PMID> 5 </PMID><Article><Abstract>"
-           "<AbstractText Label=\" AIM \">  a \n\t b c  </AbstractText><AbstractText></AbstractText>"
+           "<AbstractText Label=\" AIM \">  a \n\t b\u00a0c  </AbstractText><AbstractText></AbstractText>"
            "<AbstractText>second</AbstractText>"
            "</Abstract></Article></MedlineCitation></PubmedArticle></PubmedArticleSet>")
     [rec] = parse_efetch(xml)
-    assert (rec.pmid, rec.abstract) == ("5", "AIM: a b c\n\nsecond")
+    assert (rec.pmid, rec.abstract) == ("5", "AIM: a b\u00a0c\n\nsecond")
 
 
 def test_efetch_reads_book_records_and_skips_records_without_pmid():

@@ -29,7 +29,7 @@ INCISIVE_BAD = [
     "ICG <source>",
     "ICG & leak",
     "ICG #1",
-    "ICG leak—",
+    "ICG leak\u2014",
     "café",
     '"unclosed quote',
     "(ICG AND leak",
@@ -52,7 +52,7 @@ def test_incisive_cases_carry_over(source):  # Review Focus 1
         assert validate_query(ok, source) is None, ok
     assert validate_query("a" * 1000, source) is None
     assert validate_query("a" * 1001, source) == "too_long"
-    for bad in INCISIVE_BAD + ["hernia?", "ICG leak", "x" * 999 + "é"]:
+    for bad in INCISIVE_BAD + ["hernia?", "ICG\u00a0leak", "x" * 999 + "é"]:
         assert validate_query(bad, source) is not None, repr(bad)
     assert validate_query('"a (b" AND c', source) is None
     assert [validate_query(q, source) for q in ["a http b", "a\nb", "a ; b", "(a", ""]] == [
