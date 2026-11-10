@@ -11,6 +11,7 @@ from pubmedgemini import web
 from pubmedgemini.config import Settings, load_settings
 from pubmedgemini.db import open_pool
 from pubmedgemini.identity import ensure_owner
+from pubmedgemini.logging_setup import configure_logging
 from pubmedgemini.migrate import apply_migrations
 from pubmedgemini.web import NotReady
 
@@ -24,6 +25,7 @@ RETRY_BACKOFF_SECONDS = 5.0
 def create_app(
     settings: Settings, clock: Callable[[], float] = time.monotonic
 ) -> FastAPI:
+    configure_logging()
     state_lock = threading.Lock()
 
     def start_up_work(app: FastAPI) -> None:
