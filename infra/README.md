@@ -246,7 +246,7 @@ ss -tlnp
 Anything listed there other than SSH, 80 and 443 that is used from outside
 would be blocked by the firewall below.
 
-7b. In Hostinger's VPS panel, open its own Firewall page and look at what it
+7b. In the VPS provider's control panel, open its own Firewall page and look at what it
 already allows or blocks. If it already filters traffic, you may not need this
 step at all. Tell me what both 7a and 7b show before you go on.
 

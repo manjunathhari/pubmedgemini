@@ -24,7 +24,7 @@ A second, simpler Incisive that costs ₹0 to run.
 | 3 | Pipeline: **the same as Incisive's Quick run** (researcher → study list → writer in four parts → citation check → number check → number completion). |
 | 4 | Page: **plain writing in the browser.** No S1e layout, no mockup stage. |
 | 5 | Language: Python. |
-| 6 | Hosting: the app and the database both run on the owner's **Hostinger VPS** (2 CPU, 8 GB, Ubuntu 24.04 with Docker and Traefik). No Google Cloud. |
+| 6 | Hosting: the app and the database both run on the owner's **VPS** (2 CPU, 8 GB, Ubuntu 24.04 with Docker and Traefik). No Google Cloud. |
 | 7 | Repo: `manjunathhari/pubmedgemini`. |
 | 8 | Build order: stage by stage (F0–F5, §9), each a small batch the owner signs off. |
 | 9 | Google search: none in this build. |

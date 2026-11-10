@@ -6,10 +6,10 @@
 **Author:** 10x-Team (Architect + Staff Engineer)
 
 ## Context
-The owner wants Incisive's Quick run at ₹0 a run, coded quickly, without touching Incisive. He ruled on 10 Nov 2026: Gemini free tier only, Flash-Lite for every step, Quick only, Python, database on his Hostinger VPS, app on the same VPS, plain-text page.
+The owner wants Incisive's Quick run at ₹0 a run, coded quickly, without touching Incisive. He ruled on 10 Nov 2026: Gemini free tier only, Flash-Lite for every step, Quick only, Python, database on his VPS, app on the same VPS, plain-text page.
 
 ## Decision
-A Python 3.12 FastAPI app, Postgres 17 and an `oauth2-proxy` Google sign-in gate run as one Docker Compose project on the owner's Hostinger VPS behind the existing Traefik. Every model call goes to Gemini Flash-Lite on the free tier. The pipeline mirrors Incisive Quick: researcher loop, study list, four-part writer, citation check, number check, number completion.
+A Python 3.12 FastAPI app, Postgres 17 and an `oauth2-proxy` Google sign-in gate run as one Docker Compose project on the owner's VPS behind the existing Traefik. Every model call goes to Gemini Flash-Lite on the free tier. The pipeline mirrors Incisive Quick: researcher loop, study list, four-part writer, citation check, number check, number completion.
 
 ## Alternatives Considered
 | Alternative | Pros | Cons | Why Not |
