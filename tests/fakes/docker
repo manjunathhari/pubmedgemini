@@ -7,10 +7,13 @@
 #   FAKE_GATE_DOWN=1        the gate container is not running
 #   FAKE_GATE_RESTARTING=1  the gate is running, but its RestartCount goes up at every look
 #   FAKE_DUMP_EMPTY=1       pg_dump writes nothing
+#   FAKE_FAIL_CONFIG=NAME   "compose -f compose.yaml.new ... config" fails as real compose does
+#                           when NAME is empty; FAKE_FAIL_CONFIG=other fails with other text
 #   FAKE_BLOCK_ON=pull      the first "compose pull" writes $state/blocked and waits (up to 30 s)
 #   FAKE_BLOCK_ON=health    for $state/release, so a test can signal the deploy there, or start
 #                           a second one, and then let it go on (health: the first health check)
-# Each "compose pull" also writes the mode of .env.previous, if it exists, to
+# Each "compose ... config" writes the APP_IMAGE it was given in its environment to
+# $state/config_app_image. Each "compose pull" also writes the mode of .env.previous, if it exists, to
 # $state/previous_mode.
 set -u
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
@@ -42,6 +45,15 @@ app_image_from_env() {
 }
 
 case "$*" in
+  "compose -f compose.yaml.new --env-file .env config --quiet")
+    printf '%s\n' "${APP_IMAGE:-}" > "$state/config_app_image"
+    case "${FAKE_FAIL_CONFIG:-}" in
+      "") exit 0 ;;
+      other) echo "invalid value dummy-value-from-env for services.app" >&2 ;;
+      *) printf 'error while interpolating x: required variable %s is missing a value: set %s in .env\n' \
+           "$FAKE_FAIL_CONFIG" "$FAKE_FAIL_CONFIG" >&2 ;;
+    esac
+    exit 1 ;;
   "compose exec -T db pg_dump"*)
     [ "${FAKE_DUMP_EMPTY:-}" = 1 ] || printf 'PGDMP fake dump\n'
     exit 0 ;;

@@ -9,7 +9,8 @@ from shell_helpers import docker_calls, run_script, start_script
 
 OLD = "ghcr.io/example/pubmedgemini:old"
 NEW = "ghcr.io/example/pubmedgemini:new"
-ENV = f"POSTGRES_PASSWORD=dummy\nAPP_IMAGE={OLD}\nAPP_HOST=app.example.org\n"
+SUBNET = "TRAEFIK_SUBNET=127.0.0.0/8\n"  # a loopback range: a dummy value
+ENV = f"POSTGRES_PASSWORD=dummy\nAPP_IMAGE={OLD}\nAPP_HOST=app.example.org\n{SUBNET}"
 FAST = {"HEALTH_TRIES": "2", "HEALTH_INTERVAL": "0", "GATE_STABLE_INTERVAL": "0"}
 CLEAN = [".deploy.lock", ".env", "backup.sh", "compose.yaml"]  # the lock file is kept
 
@@ -163,12 +164,82 @@ def test_bad_image_name_is_refused(tmp_path):
 
 
 def test_first_deploy_with_empty_app_image(tmp_path):
-    app, state = _vps(tmp_path, "APP_IMAGE=\n")
+    app, state = _vps(tmp_path, "APP_IMAGE=\n" + SUBNET)
     (app / "compose.yaml").unlink()
     (state / "running_image").write_text("")
     r = _deploy(app, state, NEW)
     assert r.returncode == 0, r.stderr
-    assert (app / ".env").read_text() == f"APP_IMAGE={NEW}\n"
+    assert (app / ".env").read_text() == f"APP_IMAGE={NEW}\n" + SUBNET
+    # The pre-check validated the new compose file with the image this deploy writes.
+    assert (state / "config_app_image").read_text().strip() == NEW
+
+
+# ---- the new compose file and .env are checked before anything is switched ----
+
+
+def _assert_unchanged(app, state, env_text=ENV):
+    assert (app / ".env").read_text() == env_text
+    assert (app / "compose.yaml").read_text() == "old compose\n"
+    assert (app / "backup.sh").read_text() == "old backup\n"
+    assert _names(app) == sorted(CLEAN + ["backup.sh.new", "compose.yaml.new"])
+    assert _running(state) == OLD
+
+
+def test_compose_config_runs_on_the_new_file_before_the_switch(tmp_path):
+    app, state = _vps(tmp_path)
+    r = _deploy(app, state, NEW)
+    assert r.returncode == 0, r.stderr
+    calls = docker_calls(state)
+    config = "compose -f compose.yaml.new --env-file .env config --quiet"
+    assert calls[0] == config
+    assert calls.index(config) < calls.index("compose pull app gate")
+    assert (state / "config_app_image").read_text().strip() == NEW
+
+
+def test_a_compose_config_naming_a_variable_refuses_the_deploy(tmp_path):
+    app, state = _vps(tmp_path)
+    r = _deploy(app, state, NEW, FAKE_FAIL_CONFIG="OWNER_EMAIL")
+    assert r.returncode != 0
+    assert "compose.yaml.new does not validate with .env" in r.stderr
+    assert "required variable OWNER_EMAIL is missing a value" in r.stderr
+    _assert_unchanged(app, state)
+    assert docker_calls(state) == ["compose -f compose.yaml.new --env-file .env config --quiet"]
+
+
+def test_other_compose_config_errors_are_not_echoed(tmp_path):
+    """Compose's own text could quote a value from .env; only a generic hint is shown."""
+    app, state = _vps(tmp_path)
+    r = _deploy(app, state, NEW, FAKE_FAIL_CONFIG="other")
+    assert r.returncode != 0
+    assert "compose.yaml.new does not validate with .env" in r.stderr
+    assert "dummy-value-from-env" not in r.stderr
+    _assert_unchanged(app, state)
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["TRAEFIK_SUBNET=", 'TRAEFIK_SUBNET=""', "TRAEFIK_SUBNET=127.0.0.0/8,",
+     "TRAEFIK_SUBNET=,127.0.0.0/8", "TRAEFIK_SUBNET=127.0.0.0/8,,::1/128",
+     "TRAEFIK_SUBNET=127.0.0.0/8, ", None],
+    ids=["empty", "empty-quoted", "trailing-comma", "leading-comma", "double-comma",
+         "blank-item", "missing"],
+)
+def test_an_empty_traefik_subnet_or_an_empty_item_refuses_the_deploy(tmp_path, line):
+    env_text = f"POSTGRES_PASSWORD=dummy\nAPP_IMAGE={OLD}\n" + (f"{line}\n" if line else "")
+    app, state = _vps(tmp_path, env_text)
+    r = _deploy(app, state, NEW)
+    assert r.returncode != 0
+    assert "TRAEFIK_SUBNET in .env is empty or has an empty item" in r.stderr
+    assert "127.0.0.0" not in r.stderr  # never the value
+    _assert_unchanged(app, state, env_text)
+    assert docker_calls(state) == []
+
+
+def test_a_traefik_subnet_list_is_accepted(tmp_path):
+    env_text = ENV.replace(SUBNET, "TRAEFIK_SUBNET=127.0.0.0/8, ::1/128\n")
+    app, state = _vps(tmp_path, env_text)
+    r = _deploy(app, state, NEW)
+    assert r.returncode == 0, r.stderr
 
 
 # ---- the previous APP_IMAGE as docker compose reads it ----
@@ -183,7 +254,7 @@ def test_first_deploy_with_empty_app_image(tmp_path):
          "double-quoted-comment", "single-quoted-comment"],
 )
 def test_rollback_recognises_the_previous_image_however_it_is_written(tmp_path, line):
-    env_text = f"POSTGRES_PASSWORD=dummy\n{line}\n"
+    env_text = f"POSTGRES_PASSWORD=dummy\n{line}\n{SUBNET}"
     app, state = _vps(tmp_path, env_text)
     r = _deploy(app, state, NEW, FAKE_UNHEALTHY_IMAGE=NEW)
     assert r.returncode != 0

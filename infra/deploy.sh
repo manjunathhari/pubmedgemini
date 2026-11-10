@@ -4,8 +4,9 @@
 #   deploy.sh <image>
 #
 # Works for any account that can run docker and write APP_DIR and .env (no account is
-# assumed). Before changing anything it checks .env and saves copies of .env and
-# compose.yaml (.env.previous, mode 600, and compose.yaml.previous). On any failure after
+# assumed). Before changing anything it checks .env (TRAEFIK_SUBNET has no empty item) and
+# that compose.yaml.new validates with it (docker compose config), then saves copies of .env
+# and compose.yaml (.env.previous, mode 600, and compose.yaml.previous). On any failure after
 # that, and on HUP, INT, TERM or PIPE (an SSH drop or a cancelled job), it puts both back,
 # starts the previous version again, removes its temporary files and exits non-zero.
 # backup.sh.new replaces backup.sh only after the new version is healthy.
@@ -249,6 +250,31 @@ lines="$(grep -c '^APP_IMAGE=' .env || true)"
 [ "$lines" -eq 1 ] || fail ".env has more than one APP_IMAGE= line"
 
 previous_image="$(normalise "$(sed -n 's/^APP_IMAGE=//p' .env)")"
+
+# The gate trusts X-Forwarded-* only from TRAEFIK_SUBNET. An empty item in the list (an
+# empty value, or a stray comma) must never reach --trusted-proxy-ip.
+subnet_ok() {
+  local rest="$1," item
+  [ -n "$1" ] || return 1
+  while [ -n "$rest" ]; do
+    item="${rest%%,*}"
+    rest="${rest#*,}"
+    item="${item//[[:space:]]/}"
+    [ -n "$item" ] || return 1
+  done
+}
+subnet_ok "$(normalise "$(sed -n 's/^TRAEFIK_SUBNET=//p' .env | tail -n 1)")" ||
+  fail "TRAEFIK_SUBNET in .env is empty or has an empty item; set it as infra/README.md step 2c says"
+
+# The new compose file must validate with this .env and the image this deploy writes
+# (compose fails if a required variable is empty or unset). Only the names of missing
+# variables are shown: compose's other messages could quote a value from .env.
+if ! config_err="$(APP_IMAGE="$new_image" docker compose -f compose.yaml.new --env-file .env \
+  config --quiet 2>&1 >/dev/null)"; then
+  missing="$(printf '%s\n' "$config_err" |
+    grep -o 'required variable [A-Za-z0-9_]* is missing a value' | sort -u | paste -sd ';' - || true)"
+  fail "compose.yaml.new does not validate with .env: ${missing:-run 'docker compose -f compose.yaml.new config --quiet' in $APP_DIR to see why}; nothing was changed"
+fi
 
 # ---- save the current state ----
 
