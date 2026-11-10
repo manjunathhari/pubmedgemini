@@ -60,3 +60,43 @@ def test_ensure_owner_changes_nothing_when_email_exists(pool):
 def test_unknown_email_is_none(pool):
     apply_migrations(pool, Path("migrations"))
     assert find_user(pool, "stranger@example.com") is None
+
+
+def test_find_user_gives_up_quickly_when_the_database_is_down():
+    import time
+
+    import psycopg
+    import pytest
+
+    from pubmedgemini.db import QUICK_CHECK_TIMEOUT_SECONDS, open_pool
+
+    assert QUICK_CHECK_TIMEOUT_SECONDS == 2
+    p = open_pool("postgresql://u:p@127.0.0.1:1/x")
+    try:
+        started = time.monotonic()
+        with pytest.raises(psycopg.OperationalError):
+            find_user(p, "owner@example.com")
+        assert time.monotonic() - started < 3
+    finally:
+        p.close()
+
+
+def test_home_answers_503_quickly_when_the_database_goes_down_after_start_up(monkeypatch):
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from pubmedgemini import main
+    from pubmedgemini.config import Settings
+
+    # start-up "succeeds" without a database, as if it went down right after
+    monkeypatch.setattr(main, "apply_migrations", lambda pool, d: [])
+    monkeypatch.setattr(main, "ensure_owner", lambda pool, e: None)
+    settings = Settings(
+        app_env="prod", database_url="postgresql://u:p@127.0.0.1:1/x", owner_email="o@example.com"
+    )
+    with TestClient(main.create_app(settings)) as c:
+        started = time.monotonic()
+        r = c.get("/", headers={"x-forwarded-email": "o@example.com"})
+        assert time.monotonic() - started < 3
+    assert r.status_code == 503 and "Traceback" not in r.text

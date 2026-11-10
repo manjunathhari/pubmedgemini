@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from fastapi import Request
 from psycopg_pool import ConnectionPool
 
+from pubmedgemini.db import QUICK_CHECK_TIMEOUT_SECONDS
+
 GATE_EMAIL_HEADER = "x-forwarded-email"
 DEV_EMAIL_HEADER = "x-dev-user-email"
 
@@ -40,7 +42,7 @@ def email_from_headers(headers: Mapping[str, str], app_env: str) -> str | None:
 
 
 def find_user(pool: ConnectionPool, email: str) -> User | None:
-    with pool.connection() as conn:
+    with pool.connection(timeout=QUICK_CHECK_TIMEOUT_SECONDS) as conn:
         row = conn.execute(
             "SELECT id, email, role FROM users WHERE email = %s", (normalise_email(email),)
         ).fetchone()
