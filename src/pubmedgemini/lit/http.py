@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
+from urllib.parse import unquote
 
 import httpx
 
@@ -116,7 +117,8 @@ def _on_response(response: httpx.Response) -> None:
 
 def _next_hop(current: httpx.URL, location: str) -> httpx.URL:
     """The redirect target, resolved against `current` (Incisive `follow`). The request's
-    parameters are not carried over, and an `api_key` is dropped on any host but NCBI's, so
+    parameters are not carried over, and an `api_key` (in any case or percent-encoding) is
+    dropped on any host but NCBI's, so
     the key only ever goes to NCBI. An invalid or refused target is "disallowed"."""
     try:
         target = current.join(location)
@@ -124,9 +126,22 @@ def _next_hop(current: httpx.URL, location: str) -> httpx.URL:
         raise LitError("disallowed") from None
     if not _allowed(target):
         raise LitError("disallowed") from None
-    if target.host.lower() != NCBI_HOST and NCBI_KEY_PARAM in target.params:
-        target = target.copy_remove_param(NCBI_KEY_PARAM)
+    if target.host.lower() != NCBI_HOST:
+        target = _without_key(target)
     return target
+
+
+def _without_key(url: httpx.URL) -> httpx.URL:
+    """`url` without any query parameter whose name, percent-decoded and lower-cased, is the
+    NCBI key's (every occurrence); the other parameters are kept as written."""
+    query = url.query.decode("ascii", errors="replace")
+    if not query:
+        return url
+    pairs = query.split("&")
+    kept = [p for p in pairs if unquote(p.split("=", 1)[0]).lower() != NCBI_KEY_PARAM]
+    if len(kept) == len(pairs):
+        return url
+    return url.copy_with(query="&".join(kept).encode("ascii") or None)
 
 
 class LitClient:

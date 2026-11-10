@@ -327,6 +327,47 @@ def test_key_echoed_in_a_location_to_the_other_host_is_dropped():
     assert "k-q7" not in str(up.sent[1].url) and up.sent[1].url.params["keep"] == "1"
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "API_KEY=k-q7&keep=1",
+        "Api_Key=k-q7&keep=1",
+        "api%5Fkey=k-q7&keep=1",
+        "API%5fKEY=k-q7&keep=1",
+        "api_key=k-q7&keep=1&api_key=k-q8",
+        "keep=1&API_KEY=k-q7&Api_Key=k-q8",
+        "keep=1&api_key",
+    ],
+)
+def test_key_in_any_spelling_in_a_location_to_the_other_host_is_dropped(query):
+    up = FakeUpstream(
+        {
+            (NCBI_HOST, "/x"): httpx.Response(
+                302, headers={"location": f"https://{EPMC_HOST}/z?{query}"}
+            ),
+            (EPMC_HOST, "/z"): httpx.Response(200, json=[1]),
+        }
+    )
+    LitClient(up.transport).get_json(NCBI_URL, {"api_key": "k-q7"})
+    second = up.sent[1].url
+    assert "k-q7" not in str(second) and "k-q8" not in str(second)
+    assert "key" not in str(second).lower()
+    assert second.params.get_list("keep") == ["1"]
+
+
+def test_key_in_a_location_back_to_ncbi_is_kept():
+    up = FakeUpstream(
+        {
+            (NCBI_HOST, "/x"): httpx.Response(
+                302, headers={"location": f"https://{NCBI_HOST}/y?API_KEY=k-q7"}
+            ),
+            (NCBI_HOST, "/y"): httpx.Response(200, json=[1]),
+        }
+    )
+    LitClient(up.transport).get_json(NCBI_URL, {})
+    assert up.sent[1].url.params["API_KEY"] == "k-q7"
+
+
 def test_relative_location_is_resolved_against_the_current_url():
     up = FakeUpstream(
         {
