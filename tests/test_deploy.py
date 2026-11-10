@@ -177,8 +177,10 @@ def test_first_deploy_with_empty_app_image(tmp_path):
 @pytest.mark.parametrize(
     "line",
     [f'APP_IMAGE="{OLD}"', f"APP_IMAGE='{OLD}'", f"APP_IMAGE={OLD}\r",
-     f"APP_IMAGE={OLD} # set by hand", f"APP_IMAGE=  {OLD}  "],
-    ids=["double-quoted", "single-quoted", "crlf", "comment", "spaces"],
+     f"APP_IMAGE={OLD} # set by hand", f"APP_IMAGE=  {OLD}  ",
+     f'APP_IMAGE="{OLD}" # set by hand', f"APP_IMAGE='{OLD}' # set by hand"],
+    ids=["double-quoted", "single-quoted", "crlf", "comment", "spaces",
+         "double-quoted-comment", "single-quoted-comment"],
 )
 def test_rollback_recognises_the_previous_image_however_it_is_written(tmp_path, line):
     env_text = f"POSTGRES_PASSWORD=dummy\n{line}\n"

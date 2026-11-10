@@ -22,14 +22,16 @@ block_once() {
   fi
 }
 
-# APP_IMAGE as docker compose reads it from .env: one layer of quotes, a CR, surrounding
-# spaces and an unquoted trailing " # comment" are not part of the value.
+# APP_IMAGE as docker compose reads it from .env (checked against docker compose config):
+# a CR and surrounding spaces are not part of the value; a quoted value ends at its closing
+# quote (anything after it, such as " # comment", is ignored); an unquoted value ends before
+# a " # comment".
 app_image_from_env() {
-  local v
+  local v q
   v="$(sed -n 's/^APP_IMAGE=//p' .env | tail -n 1 | tr -d '\r')"
   v="$(printf '%s' "$v" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
   case "$v" in
-    \"*\" | \'*\') v="${v:1:${#v}-2}" ;;
+    \"* | \'*) q="${v:0:1}" v="${v:1}" v="${v%%"$q"*}" ;;
     *) v="$(printf '%s' "$v" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')" ;;
   esac
   printf '%s\n' "$v"

@@ -44,15 +44,20 @@ cleanup_tmp() {
   rm -f .deploy-tmp.* 2>/dev/null || true
 }
 
-# The value of APP_IMAGE as docker compose reads it: without one layer of matching quotes,
-# a CR, surrounding spaces or an unquoted trailing " # comment".
+# A .env value as docker compose reads it: without a CR or surrounding spaces; if quoted,
+# what is inside the quotes (anything after the closing quote, such as " # comment", is
+# ignored); if not, without an unquoted trailing " # comment".
 normalise() {
-  local v="$1"
+  local v="$1" q
   v="${v//$'\r'/}"
   v="${v#"${v%%[![:space:]]*}"}"
   v="${v%"${v##*[![:space:]]}"}"
   case "$v" in
-    \"*\" | \'*\') v="${v:1:${#v}-2}" ;;
+    \"* | \'*)
+      q="${v:0:1}"
+      v="${v:1}"
+      v="${v%%"$q"*}"
+      ;;
     *)
       v="${v%%[[:space:]]#*}"
       v="${v%"${v##*[![:space:]]}"}"
