@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "httpx", "ruff"]
+dev = ["pytest", "httpx", "ruff", "pyyaml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
