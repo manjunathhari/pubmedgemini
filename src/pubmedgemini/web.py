@@ -21,6 +21,15 @@ NOT_SET_UP = (
     "Ask the owner to add you."
 )
 DB_DOWN = "The database could not be reached. Please try again in a minute."
+NOT_READY = "The app could not finish starting. Please try again in a minute."
+
+
+class NotReady(Exception):
+    """Start-up work has not completed. `kind` is a fixed word, never exception text."""
+
+    def __init__(self, kind: str | None):
+        super().__init__(kind)
+        self.kind = kind
 
 
 def _message(request: Request, text: str, status_code: int) -> HTMLResponse:
@@ -41,6 +50,11 @@ def home(request: Request, user: Annotated[User, Depends(current_user)]):
 
 @router.get("/healthz")
 def healthz(request: Request):
+    try:
+        request.app.state.ensure_ready()
+    except NotReady as exc:
+        status = "database_unreachable" if exc.kind == "db_unreachable" else "not_ready"
+        return JSONResponse({"status": status}, status_code=503)
     if is_healthy(request.app.state.pool):
         return {"status": "ok"}
     return JSONResponse({"status": "database_unreachable"}, status_code=503)
@@ -56,6 +70,10 @@ def register(app: FastAPI) -> None:
     @app.exception_handler(NotSetUp)
     def not_set_up(request: Request, exc: NotSetUp):
         return _message(request, NOT_SET_UP, 403)
+
+    @app.exception_handler(NotReady)
+    def not_ready(request: Request, exc: NotReady):
+        return _message(request, DB_DOWN if exc.kind == "db_unreachable" else NOT_READY, 503)
 
     @app.exception_handler(psycopg.Error)
     def database_error(request: Request, exc: psycopg.Error):

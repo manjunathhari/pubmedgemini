@@ -93,3 +93,22 @@ def test_pages_are_plain_html(client_dev):
     assert "<script" not in r.text and "http://" not in r.text and "https://" not in r.text
     assert r.text.count("<main") == 1
     assert "42rem" in r.text
+
+
+def test_failed_migration_makes_healthz_not_ready(db_url, tmp_path, caplog):
+    from pubmedgemini.config import Settings
+
+    (tmp_path / "0001_bad.sql").write_text("CREATE TABLE a (id int); SELECT nope_column;")
+    settings = Settings(
+        app_env="prod", database_url=db_url, owner_email="o@example.com", migrations_dir=tmp_path
+    )
+    caplog.set_level(logging.INFO)
+    with TestClient(create_app(settings)) as c:
+        h = c.get("/healthz")
+        assert h.status_code == 503 and h.json() == {"status": "not_ready"}
+        r = c.get("/", headers={"x-forwarded-email": "o@example.com"})
+        assert r.status_code == 503 and "Traceback" not in r.text
+    messages = [r.getMessage() for r in caplog.records]
+    assert "kind=migration_failed" in messages
+    assert not any("db_unreachable" in m for m in messages)
+    assert "nope_column" not in caplog.text and "syntax" not in caplog.text.lower()
