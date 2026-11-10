@@ -11,6 +11,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    labels:
+      - traefik.enable=false
     networks:
       - internal
 
@@ -34,6 +36,8 @@ services:
       timeout: 5s
       retries: 6
       start_period: 15s
+    labels:
+      - traefik.enable=false
     networks:
       - internal
 

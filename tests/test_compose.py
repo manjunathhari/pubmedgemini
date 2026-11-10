@@ -42,3 +42,9 @@ def test_gate_image_is_at_or_above_the_patched_version():
     assert tag.startswith("v")
     version = tuple(int(part) for part in tag[1:].split("-", 1)[0].split("."))
     assert version >= GATE_MIN_VERSION
+
+
+def test_app_and_db_tell_traefik_to_ignore_them():
+    c = yaml.safe_load(Path("compose.yaml").read_text())["services"]
+    for name in ("app", "db"):
+        assert "traefik.enable=false" in c[name].get("labels", []), name
