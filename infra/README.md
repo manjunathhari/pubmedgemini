@@ -102,6 +102,7 @@ nano /opt/pubmedgemini/.env
 Add these lines (the first three need your values):
 
 ```
+APP_IMAGE=
 APP_HOST=
 OWNER_EMAIL=
 TRAEFIK_NETWORK=
@@ -112,7 +113,8 @@ OAUTH2_PROXY_CLIENT_SECRET=
 ```
 
 `OWNER_EMAIL` is your own Google address. Leave the last two for step 4.
-Do not add `APP_IMAGE`; the first deploy adds it.
+Leave `APP_IMAGE=` empty; each deploy fills it in. The deploy stops with an
+error if this line is missing.
 
 3g. Check the file is private (should start with `-rw-------`):
 
@@ -343,8 +345,9 @@ docker compose up -d
 docker compose ps
 ```
 
-The deploy also does this by itself if the new version does not become healthy
-within 120 seconds.
+The deploy also does this by itself (with the previous `compose.yaml` too) if
+the new version does not become healthy, or the gate is not running, within
+120 seconds. The GitHub deploy then shows as failed.
 
 ## Restore from a backup
 

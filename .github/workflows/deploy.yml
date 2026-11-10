@@ -59,47 +59,27 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
-      - name: Copy compose.yaml and backup.sh to the VPS
+      - name: Copy the release files to the VPS (compose.yaml goes in as compose.yaml.new)
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           opts=(-i "$HOME/.ssh/deploy_key" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$HOME/.ssh/known_hosts" -o IdentitiesOnly=yes)
-          scp "${opts[@]}" compose.yaml "${VPS_USER}@${VPS_HOST}:/opt/pubmedgemini/compose.yaml"
-          scp "${opts[@]}" infra/backup.sh "${VPS_USER}@${VPS_HOST}:/opt/pubmedgemini/backup.sh"
-      - name: Pull, restart, wait for healthy, roll back on failure
+          dest="${VPS_USER}@${VPS_HOST}:/opt/pubmedgemini"
+          scp "${opts[@]}" compose.yaml "${dest}/compose.yaml.new"
+          scp "${opts[@]}" infra/deploy.sh "${dest}/deploy.sh"
+          scp "${opts[@]}" infra/backup.sh "${dest}/backup.sh"
+      - name: Deploy (infra/deploy.sh rolls back and fails if the new version is not up)
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           opts=(-i "$HOME/.ssh/deploy_key" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$HOME/.ssh/known_hosts" -o IdentitiesOnly=yes)
-          ssh "${opts[@]}" "${VPS_USER}@${VPS_HOST}" bash -s -- "$IMAGE" <<'REMOTE'
-          set -u
-          new_image="$1"
-          cd /opt/pubmedgemini
-          chmod +x backup.sh
-          previous="$(grep '^APP_IMAGE=' .env || true)"
-          sed -i '/^APP_IMAGE=/d' .env
-          echo "APP_IMAGE=${new_image}" >> .env
-          docker compose pull app
-          docker compose up -d
-          for _ in $(seq 1 24); do
-            if docker compose ps --format json app | grep -q '"Health":"healthy"'; then
-              echo "app is healthy"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "app did not become healthy within 120 s; rolling back" >&2
-          if [ -n "$previous" ]; then
-            sed -i '/^APP_IMAGE=/d' .env
-            echo "$previous" >> .env
-            docker compose up -d
-          else
-            echo "no previous image recorded; nothing to roll back to" >&2
-          fi
-          exit 1
-          REMOTE
+          # Built here on purpose: the image name is known on the runner, not on the VPS.
+          remote="chmod 700 /opt/pubmedgemini/deploy.sh /opt/pubmedgemini/backup.sh"
+          remote+=" && /opt/pubmedgemini/deploy.sh $(printf '%q' "$IMAGE")"
+          # shellcheck disable=SC2029 # client-side expansion is intended (see above)
+          ssh "${opts[@]}" "${VPS_USER}@${VPS_HOST}" "$remote"
       - name: Remove the SSH key
         if: always()
         run: rm -f ~/.ssh/deploy_key
