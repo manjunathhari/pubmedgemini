@@ -112,3 +112,70 @@ def test_failed_migration_makes_healthz_not_ready(db_url, tmp_path, caplog):
     assert "kind=migration_failed" in messages
     assert not any("db_unreachable" in m for m in messages)
     assert "nope_column" not in caplog.text and "syntax" not in caplog.text.lower()
+
+
+def _app_with_failing_start_up(monkeypatch, clock, gate=None):
+    from pubmedgemini import main
+    from pubmedgemini.config import Settings
+
+    calls = []
+
+    def failing(pool, migrations_dir):
+        calls.append(1)
+        if gate is not None:
+            gate.wait(timeout=5)
+        raise psycopg.OperationalError("connection details that must not be logged")
+
+    monkeypatch.setattr(main, "apply_migrations", failing)
+    settings = Settings(
+        app_env="prod", database_url="postgresql://u:p@127.0.0.1:1/x", owner_email="o@example.com"
+    )
+    return main, main.create_app(settings, clock=clock), calls
+
+
+def test_requests_during_the_back_off_make_no_new_attempt(monkeypatch):
+    now = [1000.0]
+    main, app, calls = _app_with_failing_start_up(monkeypatch, lambda: now[0])
+    with TestClient(app) as c:
+        assert len(calls) == 1  # the start-up attempt
+        for _ in range(8):
+            assert c.get("/healthz").json() == {"status": "database_unreachable"}
+            assert c.get("/", headers={"x-forwarded-email": "o@example.com"}).status_code == 503
+        assert len(calls) == 1
+        now[0] += main.RETRY_BACKOFF_SECONDS + 0.1
+        assert c.get("/healthz").status_code == 503
+        assert len(calls) == 2
+
+
+def test_parallel_requests_do_not_queue_behind_a_running_attempt(monkeypatch):
+    import threading
+    import time
+
+    from pubmedgemini.web import NotReady
+
+    now = [1000.0]
+    gate = threading.Event()
+    gate.set()  # the start-up attempt fails at once
+    main, app, calls = _app_with_failing_start_up(monkeypatch, lambda: now[0], gate)
+    with TestClient(app):
+        now[0] += main.RETRY_BACKOFF_SECONDS + 0.1
+        gate.clear()  # the next attempt hangs until released
+        first = threading.Thread(target=lambda: _swallow(app.state.ensure_ready, NotReady))
+        first.start()
+        while len(calls) < 2:
+            time.sleep(0.01)
+        started = time.monotonic()
+        for _ in range(8):
+            assert _swallow(app.state.ensure_ready, NotReady)
+        assert time.monotonic() - started < 1
+        gate.set()
+        first.join(timeout=5)
+        assert len(calls) == 2
+
+
+def _swallow(fn, exc_type) -> bool:
+    try:
+        fn()
+    except exc_type:
+        return True
+    return False

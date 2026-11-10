@@ -1,5 +1,7 @@
 import logging
 import threading
+import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 
 import psycopg
@@ -14,8 +16,14 @@ from pubmedgemini.web import NotReady
 
 log = logging.getLogger("pubmedgemini.main")
 
+# After a failed start-up attempt, requests get 503 at once for this long instead of each
+# waiting for the pool's connect timeout.
+RETRY_BACKOFF_SECONDS = 5.0
 
-def create_app(settings: Settings) -> FastAPI:
+
+def create_app(
+    settings: Settings, clock: Callable[[], float] = time.monotonic
+) -> FastAPI:
     state_lock = threading.Lock()
 
     def start_up_work(app: FastAPI) -> None:
@@ -36,6 +44,7 @@ def create_app(settings: Settings) -> FastAPI:
             return True
         log.warning("kind=%s", kind)
         app.state.failure = kind
+        app.state.next_attempt_at = clock() + RETRY_BACKOFF_SECONDS
         return False
 
     @asynccontextmanager
@@ -54,16 +63,28 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.settings = settings
     app.state.ready = False
     app.state.failure = None
+    app.state.next_attempt_at = 0.0
 
     def ensure_ready() -> None:
-        """Return if start-up has finished; else retry it once. Raises NotReady on failure."""
+        """Return if start-up has finished; else retry it, at most once per back-off window.
+
+        Raises NotReady at once during the window, or while another request's attempt runs.
+        """
         if app.state.ready:
             return
-        with state_lock:
+        if clock() < app.state.next_attempt_at:
+            raise NotReady(app.state.failure)
+        if not state_lock.acquire(blocking=False):
+            raise NotReady(app.state.failure)
+        try:
             if app.state.ready:
                 return
+            if clock() < app.state.next_attempt_at:
+                raise NotReady(app.state.failure)
             if not try_start_up(app):
                 raise NotReady(app.state.failure)
+        finally:
+            state_lock.release()
 
     app.state.ensure_ready = ensure_ready
     web.register(app)
