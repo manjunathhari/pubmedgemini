@@ -108,9 +108,20 @@ Plain HTML: headings, paragraphs, simple lists and one table style for outcomes.
 
 - **Ask page:** a question box, the "Free runs left today" line, the privacy line, and a list of past runs.
 - **While a run works:** the step lines as plain text, for example "Researcher: 5 searches so far (turn 2 of 8)" and "Writer: writing the answer from 10 studies".
-- **Answer page**, in Incisive's order: At a glance, Bottom line, Clinical practice, Outcomes (each with arms, numbers, 95% CI, certainty and citations), Trials, Conflicting evidence, Guidelines, Applicability, What would change, Search trail, References.
+- **Answer page.** The owner's ruling (10 Nov, on seeing an Incisive Quick output page): strip the UI, keep the words, and keep the confidence intervals and the counselling without graphics. In order:
+  1. **Results line:** total time, searches run, studies selected (RCTs, meta-analyses), citations checked, numbers traced.
+  2. **At a glance.**
+  3. **Bottom line**, with its certainty and the reasons for it.
+  4. **Clinical practice:** Default choice, Who may benefit, Counselling, Cost per case.
+  5. **Every estimate with a 95% CI**, as a plain list with no bars or scale. One line each: outcome, measure, estimate and interval, direction, study and reference number, design. For example: "Bile duct injury · pooled RR 0.97 (0.77–1.21), robotic vs laparoscopic · Acute cholecystitis MA 2026 [1] · Observational". Ratios first, then differences.
+  6. **Outcome by outcome:** each outcome's summary, certainty and numbers, all open on the page (nothing to tap).
+  7. **Counselling: out of 100 patients**, as plain lines with no dot grid and no Clinician/Patient switch. One line per outcome: "Conversion to open: about 2 of 100 with robotic vs 4 of 100 with laparoscopic (exact 2.1% vs 3.9%). Certainty: Low. [1]", followed by why that certainty and who the numbers apply to.
+  8. **Compare the arms**, as a plain list grouped by each study's comparison.
+  9. **Details:** Conflicting evidence, Applicability, What would change this answer, The trials (with study details), Other notable findings, Search trail, References.
+- **Not carried over:** the chat button, the introduction panel, the progress panel's styling, filters, tabs, pop-up study cards and "Copy as text".
 - **References:** numbered, each a link to PubMed.
 - **Untraced numbers** carry the words "not traced" beside them.
+- **Layout reference:** the Incisive Quick output the owner supplied on 10 Nov (bile leak, robotic vs laparoscopic cholecystectomy in acute cholecystitis).
 
 ## 7. What is stored
 
