@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -97,7 +98,8 @@ def test_app_and_db_tell_traefik_to_ignore_them():
         assert "traefik.enable=false" in c[name].get("labels", []), name
 
 
-# ---- every variable is required: compose refuses to start with one empty or unset ----
+# ---- every variable is required (compose refuses to start with one empty or unset), except
+# the two reviewed optional ones, which only the app reads and which may be left out ----
 
 REQUIRED = [
     "APP_IMAGE",
@@ -113,6 +115,9 @@ REQUIRED = [
     "TRAEFIK_ENTRYPOINT",
     "TRAEFIK_CERTRESOLVER",
 ]
+# Optional on purpose (F1): the app runs without them (Settings turns "" into None).
+OPTIONAL = ["NCBI_API_KEY", "NCBI_EMAIL"]
+APP_ENV_KEYS = {"APP_ENV", "DATABASE_URL", "OWNER_EMAIL", "NCBI_API_KEY", "NCBI_EMAIL"}
 # Dummy values only: example names, a loopback range.
 DUMMY = {name: "dummy" for name in REQUIRED} | {
     "APP_IMAGE": "ghcr.io/example/pubmedgemini:dummy",
@@ -123,17 +128,57 @@ DUMMY = {name: "dummy" for name in REQUIRED} | {
 }
 
 
-def test_every_variable_uses_the_required_form_with_a_message_naming_it():
-    text = Path("compose.yaml").read_text()
-    uses = re.findall(r"\$\{([^}]*)\}", text)
+def _uses() -> list[str]:
+    return re.findall(r"\$\{([^}]*)\}", Path("compose.yaml").read_text())
+
+
+def test_every_variable_uses_the_required_form_except_the_reviewed_optional_ones():
+    uses = _uses()
     assert uses
     for use in uses:
         name = re.match(r"[A-Z0-9_]+", use).group(0)
-        assert use == f"{name}:?set {name} in .env", use
-    assert sorted({u.split(":", 1)[0] for u in uses}) == sorted(REQUIRED)
+        if name in OPTIONAL:
+            assert use == f"{name}:-", use  # empty when unset; nothing else allowed
+        else:
+            assert name in REQUIRED, use
+            assert use == f"{name}:?set {name} in .env", use
+    assert sorted({re.match(r"[A-Z0-9_]+", u).group(0) for u in uses}) == sorted(
+        REQUIRED + OPTIONAL
+    )
     names = [line.split("=", 1)[0] for line in Path(".env.example").read_text().splitlines()
              if line and not line.startswith("#")]
-    assert sorted(names) == sorted(REQUIRED)
+    assert sorted(names) == sorted(REQUIRED + OPTIONAL)
+    assert names[-len(OPTIONAL):] == OPTIONAL  # listed after the required names
+
+
+def test_required_and_optional_names_do_not_overlap():
+    assert not set(REQUIRED) & set(OPTIONAL)
+
+
+def test_app_environment_keys_are_exactly_the_reviewed_ones():
+    app = yaml.safe_load(Path("compose.yaml").read_text())["services"]["app"]
+    assert "env_file" not in app
+    assert set(app["environment"]) == APP_ENV_KEYS
+    for name in OPTIONAL:
+        assert app["environment"][name] == f"${{{name}:-}}"
+
+
+def test_optional_variables_are_used_by_app_only():
+    services = yaml.safe_load(Path("compose.yaml").read_text())["services"]
+    for service_name, service in services.items():
+        if service_name == "app":
+            continue
+        text = yaml.safe_dump(service)
+        for name in OPTIONAL:
+            assert name not in text, (service_name, name)
+    body = Path("compose.yaml").read_text().split("services:", 1)[1]
+    for name in OPTIONAL:
+        assert body.count(name) == 2, name  # app's key and its ${NAME:-} value, nothing else
+
+
+def test_compose_header_names_the_optional_ones():
+    header = Path("compose.yaml").read_text().split("services:", 1)[0]
+    assert all(name in header for name in OPTIONAL)
 
 
 def _compose_cli_missing() -> bool:
@@ -148,14 +193,14 @@ needs_compose = pytest.mark.skipif(
 )
 
 
-def _compose_config(tmp_path, values: dict):
+def _compose_config(tmp_path, values: dict, *args: str):
     env_file = tmp_path / "test.env"
     env_file.write_text("".join(f"{k}={v}\n" for k, v in values.items()))
     # A clean environment: a variable set in the shell would override the file.
     env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path)}
     return subprocess.run(
         ["docker", "compose", "-f", "compose.yaml", "--env-file", str(env_file),
-         "config", "--quiet"],
+         "config", *(args or ("--quiet",))],
         capture_output=True, text=True, check=False, env=env, timeout=60,
     )
 
@@ -182,3 +227,28 @@ def test_an_unset_required_variable_stops_compose(tmp_path, name):
     r = _compose_config(tmp_path, {k: v for k, v in DUMMY.items() if k != name})
     assert r.returncode != 0
     assert f"required variable {name} is missing a value" in r.stderr, r.stderr
+
+
+@needs_compose
+def test_optional_variables_may_be_unset(tmp_path):
+    assert not set(DUMMY) & set(OPTIONAL)  # DUMMY holds the required names only
+    assert _compose_config(tmp_path, DUMMY).returncode == 0
+    r = _compose_config(tmp_path, DUMMY, "--format", "json")
+    assert r.returncode == 0, r.stderr
+    env = json.loads(r.stdout)["services"]["app"]["environment"]
+    assert (env["NCBI_API_KEY"], env["NCBI_EMAIL"]) == ("", "")
+
+
+@needs_compose
+def test_optional_variables_reach_the_app_when_set(tmp_path):
+    values = DUMMY | {"NCBI_API_KEY": "dummy-key", "NCBI_EMAIL": "dev@example.org"}
+    r = _compose_config(tmp_path, values, "--format", "json")
+    assert r.returncode == 0, r.stderr
+    env = json.loads(r.stdout)["services"]["app"]["environment"]
+    assert (env["NCBI_API_KEY"], env["NCBI_EMAIL"]) == ("dummy-key", "dev@example.org")
+
+
+@needs_compose
+def test_empty_optional_variables_validate(tmp_path):
+    r = _compose_config(tmp_path, DUMMY | {"NCBI_API_KEY": "", "NCBI_EMAIL": ""})
+    assert r.returncode == 0, r.stderr

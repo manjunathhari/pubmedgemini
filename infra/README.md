@@ -377,6 +377,57 @@ is not on the list. Google's sign-in should refuse it.
 
 It should print `backup ok:` and a file name.
 
+## Optional: the NCBI key
+
+Nothing is needed on the VPS for this. The app searches PubMed without a key, at
+up to 3 requests a second. A free NCBI key (from your NCBI account settings)
+raises that to 10. The key and the email are never shown in the logs; the start-up
+log line only says `literature ncbi_api_key=true` or `false`.
+
+To add them later:
+
+1. On the VPS, go to the folder:
+
+```
+cd /opt/pubmedgemini
+```
+
+2. Check for `.env.previous` exactly as in step 2 of "Rollback" below, and remove
+it if it is there:
+
+```
+ls -l .env.previous
+```
+
+3. Open `.env`:
+
+```
+nano .env
+```
+
+4. Add these two lines at the end. Replace `<key>` with the key and `<address>`
+with the email address NCBI may contact about this tool. Save with Ctrl+O, Enter,
+then leave with Ctrl+X:
+
+```
+NCBI_API_KEY=<key>
+NCBI_EMAIL=<address>
+```
+
+5. Restart the app so it reads them:
+
+```
+docker compose up -d app
+```
+
+6. Check that `app` says `healthy`:
+
+```
+docker compose ps
+```
+
+To remove the key, delete the two lines (step 2 first) and run step 5 again.
+
 ## Rollback (go back to the previous version)
 
 Rollback changes the app code only. It does not undo database changes.
