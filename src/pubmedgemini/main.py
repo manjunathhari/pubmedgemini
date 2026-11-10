@@ -6,10 +6,11 @@ from contextlib import asynccontextmanager
 
 import psycopg
 from fastapi import FastAPI
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from pubmedgemini import web
 from pubmedgemini.config import Settings, load_settings
-from pubmedgemini.db import open_pool
+from pubmedgemini.db import is_healthy, open_pool
 from pubmedgemini.identity import ensure_owner
 from pubmedgemini.logging_setup import configure_logging
 from pubmedgemini.migrate import apply_migrations
@@ -20,6 +21,17 @@ log = logging.getLogger("pubmedgemini.main")
 # After a failed start-up attempt, requests get 503 at once for this long instead of each
 # waiting for the pool's connect timeout.
 RETRY_BACKOFF_SECONDS = 5.0
+
+
+def _failure_kind(pool: ConnectionPool, exc: psycopg.Error) -> str:
+    """db_unreachable if no connection can be opened; else migration_failed.
+
+    Decided by trying a connection, not by exception class: a cancelled query, a lock
+    timeout or a serialization failure is an OperationalError on a reachable database.
+    """
+    if isinstance(exc, PoolTimeout) or not is_healthy(pool):
+        return "db_unreachable"
+    return "migration_failed"
 
 
 def create_app(
@@ -37,14 +49,15 @@ def create_app(
         """Run the start-up work once. Logs a fixed kind on failure, never the exception text."""
         try:
             start_up_work(app)
-        except psycopg.OperationalError:  # cannot connect (PoolTimeout is one of these)
-            kind = "db_unreachable"
-        except psycopg.Error:  # connected, but a migration or the owner insert failed
-            kind = "migration_failed"
+        except psycopg.Error as exc:
+            kind = _failure_kind(app.state.pool, exc)
+            # Safe fields only: the class name and SQLSTATE are fixed codes; the message is
+            # libpq or server text and can hold the host, role or SQL.
+            sqlstate = getattr(exc, "sqlstate", None) or "none"
+            log.warning("kind=%s error=%s sqlstate=%s", kind, type(exc).__name__, sqlstate)
         else:
             app.state.failure = None
             return True
-        log.warning("kind=%s", kind)
         app.state.failure = kind
         app.state.next_attempt_at = clock() + RETRY_BACKOFF_SECONDS
         return False

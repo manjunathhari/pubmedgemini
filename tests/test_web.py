@@ -66,7 +66,9 @@ def test_start_up_with_database_down_logs_one_fixed_line(caplog):
     with TestClient(create_app(settings)):
         pass
     lines = [r.getMessage() for r in caplog.records if "db_unreachable" in r.getMessage()]
-    assert lines == ["kind=db_unreachable"]
+    # class name and sqlstate only: the message ("couldn't get a connection ...") is not logged
+    assert lines == ["kind=db_unreachable error=PoolTimeout sqlstate=none"]
+    assert "couldn't" not in caplog.text and "127.0.0.1" not in caplog.text
 
 
 def test_start_up_work_is_retried_when_database_comes_back(settings_prod, db_url):
@@ -109,7 +111,7 @@ def test_failed_migration_makes_healthz_not_ready(db_url, tmp_path, caplog):
         r = c.get("/", headers={"x-forwarded-email": "o@example.com"})
         assert r.status_code == 503 and "Traceback" not in r.text
     messages = [r.getMessage() for r in caplog.records]
-    assert "kind=migration_failed" in messages
+    assert "kind=migration_failed error=UndefinedColumn sqlstate=42703" in messages
     assert not any("db_unreachable" in m for m in messages)
     assert "nope_column" not in caplog.text and "syntax" not in caplog.text.lower()
 
@@ -179,3 +181,22 @@ def _swallow(fn, exc_type) -> bool:
     except exc_type:
         return True
     return False
+
+
+def test_cancelled_migration_is_migration_failed_not_db_unreachable(db_url, tmp_path, caplog):
+    """A query-cancel is an OperationalError, but the database was reachable."""
+    from pubmedgemini.config import Settings
+
+    (tmp_path / "0001_slow.sql").write_text(
+        "SET LOCAL statement_timeout = '50ms'; SELECT pg_sleep(2);"
+    )
+    settings = Settings(
+        app_env="prod", database_url=db_url, owner_email="o@example.com", migrations_dir=tmp_path
+    )
+    caplog.set_level(logging.INFO)
+    with TestClient(create_app(settings)) as c:
+        h = c.get("/healthz")
+        assert h.status_code == 503 and h.json() == {"status": "not_ready"}
+    messages = [r.getMessage() for r in caplog.records if r.name == "pubmedgemini.main"]
+    assert messages == ["kind=migration_failed error=QueryCanceled sqlstate=57014"]
+    assert "statement timeout" not in caplog.text and "canceling" not in caplog.text
