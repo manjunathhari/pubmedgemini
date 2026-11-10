@@ -1,9 +1,11 @@
+# Every variable below uses the required form (NAME:?message): if it is empty or unset in .env,
+# docker compose stops before anything starts and names the variable (never its value).
 services:
   db:
     image: postgres:17
     restart: unless-stopped
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,12 +19,12 @@ services:
       - internal
 
   app:
-    image: ${APP_IMAGE}
+    image: ${APP_IMAGE:?set APP_IMAGE in .env}
     restart: unless-stopped
     environment:
       APP_ENV: prod
-      DATABASE_URL: ${DATABASE_URL}
-      OWNER_EMAIL: ${OWNER_EMAIL}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      OWNER_EMAIL: ${OWNER_EMAIL:?set OWNER_EMAIL in .env}
     depends_on:
       db:
         condition: service_healthy
@@ -64,12 +66,12 @@ services:
       # on that network can still forge them; that is harmless while there is no skip-auth
       # or trusted-ip rule for a forged header to match.
       - --reverse-proxy=true
-      - --trusted-proxy-ip=${TRAEFIK_SUBNET}
-      - --redirect-url=https://${APP_HOST}/oauth2/callback
+      - --trusted-proxy-ip=${TRAEFIK_SUBNET:?set TRAEFIK_SUBNET in .env}
+      - --redirect-url=https://${APP_HOST:?set APP_HOST in .env}/oauth2/callback
     environment:
-      OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID}
-      OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET}
-      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
+      OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID:?set OAUTH2_PROXY_CLIENT_ID in .env}
+      OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET:?set OAUTH2_PROXY_CLIENT_SECRET in .env}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET:?set OAUTH2_PROXY_COOKIE_SECRET in .env}
     volumes:
       - ./gate/emails.txt:/etc/gate/emails.txt:ro
     depends_on:
@@ -77,10 +79,10 @@ services:
         condition: service_healthy
     labels:
       - traefik.enable=true
-      - traefik.docker.network=${TRAEFIK_NETWORK}
-      - traefik.http.routers.pubmedgemini.rule=Host(`${APP_HOST}`)
-      - traefik.http.routers.pubmedgemini.entrypoints=${TRAEFIK_ENTRYPOINT}
-      - traefik.http.routers.pubmedgemini.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.docker.network=${TRAEFIK_NETWORK:?set TRAEFIK_NETWORK in .env}
+      - traefik.http.routers.pubmedgemini.rule=Host(`${APP_HOST:?set APP_HOST in .env}`)
+      - traefik.http.routers.pubmedgemini.entrypoints=${TRAEFIK_ENTRYPOINT:?set TRAEFIK_ENTRYPOINT in .env}
+      - traefik.http.routers.pubmedgemini.tls.certresolver=${TRAEFIK_CERTRESOLVER:?set TRAEFIK_CERTRESOLVER in .env}
       - traefik.http.routers.pubmedgemini.service=pubmedgemini
       - traefik.http.services.pubmedgemini.loadbalancer.server.port=4180
     networks:
@@ -94,4 +96,4 @@ networks:
   internal:
   traefik:
     external: true
-    name: ${TRAEFIK_NETWORK}
+    name: ${TRAEFIK_NETWORK:?set TRAEFIK_NETWORK in .env}
