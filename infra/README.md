@@ -35,8 +35,8 @@ It should show `<VPS_ADDRESS>`.
 
 ### Step 2. Read Traefik's names (read only)
 
-You need three values: the entrypoint, the certificate resolver and the Docker
-network. They go into `.env` in step 3.
+You need four values: the entrypoint, the certificate resolver, the Docker
+network and its address range. They go into `.env` in step 3.
 
 2a. On the VPS, find where Traefik's Compose file is:
 
@@ -57,6 +57,17 @@ Write down:
 - the Docker network is `TRAEFIK_NETWORK`
 
 Do not edit that file.
+
+2c. On the VPS, print the address range of that network (replace
+`<TRAEFIK_NETWORK>` with the name from 2b):
+
+```
+docker network inspect <TRAEFIK_NETWORK> --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'
+```
+
+It prints one or more ranges such as `172.18.0.0/16`. Write it down as
+`TRAEFIK_SUBNET`; if it prints more than one, join them with a comma and no
+spaces. The gate trusts the forwarded headers only from this range.
 
 ### Step 3. Make the folder, the allow list and `.env`
 
@@ -106,6 +117,7 @@ APP_IMAGE=
 APP_HOST=
 OWNER_EMAIL=
 TRAEFIK_NETWORK=
+TRAEFIK_SUBNET=
 TRAEFIK_ENTRYPOINT=
 TRAEFIK_CERTRESOLVER=
 OAUTH2_PROXY_CLIENT_ID=

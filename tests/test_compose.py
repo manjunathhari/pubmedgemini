@@ -30,9 +30,51 @@ def _gate():
     return yaml.safe_load(Path("compose.yaml").read_text())["services"]["gate"]
 
 
-def test_gate_has_no_skip_auth_rule():
-    flags = " ".join(_gate()["command"])
-    assert "skip-auth" not in flags and "skip_auth" not in flags
+# Exact allow-lists: a new flag or OAUTH2_PROXY_* variable (skip-auth-route, skip-auth-regex,
+# skip-auth-preflight, trusted-ip, ...) fails these tests until it is reviewed and listed.
+GATE_FLAGS = [
+    "--provider",
+    "--upstream",
+    "--http-address",
+    "--authenticated-emails-file",
+    "--pass-user-headers",
+    "--cookie-secure",
+    "--reverse-proxy",
+    "--trusted-proxy-ip",
+    "--redirect-url",
+]
+GATE_ENV_KEYS = {
+    "OAUTH2_PROXY_CLIENT_ID",
+    "OAUTH2_PROXY_CLIENT_SECRET",
+    "OAUTH2_PROXY_COOKIE_SECRET",
+}
+
+
+def test_gate_command_flags_are_exactly_the_reviewed_ones():
+    command = _gate()["command"]
+    assert all(arg.startswith("--") and "=" in arg for arg in command), command
+    assert [arg.split("=", 1)[0] for arg in command] == GATE_FLAGS
+
+
+def test_gate_environment_keys_are_exactly_the_reviewed_ones():
+    gate = _gate()
+    assert "env_file" not in gate and "entrypoint" not in gate
+    assert set(gate["environment"]) == GATE_ENV_KEYS
+
+
+def test_gate_trusts_forwarded_headers_only_from_the_traefik_subnet():
+    command = _gate()["command"]
+    assert "--reverse-proxy=true" in command
+    assert "--trusted-proxy-ip=${TRAEFIK_SUBNET}" in command
+    names = [line.split("=", 1)[0] for line in Path(".env.example").read_text().splitlines()]
+    assert "TRAEFIK_SUBNET" in names
+
+
+def test_gate_has_no_skip_auth_or_trusted_ip_setting():
+    gate = _gate()
+    text = " ".join(gate["command"]) + " " + " ".join(gate["environment"])
+    for banned in ("skip-auth", "skip_auth", "SKIP_AUTH", "trusted-ip=", "TRUSTED_IPS"):
+        assert banned not in text, banned
 
 
 def test_gate_image_is_at_or_above_the_patched_version():

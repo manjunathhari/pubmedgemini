@@ -56,11 +56,15 @@ services:
       - --authenticated-emails-file=/etc/gate/emails.txt
       - --pass-user-headers=true
       - --cookie-secure=true
-      # Traefik terminates HTTPS and sets X-Forwarded-Proto/Host/For. This flag makes the
-      # gate read them, so the redirects it builds use https and the public host, and its
-      # logs show the real client address. Safe here because only Traefik can reach the
-      # gate and there is no skip-auth rule for a forged X-Forwarded-Uri to match.
+      # Traefik terminates HTTPS and sets X-Forwarded-Proto/Host/For. --reverse-proxy makes
+      # the gate read them, so the redirects it builds use https and the public host, and its
+      # logs show the real client address. The gate publishes no port, but any container on
+      # the shared Traefik network (not only Traefik) can reach it, so the gate trusts these
+      # headers only from that network's subnet (infra/README.md step 2c). Other containers
+      # on that network can still forge them; that is harmless while there is no skip-auth
+      # or trusted-ip rule for a forged header to match.
       - --reverse-proxy=true
+      - --trusted-proxy-ip=${TRAEFIK_SUBNET}
       - --redirect-url=https://${APP_HOST}/oauth2/callback
     environment:
       OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID}
