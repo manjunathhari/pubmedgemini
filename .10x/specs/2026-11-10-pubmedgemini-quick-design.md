@@ -63,7 +63,7 @@ Figures from a third-party page dated 19 Oct 2026 that cites Google AI Studio. G
 **Runs.** A run is a background task inside the app process. Each step writes its line and result to Postgres as it finishes; the page polls and reads from there. On start-up the app marks any run still "running" as "stopped", and the page shows a "Run again" button.
 
 **Limits.** Two limiters shared by the whole app:
-- PubMed: 3 requests a second without a key, 10 with a free NCBI key. Every request carries the registered `tool` and `email` values.
+- PubMed: 3 requests a second without a key, 10 with a free NCBI key. Every request carries the registered `tool` value, and the `email` value when one is configured (`NCBI_EMAIL`, optional).
 - Gemini: per model, per minute and per day. The day count is kept in Postgres (`model_calls`), so the app refuses to start a run it cannot finish instead of failing halfway. The page shows "Free runs left today: about N".
 
 **Secrets.** The Gemini key, the NCBI key, the Google sign-in client secret, the gate's cookie secret and the database password live in one `.env` file on the VPS, owned by root with mode 600. They are never in the repo, in images or in logs. This stands in for Incisive's Secret Manager.

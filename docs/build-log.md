@@ -11,3 +11,6 @@
 - Re-check: 9 of 11 confirmed, 8 new findings (1 medium, 7 low). All fixed. The medium one: an interrupted deploy could leave the app half-switched; the deploy script now rolls back on interruption.
 - Flash-Lite test script written on branch `probe-flash-lite`; not yet run against Gemini.
 - Web address chosen by the owner and its DNS record added (details kept out of this public repo).
+
+## 11 Nov 2026
+- F1 independent review: 10 findings (2 medium, 8 low), A to J. All fixed on `f1-search-tools`, tests first; mutation checks for the rewritten tests. The owner added a free NCBI key on the server on 10 Nov after the first live search hit NCBI's 429 without one.
