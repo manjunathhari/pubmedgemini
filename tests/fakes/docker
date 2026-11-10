@@ -5,6 +5,7 @@
 #   FAKE_FAIL_UP=1          docker compose up fails
 #   FAKE_UNHEALTHY_IMAGE=x  an app container running image x reports "unhealthy"
 #   FAKE_GATE_DOWN=1        the gate container is not running
+#   FAKE_GATE_RESTARTING=1  the gate is running, but its RestartCount goes up at every look
 #   FAKE_DUMP_EMPTY=1       pg_dump writes nothing
 #   FAKE_BLOCK_ON=pull      the first "compose pull" writes $state/blocked and sleeps, so a test
 #   FAKE_BLOCK_ON=health    can signal the deploy there (health: the first app health check)
@@ -21,6 +22,19 @@ block_once() {
   fi
 }
 
+# APP_IMAGE as docker compose reads it from .env: one layer of quotes, a CR, surrounding
+# spaces and an unquoted trailing " # comment" are not part of the value.
+app_image_from_env() {
+  local v
+  v="$(sed -n 's/^APP_IMAGE=//p' .env | tail -n 1 | tr -d '\r')"
+  v="$(printf '%s' "$v" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  case "$v" in
+    \"*\" | \'*\') v="${v:1:${#v}-2}" ;;
+    *) v="$(printf '%s' "$v" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')" ;;
+  esac
+  printf '%s\n' "$v"
+}
+
 case "$*" in
   "compose exec -T db pg_dump"*)
     [ "${FAKE_DUMP_EMPTY:-}" = 1 ] || printf 'PGDMP fake dump\n'
@@ -32,7 +46,7 @@ case "$*" in
     exit 0 ;;
   "compose up -d"*)
     [ "${FAKE_FAIL_UP:-}" = 1 ] && exit 1
-    sed -n 's/^APP_IMAGE=//p' .env | tail -n 1 > "$state/running_image"
+    app_image_from_env > "$state/running_image"
     exit 0 ;;
   "compose ps -q app")
     [ -s "$state/running_image" ] && echo fake-app-id
@@ -56,6 +70,13 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
       fi ;;
     fake-gate-id:*State.Running*)
       if [ "${FAKE_GATE_DOWN:-}" = 1 ]; then echo false; else echo true; fi ;;
+    fake-gate-id:*RestartCount*)
+      count="$(cat "$state/gate_restarts" 2>/dev/null || echo 0)"
+      if [ "${FAKE_GATE_RESTARTING:-}" = 1 ]; then
+        count=$((count + 1))
+        echo "$count" > "$state/gate_restarts"
+      fi
+      echo "$count" ;;
     *) echo "fake docker: unknown inspect $id $format" >&2; exit 1 ;;
   esac
   exit 0

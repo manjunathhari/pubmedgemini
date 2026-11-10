@@ -10,7 +10,7 @@ from shell_helpers import docker_calls, run_script, start_script
 OLD = "ghcr.io/example/pubmedgemini:old"
 NEW = "ghcr.io/example/pubmedgemini:new"
 ENV = f"POSTGRES_PASSWORD=dummy\nAPP_IMAGE={OLD}\nAPP_HOST=app.example.org\n"
-FAST = {"HEALTH_TRIES": "2", "HEALTH_INTERVAL": "0"}
+FAST = {"HEALTH_TRIES": "2", "HEALTH_INTERVAL": "0", "GATE_STABLE_INTERVAL": "0"}
 CLEAN = [".env", "compose.yaml"]
 
 
@@ -112,6 +112,17 @@ def test_gate_not_running_rolls_back(tmp_path):
     _assert_restored(app, state)
 
 
+def test_gate_in_a_restart_loop_rolls_back(tmp_path):
+    """Running at each look, but restarted in between: not a healthy deploy."""
+    app, state = _vps(tmp_path)
+    r = _deploy(app, state, NEW, FAKE_GATE_RESTARTING="1")
+    assert r.returncode != 0
+    assert "rolling back" in r.stderr
+    _assert_restored(app, state)
+    calls = docker_calls(state)
+    assert any("RestartCount" in c for c in calls)
+
+
 def test_failed_up_rolls_back(tmp_path):
     app, state = _vps(tmp_path)
     r = _deploy(app, state, NEW, FAKE_FAIL_UP="1")
@@ -153,6 +164,25 @@ def test_first_deploy_with_empty_app_image(tmp_path):
     r = _deploy(app, state, NEW)
     assert r.returncode == 0, r.stderr
     assert (app / ".env").read_text() == f"APP_IMAGE={NEW}\n"
+
+
+# ---- the previous APP_IMAGE as docker compose reads it ----
+
+
+@pytest.mark.parametrize(
+    "line",
+    [f'APP_IMAGE="{OLD}"', f"APP_IMAGE='{OLD}'", f"APP_IMAGE={OLD}\r",
+     f"APP_IMAGE={OLD} # set by hand", f"APP_IMAGE=  {OLD}  "],
+    ids=["double-quoted", "single-quoted", "crlf", "comment", "spaces"],
+)
+def test_rollback_recognises_the_previous_image_however_it_is_written(tmp_path, line):
+    env_text = f"POSTGRES_PASSWORD=dummy\n{line}\n"
+    app, state = _vps(tmp_path, env_text)
+    r = _deploy(app, state, NEW, FAKE_UNHEALTHY_IMAGE=NEW)
+    assert r.returncode != 0
+    assert "rolled back: the previous version is healthy" in r.stderr, r.stderr
+    _assert_restored(app, state, env_text)
+    assert _running(state) == OLD
 
 
 # ---- interrupted deploys ----

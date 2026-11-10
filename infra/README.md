@@ -395,8 +395,9 @@ docker compose ps
 ```
 
 The deploy also does this by itself (with the previous `compose.yaml` too) if
-the new version does not become healthy, or the gate is not running, within
-120 seconds. The GitHub deploy then shows as failed.
+the new version does not become healthy, or the gate is not running steadily
+(running, and not restarted between two looks 5 seconds apart), within 24
+checks (two to four minutes). The GitHub deploy then shows as failed.
 
 ## Restore from a backup
 

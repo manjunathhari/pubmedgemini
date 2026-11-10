@@ -18,6 +18,8 @@ umask 077
 APP_DIR="${APP_DIR:-/opt/pubmedgemini}"
 HEALTH_TRIES="${HEALTH_TRIES:-24}"
 HEALTH_INTERVAL="${HEALTH_INTERVAL:-5}"
+# The gate must be running, with the same restart count, at two looks this far apart.
+GATE_STABLE_INTERVAL="${GATE_STABLE_INTERVAL:-5}"
 
 phase=check # check -> saving -> switched -> finished
 handling=0  # 1 once a rollback or an interrupt is being handled
@@ -38,6 +40,23 @@ fail() {
 
 cleanup_tmp() {
   rm -f .deploy-tmp.* 2>/dev/null || true
+}
+
+# The value of APP_IMAGE as docker compose reads it: without one layer of matching quotes,
+# a CR, surrounding spaces or an unquoted trailing " # comment".
+normalise() {
+  local v="$1"
+  v="${v//$'\r'/}"
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
+  case "$v" in
+    \"*\" | \'*\') v="${v:1:${#v}-2}" ;;
+    *)
+      v="${v%%[[:space:]]#*}"
+      v="${v%"${v##*[![:space:]]}"}"
+      ;;
+  esac
+  printf '%s' "$v"
 }
 
 # A temporary file in APP_DIR with the same content, mode and owner as $1.
@@ -80,7 +99,19 @@ docker_inspect() {
   docker inspect --format "$1" "$2" 2>/dev/null || true
 }
 
-# The running app container uses image $1 and is healthy, and the gate container is running.
+# The gate is running and was not restarted between two looks GATE_STABLE_INTERVAL apart.
+gate_stable() {
+  local id="$1" first second
+  [ "$(docker_inspect '{{.State.Running}}' "$id")" = true ] || return 1
+  first="$(docker_inspect '{{.RestartCount}}' "$id")"
+  [ -n "$first" ] || return 1
+  sleep "$GATE_STABLE_INTERVAL"
+  [ "$(docker_inspect '{{.State.Running}}' "$id")" = true ] || return 1
+  second="$(docker_inspect '{{.RestartCount}}' "$id")"
+  [ "$first" = "$second" ]
+}
+
+# The running app container uses image $1 and is healthy, and the gate is stable.
 wait_until_up() {
   local want="$1" app_id gate_id image health i
   for ((i = 1; i <= HEALTH_TRIES; i++)); do
@@ -90,8 +121,7 @@ wait_until_up() {
       image="$(docker_inspect '{{.Config.Image}}' "$app_id")"
       health="$(docker_inspect \
         '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$app_id")"
-      if [ "$image" = "$want" ] && [ "$health" = healthy ] &&
-        [ "$(docker_inspect '{{.State.Running}}' "$gate_id")" = true ]; then
+      if [ "$image" = "$want" ] && [ "$health" = healthy ] && gate_stable "$gate_id"; then
         return 0
       fi
     fi
@@ -195,7 +225,7 @@ lines="$(grep -c '^APP_IMAGE=' .env || true)"
 [ "$lines" -ge 1 ] || fail ".env has no APP_IMAGE= line; add one as infra/README.md step 3f says"
 [ "$lines" -eq 1 ] || fail ".env has more than one APP_IMAGE= line"
 
-previous_image="$(sed -n 's/^APP_IMAGE=//p' .env)"
+previous_image="$(normalise "$(sed -n 's/^APP_IMAGE=//p' .env)")"
 
 # ---- save the current state ----
 
@@ -236,7 +266,7 @@ install_compose || roll_back "could not install the new compose.yaml"
 docker compose pull app gate || roll_back "docker compose pull failed"
 docker compose up -d || roll_back "docker compose up failed"
 wait_until_up "$new_image" ||
-  roll_back "app not healthy on the new image, or gate not running, after $HEALTH_TRIES checks"
+  roll_back "app not healthy on the new image, or gate not running steadily, after $HEALTH_TRIES checks"
 
 phase=finished
 rm -f .env.previous
