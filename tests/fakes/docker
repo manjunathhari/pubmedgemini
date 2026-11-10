@@ -6,15 +6,28 @@
 #   FAKE_UNHEALTHY_IMAGE=x  an app container running image x reports "unhealthy"
 #   FAKE_GATE_DOWN=1        the gate container is not running
 #   FAKE_DUMP_EMPTY=1       pg_dump writes nothing
+#   FAKE_BLOCK_ON=pull      the first "compose pull" writes $state/blocked and sleeps, so a test
+#   FAKE_BLOCK_ON=health    can signal the deploy there (health: the first app health check)
+# Each "compose pull" also writes the mode of .env.previous, if it exists, to
+# $state/previous_mode.
 set -u
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 state="$FAKE_DOCKER_STATE"
+
+block_once() {
+  if [ "${FAKE_BLOCK_ON:-}" = "$1" ] && [ ! -e "$state/blocked" ]; then
+    : > "$state/blocked"
+    exec sleep 30
+  fi
+}
 
 case "$*" in
   "compose exec -T db pg_dump"*)
     [ "${FAKE_DUMP_EMPTY:-}" = 1 ] || printf 'PGDMP fake dump\n'
     exit 0 ;;
   "compose pull"*)
+    if [ -e .env.previous ]; then stat -c %a .env.previous > "$state/previous_mode"; fi
+    block_once pull
     [ "${FAKE_FAIL_PULL:-}" = 1 ] && exit 1
     exit 0 ;;
   "compose up -d"*)
@@ -35,6 +48,7 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
   case "$id:$format" in
     fake-app-id:*Config.Image*) echo "$running" ;;
     fake-app-id:*Health*)
+      block_once health
       if [ -n "${FAKE_UNHEALTHY_IMAGE:-}" ] && [ "$running" = "$FAKE_UNHEALTHY_IMAGE" ]; then
         echo unhealthy
       else
