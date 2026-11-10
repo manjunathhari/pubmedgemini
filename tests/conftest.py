@@ -20,6 +20,40 @@ OWNER = "owner@example.com"
 
 
 @pytest.fixture
+def upstream():
+    """PubMed and Europe PMC replaying the recorded fixtures; records every request."""
+    from lit_fakes import FakeUpstream, europepmc_routes, pubmed_routes
+
+    return FakeUpstream(pubmed_routes() | europepmc_routes())
+
+
+def make_tools(pool, up):
+    from pubmedgemini.lit.europepmc import EuropePmc
+    from pubmedgemini.lit.http import LitClient, NcbiPacer
+    from pubmedgemini.lit.pubmed import PubMed
+    from pubmedgemini.lit.tools import LitTools
+
+    client = LitClient(up.transport, pacer=NcbiPacer(0), sleep=lambda _s: None)
+    return LitTools(PubMed(client, None, None), EuropePmc(client), pool)
+
+
+@pytest.fixture
+def migrated_pool(pool):
+    from pathlib import Path
+
+    from pubmedgemini.migrate import apply_migrations
+
+    apply_migrations(pool, Path("migrations"))
+    return pool
+
+
+@pytest.fixture
+def tools(migrated_pool, upstream):
+    """LitTools over a migrated pool and the replayed fixtures, with no NCBI pacing."""
+    return make_tools(migrated_pool, upstream)
+
+
+@pytest.fixture
 def db_url():
     """The test database URL, with the schema dropped and recreated."""
     url = os.environ.get("TEST_DATABASE_URL")
