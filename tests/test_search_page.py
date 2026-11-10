@@ -396,3 +396,44 @@ def test_a_lone_surrogate_in_a_title_is_shown_as_fffd_and_cached(client_for, db_
     with psycopg.connect(db_url) as conn:
         [(title,)] = conn.execute("SELECT title FROM papers WHERE pmid = %s", (ID1,)).fetchall()
     assert title == "Lap�aroscopic mesh"
+
+
+# ---------- an unexpected error is a plain 500 page and one fixed log line ----------
+
+INTERNAL = "Something went wrong. Please try again in a minute."
+
+
+def test_unexpected_error_in_a_route_is_a_plain_500(client_search, monkeypatch, caplog):
+    import logging
+
+    from pubmedgemini import web
+
+    def boom(*_a, **_k):
+        raise RuntimeError("zq7 hernia secret")
+
+    monkeypatch.setattr(web, "run_page_search", boom)
+    caplog.set_level(logging.DEBUG)
+    r = client_search.post("/search", data={"q": "zq7 hernia"}, headers=H)
+    assert r.status_code == 500 and INTERNAL in r.text
+    assert "zq7" not in r.text.replace('value="zq7 hernia"', "") and "Traceback" not in r.text
+    messages = [x.getMessage() for x in caplog.records]
+    assert [m for m in messages if "kind=internal" in m] == ["kind=internal error=RuntimeError"]
+    assert "request method=POST route=/search status=500" in messages
+    assert "zq7" not in caplog.text and "Traceback" not in caplog.text
+    assert all(x.exc_info is None for x in caplog.records)
+
+
+def test_unexpected_error_from_upstream_is_a_plain_500(db_url, caplog):
+    import logging
+
+    from crash_app import _explode
+
+    caplog.set_level(logging.DEBUG)
+    up = FakeUpstream({})
+    up.transport = httpx.MockTransport(_explode)
+    with search_client(db_url, up) as c:
+        r = c.post("/search", data={"q": "zq7 hernia"}, headers=H)
+    assert r.status_code == 500 and INTERNAL in r.text
+    assert "zq7" not in caplog.text and "eutils" not in caplog.text
+    assert [m for m in (x.getMessage() for x in caplog.records) if "kind=internal" in m] == [
+        "kind=internal error=RuntimeError"]

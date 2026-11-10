@@ -75,6 +75,55 @@ def test_production_stderr_has_request_lines_and_no_connection_details():
         assert leak not in err, leak
 
 
+def test_unexpected_error_under_uvicorn_prints_no_traceback_or_search_text(db_url):
+    """A route that fails unexpectedly, under the real server: one fixed line, and neither
+    the app nor Uvicorn's error logger prints a traceback or the search text."""
+    import os
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    import httpx
+
+    root = Path(__file__).resolve().parents[1]
+    port = _free_port()
+    env = os.environ | {
+        "APP_ENV": "dev",
+        "DATABASE_URL": db_url,
+        "OWNER_EMAIL": "owner@example.com",
+        "PYTHONPATH": os.pathsep.join([str(root / "src"), str(root / "tests")]),
+    }
+    cmd = [sys.executable, "-m", "uvicorn", "--factory", "crash_app:build",
+           "--host", "127.0.0.1", "--port", str(port), "--no-access-log"]
+    proc = subprocess.Popen(
+        cmd, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    base = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                health = httpx.get(f"{base}/healthz", timeout=10)
+                break
+            except httpx.TransportError:
+                if time.monotonic() > deadline or proc.poll() is not None:
+                    raise
+                time.sleep(0.2)
+        r = httpx.post(f"{base}/search", data={"q": "zq7 hernia"},
+                       headers={"x-dev-user-email": "owner@example.com"}, timeout=30)
+        assert (health.status_code, r.status_code) == (200, 500)
+        assert "Something went wrong. Please try again in a minute." in r.text
+    finally:
+        proc.terminate()
+        out, err = proc.communicate(timeout=10)
+    assert err.count("kind=internal error=RuntimeError") == 1, err
+    assert "request method=POST route=/search status=500" in err
+    for leak in ("zq7", "hernia", "Traceback", "eutils", "ebi.ac.uk", "unexpected failure",
+                 "Exception in ASGI"):
+        assert leak not in err + out, leak
+
+
 def test_configuring_logging_twice_adds_one_handler(settings_prod):
     import logging as std_logging
 

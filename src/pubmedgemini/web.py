@@ -25,6 +25,7 @@ NOT_SET_UP = (
 DB_DOWN = "The database could not be reached. Please try again in a minute."
 NOT_READY = "The app could not finish starting. Please try again in a minute."
 BOTH_DOWN = "PubMed and Europe PMC could not be reached. Please try again in a minute."
+INTERNAL_ERROR = "Something went wrong. Please try again in a minute."
 SOURCE_NAMES = {"pubmed": "PubMed", "europepmc": "Europe PMC"}
 
 
@@ -174,7 +175,14 @@ def register(app: FastAPI) -> None:
 
     @app.middleware("http")
     async def log_request(request: Request, call_next):
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as exc:  # noqa: BLE001
+            # Anything no handler above took. Answered here, not re-raised, so neither this
+            # app nor Uvicorn prints a traceback: its text can hold the search text or a URL.
+            # The class name is a fixed word; the message is never logged.
+            log.error("kind=internal error=%s", type(exc).__name__)
+            response = _message(request, INTERNAL_ERROR, 500)
         route = getattr(request.scope.get("route"), "path", "unmatched")
         log.info("request method=%s route=%s status=%s", request.method, route, response.status_code)
         return response
