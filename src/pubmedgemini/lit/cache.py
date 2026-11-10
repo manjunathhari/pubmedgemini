@@ -10,9 +10,14 @@ from psycopg_pool import ConnectionPool
 
 from pubmedgemini.lit.design import design_label
 from pubmedgemini.lit.paper import Paper
+from pubmedgemini.lit.text import clean_text
 
 FRESH_DAYS = 30  # rows older than this are not served
 PRUNE_DAYS = 90  # rows older than this are deleted by prune()
+
+def _clean(s: str | None) -> str | None:
+    return clean_text(s) if s is not None else None
+
 
 _COLUMNS = "pmid, pmcid, doi, title, authors, journal, year, pub_types, abstract, retracted"
 
@@ -48,7 +53,9 @@ def get_many(pool: ConnectionPool, pmids: Sequence[str]) -> list[Paper]:
 def put_many(pool: ConnectionPool, papers: Sequence[Paper]) -> None:
     """Upserts papers in one transaction and stamps them as fetched now. A refresh never
     erases: a missing doi, pmcid or abstract keeps the stored value, and `retracted` is
-    sticky once set. Papers without a PMID have no key and are skipped."""
+    sticky once set. Papers without a PMID have no key and are skipped. Every text is
+    cleaned first (`text.clean_text`: no NUL, no lone surrogate), so one odd character
+    cannot fail the whole batch."""
     with pool.connection() as conn, conn.transaction():
         for p in papers:
             pmid = p.pmid.strip() if p.pmid else ""
@@ -69,15 +76,15 @@ def put_many(pool: ConnectionPool, papers: Sequence[Paper]) -> None:
                 " fetched_at = now()",
                 (
                     pmid,
-                    p.pmcid,
-                    p.doi,
-                    p.title,
-                    list(p.authors),
-                    p.journal,
+                    _clean(p.pmcid),
+                    _clean(p.doi),
+                    clean_text(p.title),
+                    [clean_text(a) for a in p.authors],
+                    _clean(p.journal),
                     p.year,
-                    list(p.pub_types),
+                    [clean_text(t) for t in p.pub_types],
                     design_label(p.title, p.pub_types),
-                    p.abstract,
+                    _clean(p.abstract),
                     p.retracted,
                 ),
             )

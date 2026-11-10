@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 import httpx
 
+from pubmedgemini.lit.text import clean_json, clean_text
+
 BASE_HOSTS = ("eutils.ncbi.nlm.nih.gov", "www.ebi.ac.uk")
 NCBI_HOST = BASE_HOSTS[0]
 
@@ -153,14 +155,17 @@ class LitClient:
         )
 
     def get_json(self, url: str, params: Mapping[str, str]) -> Any:
+        """The parsed reply, every string cleaned (`text.clean_text`). Malformed or too
+        deeply nested JSON is "parse"."""
         body = self._get(url, params)
         try:
-            return json.loads(body)
-        except ValueError:
+            return clean_json(json.loads(body))
+        except (ValueError, RecursionError):
             raise LitError("parse") from None
 
     def get_text(self, url: str, params: Mapping[str, str]) -> str:
-        return self._get(url, params).decode("utf-8", errors="replace")
+        """The reply as UTF-8 (bad bytes as U+FFFD), cleaned (`text.clean_text`)."""
+        return clean_text(self._get(url, params).decode("utf-8", errors="replace"))
 
     def close(self) -> None:
         self._http.close()

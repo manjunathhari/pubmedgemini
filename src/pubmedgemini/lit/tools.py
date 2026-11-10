@@ -209,13 +209,16 @@ class LitTools:
             return []
 
     def _store(self, papers: Sequence[Paper]) -> None:
-        """Writes papers with a valid PMID to the cache; a failure is logged only."""
+        """Writes papers with a valid PMID to the cache; any failure is logged only, with a
+        fixed kind (the exception's text can hold a title)."""
         valid = [p for p in papers if p.pmid is not None and valid_pmid(p.pmid)]
         if not valid:
             return
+        # Any failure is caught, so one odd paper never fails a tool; KeyboardInterrupt and
+        # SystemExit are not Exceptions and still propagate. The text is not logged.
         try:
             put_many(self._pool, valid)
-        except psycopg.Error:
+        except Exception:  # noqa: BLE001
             log.warning("lit kind=cache_write_failed")
 
     def _summaries(self, pmids: Sequence[str]) -> list[Paper]:

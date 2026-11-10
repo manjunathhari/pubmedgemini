@@ -344,3 +344,55 @@ def test_nothing_from_upstream_is_rendered_as_html(client_for):
         assert raw not in r.text, raw
     assert r.text.count("<style>") == 1  # the page's own
     assert "https://doi.org/10.1/%22%3E%3Cscript%3E" in r.text
+
+
+# ---------- one bad upstream reply never gives a 500 (review finding C) ----------
+
+DEEP_JSON = "[" * 100_000 + "]" * 100_000
+DEEP_XML = ("<PubmedArticleSet><PubmedArticle><MedlineCitation>" + "<x>" * 50_000
+            + "</x>" * 50_000 + "</MedlineCitation></PubmedArticle></PubmedArticleSet>")
+
+
+def test_deeply_nested_json_from_pubmed_shows_europepmc(client_for):
+    c, _ = client_for({ESEARCH: httpx.Response(200, text=DEEP_JSON)})
+    r = c.post("/search", data={"q": "mesh"}, headers=H)
+    assert r.status_code == 200
+    assert "PubMed could not be reached; searched Europe PMC only" in r.text
+
+
+def test_deeply_nested_json_from_europepmc_shows_pubmed(client_for):
+    c, _ = client_for({EPMC: httpx.Response(200, text=DEEP_JSON)})
+    r = c.post("/search", data={"q": "mesh"}, headers=H)
+    assert r.status_code == 200
+    assert "Europe PMC could not be reached; searched PubMed only" in r.text
+
+
+def test_deeply_nested_json_from_both_is_503(client_for):
+    c, _ = client_for({ESEARCH: httpx.Response(200, text=DEEP_JSON),
+                       EPMC: httpx.Response(200, text=DEEP_JSON)})
+    r = c.post("/search", data={"q": "mesh"}, headers=H)
+    assert r.status_code == 503 and BOTH_DOWN in r.text
+
+
+def test_deeply_nested_efetch_xml_shows_titles_only(client_for):
+    # efetch is the only XML reply and only abstracts come from it, so both searches stand
+    # and the page says the abstracts could not be fetched.
+    c, _ = client_for({EFETCH: httpx.Response(200, text=DEEP_XML)})
+    r = c.post("/search", data={"q": "mesh"}, headers=H)
+    assert r.status_code == 200 and BOTH_SEARCHED in r.text
+    assert "Abstracts could not be fetched just now; titles only." in r.text
+
+
+def test_a_lone_surrogate_in_a_title_is_shown_as_fffd_and_cached(client_for, db_url):
+    body = json.loads(fixture("esummary.json"))
+    body["result"][ID1]["title"] = "Lap\ud800aroscopic mesh"
+    raw = json.dumps(body)  # ensure_ascii: the lone surrogate is written as \ud800
+    assert "\\ud800" in raw
+    c, _ = client_for({ESUMMARY: httpx.Response(200, text=raw)})
+    r = c.post("/search", data={"q": "mesh"}, headers=H)
+    assert r.status_code == 200 and "Lap�aroscopic mesh" in r.text
+    import psycopg
+
+    with psycopg.connect(db_url) as conn:
+        [(title,)] = conn.execute("SELECT title FROM papers WHERE pmid = %s", (ID1,)).fetchall()
+    assert title == "Lap�aroscopic mesh"

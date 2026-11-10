@@ -318,6 +318,35 @@ def test_cache_write_failure_never_fails_the_request(tools, monkeypatch, caplog)
     assert "lit kind=cache_write_failed" in caplog.text and "zq7" not in caplog.text
 
 
+@pytest.mark.parametrize("exc", [
+    UnicodeEncodeError("utf-8", "zq7", 0, 1, "surrogates not allowed"),
+    ValueError("zq7"),
+    RuntimeError("zq7"),
+])
+def test_any_cache_write_error_is_logged_and_never_fails_the_request(
+    tools, monkeypatch, caplog, exc
+):
+    caplog.set_level(logging.INFO, logger="pubmedgemini")
+
+    def broken(*_a, **_k):
+        raise exc
+
+    monkeypatch.setattr(tools_module, "put_many", broken)
+    result = tools.get_abstracts([ID1, ID2])
+    assert [p.pmid for p in result.papers] == [ID1, ID2]
+    lines = [r.getMessage() for r in caplog.records if "cache_write" in r.getMessage()]
+    assert lines == ["lit kind=cache_write_failed"] and "zq7" not in caplog.text
+
+
+def test_keyboard_interrupt_in_a_cache_write_is_not_swallowed(tools, monkeypatch):
+    def interrupted(*_a, **_k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(tools_module, "put_many", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        tools.get_abstracts([ID1])
+
+
 def test_cache_write_on_a_closed_pool_never_fails(tools, migrated_pool):
     migrated_pool.close()  # get_many and put_many both raise
     result = tools.get_abstracts([ID1])

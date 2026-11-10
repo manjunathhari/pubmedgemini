@@ -1,3 +1,4 @@
+import json
 import threading
 
 import httpx
@@ -496,3 +497,28 @@ def test_the_deadline_is_per_attempt_so_a_retry_starts_afresh():
     up = FakeUpstream({(NCBI_HOST, "/x"): lambda req: next(replies)(req)})
     c = LitClient(up.transport, sleep=clock.sleep, clock=clock.now)
     assert c.get_text(NCBI_URL, {}) == "aa" and len(up.sent) == 2
+
+
+# ---------- one bad reply is a fixed kind, never a crash ----------
+
+DEEP_JSON = "[" * 100_000 + "]" * 100_000
+
+
+def test_deeply_nested_json_is_parse():
+    up = FakeUpstream({(NCBI_HOST, "/x"): httpx.Response(200, text=DEEP_JSON)})
+    with pytest.raises(LitError) as e:
+        LitClient(up.transport).get_json(NCBI_URL, {})
+    assert e.value.kind == "parse" and e.value.__cause__ is None and e.value.__suppress_context__
+
+
+def test_lone_surrogates_and_nul_in_json_text_are_cleaned():
+    raw = '{"t": "a\\ud800b\\u0000c", "k\\udfff": ["\\ud83d\\ude00", "x\\udc00", 1, null], "n": {"m": "\\u0000"}}'
+    up = FakeUpstream({(NCBI_HOST, "/x"): httpx.Response(200, text=raw)})
+    body = LitClient(up.transport).get_json(NCBI_URL, {})
+    assert body == {"t": "a�bc", "k�": ["\U0001f600", "x�", 1, None], "n": {"m": ""}}
+    json.dumps(body, ensure_ascii=False).encode("utf-8")  # encodes cleanly
+
+
+def test_nul_in_text_is_removed():
+    up = FakeUpstream({(NCBI_HOST, "/x"): httpx.Response(200, content=b"a\x00b\xffc")})
+    assert LitClient(up.transport).get_text(NCBI_URL, {}) == "ab�c"

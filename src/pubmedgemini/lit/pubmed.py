@@ -292,8 +292,15 @@ class _Building:
 
 
 def parse_efetch(xml: str) -> list[FetchedRecord]:
-    """Records of an efetch `PubmedArticleSet`. Anything malformed is LitError("parse");
-    records without a PMID are skipped."""
+    """Records of an efetch `PubmedArticleSet`. Anything malformed or too deeply nested is
+    LitError("parse"); records without a PMID are skipped."""
+    try:
+        return _parse_efetch(xml)
+    except RecursionError:  # nesting too deep for the walk below
+        raise LitError("parse") from None
+
+
+def _parse_efetch(xml: str) -> list[FetchedRecord]:
     try:
         root = ET.fromstring(_neutralise_entities(xml))
     except (ET.ParseError, ValueError):

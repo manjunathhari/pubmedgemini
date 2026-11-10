@@ -311,6 +311,15 @@ def test_efetch_malformed_is_parse(xml):
     assert e.value.__cause__ is None and e.value.__suppress_context__
 
 
+def test_efetch_deeply_nested_is_parse():
+    deep = "<x>" * 50_000 + "</x>" * 50_000
+    xml = f"<PubmedArticleSet><PubmedArticle><MedlineCitation>{deep}</MedlineCitation></PubmedArticle></PubmedArticleSet>"
+    with pytest.raises(LitError) as e:
+        parse_efetch(xml)
+    assert e.value.kind == "parse"
+    assert e.value.__cause__ is None and e.value.__suppress_context__
+
+
 # ---------- elink ----------
 
 def test_elink_fixture():

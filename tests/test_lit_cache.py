@@ -165,3 +165,16 @@ def test_start_up_carries_on_when_the_prune_fails(settings_prod, monkeypatch, ca
     lines = [r.getMessage() for r in caplog.records if r.name == "pubmedgemini.main"]
     assert lines == ["paper_cache kind=prune_failed error=InsufficientPrivilege sqlstate=42501"]
     assert "details" not in caplog.text
+
+
+def test_nul_and_lone_surrogates_are_cleaned_so_the_whole_batch_is_cached(cache_pool):
+    bad = paper(pmid="1", title="Mesh\x00 repair", abstract="a\x00b", journal="J\ud800",
+                authors=["Smith\x00 J"], pub_types=["Review\x00"], doi="10.1/\x00x",
+                pmcid="PMC\x009")
+    put_many(cache_pool, [paper(pmid="2"), bad, paper(pmid="3")])
+    got = {p.pmid: p for p in get_many(cache_pool, ["1", "2", "3"])}
+    assert sorted(got) == ["1", "2", "3"]
+    one = got["1"]
+    assert (one.title, one.abstract, one.journal) == ("Mesh repair", "ab", "J\ufffd")
+    assert (one.authors, one.pub_types, one.doi, one.pmcid) == (
+        ["Smith J"], ["Review"], "10.1/x", "PMC9")
