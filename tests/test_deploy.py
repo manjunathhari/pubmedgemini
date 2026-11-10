@@ -1,11 +1,12 @@
 import os
+import shutil
 import signal
 import stat
 import subprocess
 import time
 
 import pytest
-from shell_helpers import docker_calls, run_script, start_script
+from shell_helpers import FAKES, docker_calls, run_script, start_script
 
 OLD = "ghcr.io/example/pubmedgemini:old"
 NEW = "ghcr.io/example/pubmedgemini:new"
@@ -240,6 +241,46 @@ def test_a_traefik_subnet_list_is_accepted(tmp_path):
     app, state = _vps(tmp_path, env_text)
     r = _deploy(app, state, NEW)
     assert r.returncode == 0, r.stderr
+
+
+# ---- .env owned by another account ----
+
+
+def _cp_that_cannot_keep_the_owner_of_env(tmp_path) -> str:
+    """A cp on PATH whose copies of .env end up owned by another account, as when the deploy
+    account copies a .env it can read and write but does not own."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    cp = bin_dir / "cp"
+    cp.write_text(
+        "#!/bin/sh\n"
+        'for a; do src="$dst"; dst="$a"; done\n'
+        f'"{shutil.which("cp")}" "$@" || exit\n'
+        '[ "$src" = .env ] || exit 0\n'
+        'chown 65534 "$dst" 2>/dev/null || exit 1\n'
+    )
+    cp.chmod(0o755)
+    return f"{bin_dir}{os.pathsep}{FAKES}{os.pathsep}{os.environ['PATH']}"
+
+
+def test_env_owned_by_another_account_fails_the_checks_and_changes_nothing(tmp_path):
+    app, state = _vps(tmp_path)
+    r = _deploy(app, state, NEW, PATH=_cp_that_cannot_keep_the_owner_of_env(tmp_path))
+    assert r.returncode != 0
+    assert "cannot copy .env with its owner, group and mode kept" in r.stderr
+    _assert_unchanged(app, state)  # no .env.previous, no temporary file
+    assert docker_calls(state) == []
+
+
+def test_env_owned_by_another_account_is_named_even_with_leftover_copies(tmp_path):
+    app, state = _half_switched(tmp_path)
+    before = {n: (app / n).read_bytes() for n in _names(app) if n != ".deploy-tmp.abc123"}
+    r = _deploy(app, state, NEW, PATH=_cp_that_cannot_keep_the_owner_of_env(tmp_path))
+    assert r.returncode != 0
+    assert "cannot copy .env with its owner, group and mode kept" in r.stderr
+    assert "interrupted earlier deploy" not in r.stderr
+    assert {n: (app / n).read_bytes() for n in before} == before
+    assert docker_calls(state) == []
 
 
 # ---- the previous APP_IMAGE as docker compose reads it ----

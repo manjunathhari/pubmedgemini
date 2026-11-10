@@ -234,9 +234,17 @@ exec 9>>.deploy.lock || fail "cannot open $APP_DIR/.deploy.lock"
 flock -n 9 || fail "another deploy is running in $APP_DIR; nothing was changed, try again when it ends"
 locked=1
 
+cleanup_tmp
+
+# Later steps (and any restore) copy .env keeping its owner, group and mode. Try that now
+# with the same helper, so a .env that belongs to another account fails here, before
+# anything changes, and not halfway through with .env.previous left behind.
+trial="$(tmp_copy_of .env)" ||
+  fail "cannot copy .env with its owner, group and mode kept: .env must belong to $me (and to a group $me is in); nothing was changed"
+rm -f "$trial"
+
 # ---- an earlier deploy that was killed outright: go back to its saved state first ----
 
-cleanup_tmp
 if [ -f .env.previous ]; then
   say "found the copies left by an interrupted earlier deploy; restoring .env and compose.yaml from them first"
   restore_files || fail "could not restore from .env.previous; check $APP_DIR by hand"
