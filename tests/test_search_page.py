@@ -194,11 +194,15 @@ def test_both_down_is_503_plain(client_for):
     assert r.status_code == 503 and BOTH_DOWN in r.text and "Traceback" not in r.text
 
 
-def test_abstracts_down_shows_titles_only(client_for):
-    c, _ = client_for({ESUMMARY: httpx.Response(503), EFETCH: httpx.Response(503)})
+def test_esummary_down_is_pubmed_not_reached_and_is_not_asked_again(client_for):
+    # PubMed's search needs esummary, so PubMed counts as not reached; the page does not ask
+    # NCBI again for abstracts and shows Europe PMC's (review finding B).
+    c, up = client_for({ESUMMARY: httpx.Response(503), EFETCH: httpx.Response(503)})
     r = c.post("/search", data={"q": "mesh"}, headers=H)
     assert r.status_code == 200
-    assert "Abstracts could not be fetched just now; titles only." in r.text
+    assert "PubMed could not be reached; searched Europe PMC only" in r.text
+    assert sent_to(up, "efetch.fcgi") == [] and len(sent_to(up, "esummary.fcgi")) == 3
+    assert "Abstracts could not be fetched just now; titles only." not in r.text
 
 
 def test_efetch_down_alone_shows_titles_only(client_for):
@@ -437,3 +441,56 @@ def test_unexpected_error_from_upstream_is_a_plain_500(db_url, caplog):
     assert "zq7" not in caplog.text and "eutils" not in caplog.text
     assert [m for m in (x.getMessage() for x in caplog.records) if "kind=internal" in m] == [
         "kind=internal error=RuntimeError"]
+
+
+# ---------- abstracts when PubMed is down, and the "titles only" line (findings B and F) ----------
+
+TITLES_ONLY = "Abstracts could not be fetched just now; titles only."
+NCBI_DOWN = {ESEARCH: httpx.Response(503), ESUMMARY: httpx.Response(503),
+             EFETCH: httpx.Response(503)}
+
+
+def ncbi_sent(up: FakeUpstream) -> list[httpx.Request]:
+    return [r for r in up.sent if r.url.host == EUTILS_HOST]
+
+
+def test_pubmed_down_asks_ncbi_once_and_shows_europepmc_abstracts(client_for):
+    c, up = client_for(NCBI_DOWN)
+    r = c.post("/search", data={"q": "mesh"}, headers=H)
+    assert r.status_code == 200
+    assert "PubMed could not be reached; searched Europe PMC only" in r.text
+    # One round of attempts (the first and its two retries), all for the search itself.
+    assert [x.url.path for x in ncbi_sent(up)] == [EUTILS_PATH + "esearch.fcgi"] * 3
+    assert "There is substantial media and patient interest" in r.text
+    assert TITLES_ONLY not in r.text
+
+
+def test_pubmed_down_still_uses_abstracts_already_cached(client_for):
+    c, up = client_for({})
+    c.post("/search", data={"q": "mesh"}, headers=H)  # warms the cache
+    up.routes.update(NCBI_DOWN)
+    up.sent.clear()
+    r = c.post("/search", data={"q": "mesh"}, headers=H)
+    assert "PubMed could not be reached; searched Europe PMC only" in r.text
+    assert len(ncbi_sent(up)) == 3
+    assert "<p>BACKGROUND: There is substantial media" in r.text  # PubMed's, from the cache
+    assert TITLES_ONLY not in r.text
+
+
+def test_efetch_429_with_papers_lacking_abstracts_shows_titles_only(client_for):
+    c, _ = client_for({EFETCH: httpx.Response(429)})
+    r = c.post("/search", data={"q": "mesh"}, headers=H)
+    assert r.status_code == 200 and BOTH_SEARCHED in r.text
+    assert "No abstract available." in r.text and TITLES_ONLY in r.text
+
+
+def test_efetch_failure_with_every_abstract_shown_has_no_titles_only_line(client_for):
+    c, up = client_for({
+        ESEARCH: httpx.Response(200, json={"esearchresult": {"count": "0", "idlist": []}}),
+        EFETCH: httpx.Response(503),
+    })
+    r = c.post("/search", data={"q": "mesh"}, headers=H)
+    assert r.status_code == 200 and BOTH_SEARCHED in r.text
+    assert sent_to(up, "efetch.fcgi")  # the fetch was tried and failed
+    assert "No abstract available." not in r.text
+    assert TITLES_ONLY not in r.text

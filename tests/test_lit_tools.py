@@ -467,3 +467,18 @@ def test_fetch_failed_is_set_only_when_a_lookup_failed(migrated_pool):
     result = esummary_down.get_abstracts([ID1, ID3])
     assert result.fetch_failed is True and result.not_found == (ID3,)
     assert "fetch_failed" not in result.to_json()
+
+
+def test_cached_abstracts_reads_the_cache_only(tools, upstream):
+    tools.get_abstracts([ID1])  # caches ID1
+    upstream.sent.clear()
+    result = tools.cached_abstracts([ID2, ID1])
+    assert upstream.sent == []
+    assert [p.pmid for p in result.papers] == [ID1] and result.papers[0].abstract
+    assert result.not_found == (ID2,) and result.cached == 1 and not result.fetch_failed
+
+
+def test_cached_abstracts_checks_its_input(tools, upstream):
+    with pytest.raises(ToolInputError):
+        tools.cached_abstracts(["12x"])
+    assert upstream.sent == []

@@ -51,7 +51,7 @@ class PageResult:
     epmc_count: int | None
     not_reached: tuple[str, ...]  # "pubmed" / "europepmc": searched but unreachable
     not_run: tuple[str, ...]  # refused the text (only PubMed, for an underscore)
-    abstracts_failed: bool
+    abstracts_failed: bool  # a fetch failed and at least one shown paper has no abstract
     cached: int
 
 
@@ -120,16 +120,19 @@ def run_page_search(tools: LitTools, text: str) -> PageResult:
         pmid = p.pmid.strip() if p.pmid else ""
         if valid_pmid(pmid) and pmid not in pmids:
             pmids.append(pmid)
-    abstracts_failed = False
+    fetch_failed = False
     cached = 0
     if pmids:
+        # PubMed was just tried with all its retries; asking it again for abstracts would
+        # only wait through another round. The cache and Europe PMC's abstracts serve.
+        pubmed_down = "pubmed" in not_reached
         try:
-            result = tools.get_abstracts(pmids)
+            result = tools.cached_abstracts(pmids) if pubmed_down else tools.get_abstracts(pmids)
         except (ToolFailed, ToolInputError):
-            abstracts_failed = True
+            fetch_failed = True
         else:
             cached = result.cached
-            abstracts_failed = result.fetch_failed
+            fetch_failed = result.fetch_failed
             records = {r.pmid: r for r in result.papers}
             for p in merged:
                 rec = records.get(p.pmid.strip()) if p.pmid else None
@@ -144,12 +147,14 @@ def run_page_search(tools: LitTools, text: str) -> PageResult:
                 p.pub_types = p.pub_types + [t for t in rec.pub_types if t not in p.pub_types]
                 p.retracted = p.retracted or rec.retracted
 
+    shown = tuple(_shown(p) for p in merged)
     return PageResult(
-        papers=tuple(_shown(p) for p in merged),
+        papers=shown,
         pubmed_count=pubmed[0] if pubmed else None,
         epmc_count=epmc[0] if epmc else None,
         not_reached=not_reached,
         not_run=not_run,
-        abstracts_failed=abstracts_failed,
+        # The "titles only" line: only when a fetch failed and a shown paper has no abstract.
+        abstracts_failed=fetch_failed and any(not p.abstract for p in shown),
         cached=cached,
     )

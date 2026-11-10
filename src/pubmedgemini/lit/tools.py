@@ -323,6 +323,24 @@ class LitTools:
             papers, cached, fetch_failed = self._fetch_papers(ids, tool)
         except LitError as e:
             raise self._failed(tool, e) from None
+        return self._abstracts(tool, ids, papers, cached, fetch_failed)
+
+    def cached_abstracts(self, pmids: object) -> AbstractsResult:
+        """For the search page only, when PubMed could not be reached: what the cache holds
+        for 1 to 20 PMIDs, in the order asked; nothing is sent upstream. Not a model tool."""
+        tool = "cached_abstracts"
+        ids = _pmids(pmids)
+        papers = {p.pmid: p for p in self._cached(ids) if p.pmid in ids}
+        return self._abstracts(tool, ids, papers, len(papers), False)
+
+    def _abstracts(
+        self,
+        tool: str,
+        ids: list[str],
+        papers: dict[str, Paper],
+        cached: int,
+        fetch_failed: bool,
+    ) -> AbstractsResult:
         out: list[AbstractRecord] = []
         not_found: list[str] = []
         for pmid in ids:
