@@ -58,6 +58,10 @@ Write down:
 
 Do not edit that file.
 
+If 2b shows `network_mode: host`, Traefik has no Docker network. Then do 2d and
+2e now, use `pubmedgemini-edge` as `TRAEFIK_NETWORK` and the range 2e prints as
+`TRAEFIK_SUBNET`, and skip 2c. Otherwise skip 2d and 2e.
+
 2c. On the VPS, print the address range of that network (replace
 `<TRAEFIK_NETWORK>` with the name from 2b):
 
@@ -68,6 +72,19 @@ docker network inspect <TRAEFIK_NETWORK> --format '{{range .IPAM.Config}}{{.Subn
 It prints one or more ranges, each written as `<address>/<size>`. Write it down as
 `TRAEFIK_SUBNET`; if it prints more than one, join them with a comma and no
 spaces. The gate trusts the forwarded headers only from this range.
+
+2d. Only if Traefik runs with `network_mode: host`: on the VPS, make a network
+just for the gate:
+
+```
+docker network create pubmedgemini-edge
+```
+
+2e. Only in that case: on the VPS, print its address range:
+
+```
+docker network inspect pubmedgemini-edge --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'
+```
 
 ### Step 3. Make the folder, the allow list and `.env`
 
@@ -157,67 +174,74 @@ nano /opt/pubmedgemini/.env
 ### Step 5. Make the deploy key
 
 GitHub will log in to the VPS with this key to deploy. It is used for nothing
-else.
+else. You only need the VPS's web console and GitHub's website. Run the
+commands on the VPS as root.
 
-5a. On your computer, make the key pair (no passphrase, so GitHub can use it):
-
-```
-ssh-keygen -t ed25519 -N "" -C pubmedgemini-deploy -f ./pubmedgemini_deploy
-```
-
-5b. On your computer, put the public half on the VPS:
+5a. On the VPS, remove any older deploy key line from the allowed keys (if it
+says "No such file or directory", go on):
 
 ```
-ssh-copy-id -i ./pubmedgemini_deploy.pub <VPS_USER>@<VPS_ADDRESS>
+sed -i '/pubmedgemini-deploy$/d' /root/.ssh/authorized_keys
 ```
 
-5c. On your computer, save the private half as a GitHub secret (run these from
-inside the repo folder):
+5b. On the VPS, make the key pair (no passphrase, so GitHub can use it; if it
+asks to overwrite, answer `y`):
 
 ```
-gh secret set VPS_SSH_KEY < ./pubmedgemini_deploy
+ssh-keygen -t ed25519 -N "" -C pubmedgemini-deploy -f /root/pubmedgemini_deploy
 ```
 
-5d. On your computer, delete the private file now that GitHub has it:
+5c. On the VPS, allow the public half to log in:
 
 ```
-rm ./pubmedgemini_deploy ./pubmedgemini_deploy.pub
+cat /root/pubmedgemini_deploy.pub >> /root/.ssh/authorized_keys
 ```
 
-5e. On the VPS, print the VPS's own fingerprint:
+5d. On the VPS, print the private half as ONE line of letters and digits:
 
 ```
-ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+base64 -w0 /root/pubmedgemini_deploy; echo
 ```
 
-5f. On your computer, save the VPS's host key as a secret (this is what keeps
-host key checking on):
+5e. On the VPS, print the key's fingerprint and write it down:
 
 ```
-ssh-keyscan -t ed25519 <VPS_ADDRESS> | gh secret set VPS_KNOWN_HOSTS
+ssh-keygen -lf /root/pubmedgemini_deploy.pub
 ```
 
-5g. On your computer, check that the fingerprint of what you saved matches 5e:
+5f. On GitHub's website, open the repository, then Settings, Secrets and
+variables, Actions, New repository secret. Name it `VPS_SSH_KEY` and paste the
+line from 5d as the value. Line breaks or spaces added by copying do not
+matter. Every deploy prints the key's fingerprint in its log, in the step
+"Prepare SSH"; it must equal the one from 5e.
+
+5g. On the VPS, delete both key files now that GitHub has the key:
 
 ```
-ssh-keyscan -t ed25519 <VPS_ADDRESS> | ssh-keygen -lf -
+rm /root/pubmedgemini_deploy /root/pubmedgemini_deploy.pub
 ```
 
-5h. On your computer, save the address (GitHub asks you to type the value):
+5h. On the VPS, print the VPS's own host key line (this is what keeps host key
+checking on). Replace `<VPS_ADDRESS>` with the address:
 
 ```
-gh secret set VPS_HOST
+printf '%s %s\n' '<VPS_ADDRESS>' "$(cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)"
 ```
 
-5i. On your computer, save the user name (type the value when asked):
+5i. On GitHub's website, add a repository secret named `VPS_KNOWN_HOSTS` and
+paste that line as the value.
 
-```
-gh secret set VPS_USER
-```
+5j. On GitHub's website, add a repository secret named `VPS_HOST` with the
+VPS's address (`<VPS_ADDRESS>`) as the value.
+
+5k. On GitHub's website, add a repository secret named `VPS_USER` with
+`<VPS_USER>` as the value.
 
 `<VPS_USER>` must be able to write in `/opt/pubmedgemini` and run `docker`.
 The plan keeps `.env` owned by root, so this user is root in practice. If you
 would rather use a separate user, tell me before you start; it changes step 3.
+The key in 5c is added for root; a separate user would need it in that user's
+own `authorized_keys` instead.
 
 **Deploy account: awaiting the owner's decision.**
 
