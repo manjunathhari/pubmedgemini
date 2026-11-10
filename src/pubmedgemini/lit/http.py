@@ -17,6 +17,7 @@ import httpx
 BASE_HOSTS = ("eutils.ncbi.nlm.nih.gov", "www.ebi.ac.uk")
 NCBI_HOST = BASE_HOSTS[0]
 
+# A total for each attempt (Incisive `REQUEST_TIMEOUT`); httpx's timeout also bounds each phase.
 REQUEST_TIMEOUT_SECONDS = 20.0
 # Retries after the first attempt, on 5xx, timeout or network error only (not 429).
 MAX_RETRIES = 2
@@ -138,9 +139,11 @@ class LitClient:
         transport: httpx.BaseTransport | None = None,
         pacer: NcbiPacer | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._pacer = pacer
         self._sleep = sleep
+        self._clock = clock
         self._http = httpx.Client(
             transport=transport,
             follow_redirects=False,
@@ -197,10 +200,16 @@ class LitClient:
             self._sleep(RETRY_BACKOFF_SECONDS * attempt)
 
     def _attempt(self, url: httpx.URL) -> "bytes | _Redirect":
+        """One request. REQUEST_TIMEOUT_SECONDS is a total for the attempt, as reqwest's
+        timeout is in Incisive: httpx's own timeout bounds each connect and each read, so the
+        total is checked once the reply's head is in and after every chunk of the body."""
+        deadline = self._clock() + REQUEST_TIMEOUT_SECONDS
         request = self._http.build_request("GET", url)
         try:
             response = self._http.send(request, stream=True)
         except _Redirect as redirect:
+            if self._clock() > deadline:
+                raise LitError("timeout") from None
             return redirect
         except LitError:
             raise
@@ -211,6 +220,8 @@ class LitClient:
         except httpx.HTTPError:
             raise LitError("network") from None
         try:
+            if self._clock() > deadline:
+                raise LitError("timeout") from None
             if not response.is_success:
                 raise LitError("http", response.status_code) from None
             length = response.headers.get("content-length", "")
@@ -219,6 +230,8 @@ class LitClient:
             body = bytearray()
             try:
                 for chunk in response.iter_bytes():
+                    if self._clock() > deadline:
+                        raise LitError("timeout") from None
                     if len(body) + len(chunk) > MAX_BODY_BYTES:
                         raise LitError("too_large") from None
                     body += chunk

@@ -8,6 +8,7 @@ from pubmedgemini.lit.http import (
     BASE_HOSTS,
     MAX_BODY_BYTES,
     NCBI_HOST,
+    REQUEST_TIMEOUT_SECONDS,
     USER_AGENT,
     LitClient,
     LitError,
@@ -439,3 +440,59 @@ def test_body_cap_applies_to_the_final_response_after_a_redirect():
     with pytest.raises(LitError) as e:
         LitClient(up.transport).get_text(NCBI_URL, {})
     assert e.value.kind == "too_large"
+
+
+# ---------- a total deadline per attempt (Incisive `REQUEST_TIMEOUT`, a whole-request limit) ----------
+
+
+def _trickle(clock: FakeClock, chunks: int, seconds_each: float):
+    def reply(request):
+        def body():
+            for _ in range(chunks):
+                clock.t += seconds_each
+                yield b"a"
+
+        return httpx.Response(200, content=body())
+
+    return reply
+
+
+def test_a_trickle_past_the_total_deadline_is_a_timeout_and_is_retried():
+    clock = FakeClock()
+    up = FakeUpstream({(NCBI_HOST, "/x"): _trickle(clock, chunks=5, seconds_each=6.0)})
+    c = LitClient(up.transport, sleep=clock.sleep, clock=clock.now)
+    with pytest.raises(LitError) as e:
+        c.get_text(NCBI_URL, {})
+    assert (e.value.kind, e.value.transient, len(up.sent)) == ("timeout", True, 3)
+    assert clock.slept == [0.5, 1.0]
+    assert str(e.value) == "timeout" and e.value.__cause__ is None
+
+
+def test_a_body_inside_the_total_deadline_is_read():
+    clock = FakeClock()
+    up = FakeUpstream({(NCBI_HOST, "/x"): _trickle(clock, chunks=3, seconds_each=6.0)})
+    assert LitClient(up.transport, clock=clock.now).get_text(NCBI_URL, {}) == "aaa"
+
+
+def test_a_slow_reply_head_past_the_total_deadline_is_a_timeout():
+    clock = FakeClock()
+
+    def slow_head(request):
+        clock.t += REQUEST_TIMEOUT_SECONDS + 1
+        return httpx.Response(200, json={})
+
+    up = FakeUpstream({(NCBI_HOST, "/x"): slow_head})
+    with pytest.raises(LitError) as e:
+        LitClient(up.transport, sleep=lambda s: None, clock=clock.now).get_json(NCBI_URL, {})
+    assert (e.value.kind, len(up.sent)) == ("timeout", 3)
+
+
+def test_the_deadline_is_per_attempt_so_a_retry_starts_afresh():
+    clock = FakeClock()
+    replies = iter([
+        _trickle(clock, chunks=5, seconds_each=6.0),
+        _trickle(clock, chunks=2, seconds_each=6.0),
+    ])
+    up = FakeUpstream({(NCBI_HOST, "/x"): lambda req: next(replies)(req)})
+    c = LitClient(up.transport, sleep=clock.sleep, clock=clock.now)
+    assert c.get_text(NCBI_URL, {}) == "aa" and len(up.sent) == 2
