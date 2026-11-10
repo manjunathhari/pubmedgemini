@@ -1,5 +1,7 @@
+import itertools
 import json
 import threading
+import time
 
 import httpx
 import pytest
@@ -263,20 +265,33 @@ def test_pacer_with_zero_gap_never_sleeps():
 
 
 def test_pacer_shares_one_schedule_across_threads():
-    clock = FakeClock()
-    lock = threading.Lock()
+    """Real threads and a real sleep: four callers released at once by a barrier must leave
+    the pacer one gap apart. Without the pacer's lock they would all sleep at the same time
+    and leave together (checked by removing the lock on a scratch copy)."""
+    gap = 0.1
+    stamps: list[float] = []
 
-    def sleep(s):
-        with lock:
-            clock.sleep(s)
+    def sleep(seconds: float) -> None:
+        time.sleep(seconds)  # blocks, as in production
+        stamps.append(time.monotonic())
 
-    pacer = NcbiPacer(0.334, clock=clock.now, sleep=sleep)
-    threads = [threading.Thread(target=pacer.wait) for _ in range(4)]
+    pacer = NcbiPacer(gap, sleep=sleep)
+    pacer.wait()  # takes the first slot, so every caller below has to wait
+    barrier = threading.Barrier(4)
+
+    def caller() -> None:
+        barrier.wait()
+        pacer.wait()
+
+    threads = [threading.Thread(target=caller) for _ in range(4)]
     for t in threads:
         t.start()
     for t in threads:
-        t.join()
-    assert sum(clock.slept) == pytest.approx(3 * 0.334)
+        t.join(timeout=10)
+    assert len(stamps) == 4
+    stamps.sort()
+    spacing = [b - a for a, b in itertools.pairwise(stamps)]
+    assert min(spacing) >= 0.7 * gap, spacing
 
 
 def test_ncbi_min_interval():

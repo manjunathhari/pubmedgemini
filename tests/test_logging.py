@@ -157,9 +157,18 @@ def test_search_text_and_key_never_logged(db_url, upstream, caplog):  # Review F
     from conftest import search_client
 
     caplog.set_level(logging.DEBUG)  # root: every logger that propagates
-    with search_client(db_url, upstream, ncbi_api_key="key-q7",
-                       ncbi_email="dev-q7@example.org") as c:
-        r = c.post("/search", data={"q": "zq7 hernia mesh?"}, headers=H)
+    client = search_client(db_url, upstream, ncbi_api_key="key-q7",
+                           ncbi_email="dev-q7@example.org")
+    # create_app pins the app's logger at INFO; open it to DEBUG so a debug-level leak in
+    # the app's own code is caught too (review finding H).
+    app_log = logging.getLogger("pubmedgemini")
+    pinned = app_log.level
+    app_log.setLevel(logging.DEBUG)
+    try:
+        with client as c:
+            r = c.post("/search", data={"q": "zq7 hernia mesh?"}, headers=H)
+    finally:
+        app_log.setLevel(pinned)
     assert r.status_code == 200
     assert upstream.sent[0].url.params["api_key"] == "key-q7"  # the key is used, never shown
     for leak in ("zq7", "key-q7", "dev-q7", "Mesh repair", "hernia", "eutils", "ebi.ac.uk",

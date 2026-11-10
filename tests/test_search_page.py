@@ -557,3 +557,45 @@ def test_cross_site_post_is_refused_before_anything_is_sent(client_search, upstr
 def test_same_site_post_is_served(client_search, headers):
     r = client_search.post("/search", data={"q": "mesh"}, headers=H | headers)
     assert r.status_code == 200 and BOTH_SEARCHED in r.text
+
+
+# ---------- a non-digit id from upstream never reaches a link or the cache (finding H) ----------
+
+def test_non_digit_ids_from_upstream_never_reach_a_link_or_the_cache(client_for, db_url,
+                                                                     monkeypatch):
+    import psycopg
+
+    from pubmedgemini.lit import tools as tools_module
+
+    stored: list[str | None] = []
+    real_put_many = tools_module.put_many
+
+    def spy(pool, papers):
+        stored.extend(p.pmid for p in papers)
+        return real_put_many(pool, papers)
+
+    monkeypatch.setattr(tools_module, "put_many", spy)
+    esearch = json.loads(fixture("esearch.json"))
+    esearch["esearchresult"]["idlist"].insert(0, "12x")
+    esummary = json.loads(fixture("esummary.json"))
+    esummary["result"]["uids"].insert(0, "12x")
+    esummary["result"]["12x"] = {"uid": "12x", "title": "Odd uid paper", "pubtype": [],
+                                 "articleids": [{"idtype": "doi", "value": "10.9/odd"}]}
+
+    def odd_pmid(results):
+        results[1]["pmid"] = "9a9"  # Europe PMC, a record that had no PMID
+
+    c, up = client_for({ESEARCH: httpx.Response(200, json=esearch),
+                        ESUMMARY: httpx.Response(200, json=esummary),
+                        EPMC: epmc_reply_with(odd_pmid)})
+    r = c.post("/search", data={"q": "mesh"}, headers=H)
+    assert r.status_code == 200 and "Odd uid paper" in r.text  # shown, without a PMID link
+    for odd in ("12x", "9a9"):
+        assert f"pubmed.ncbi.nlm.nih.gov/{odd}" not in r.text and f"PMID {odd}" not in r.text
+    assert 'href="https://doi.org/10.9/odd"' in r.text
+    assert stored and all(p is not None and p.isdigit() for p in stored), stored
+    for req in sent_to(up, "efetch.fcgi"):
+        assert "12x" not in req.url.params["id"] and "9a9" not in req.url.params["id"]
+    with psycopg.connect(db_url) as conn:
+        pmids = [row[0] for row in conn.execute("SELECT pmid FROM papers").fetchall()]
+    assert pmids and "12x" not in pmids and "9a9" not in pmids
