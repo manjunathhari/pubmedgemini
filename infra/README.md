@@ -363,32 +363,49 @@ Rollback changes the app code only. It does not undo database changes.
 cd /opt/pubmedgemini
 ```
 
-2. List the image versions the VPS still has (newest first):
+2. Check whether a deploy that was cut off left its copy of `.env` behind:
+
+```
+ls -l .env.previous
+```
+
+If it says "No such file or directory", go on to step 3. If it lists the file,
+remove it:
+
+```
+rm .env.previous
+```
+
+Why: the next deploy first puts `.env` back from `.env.previous`, so it would
+silently undo your edit. Do this check before every hand edit of `.env`, here
+or when you change a secret.
+
+3. List the image versions the VPS still has (newest first):
 
 ```
 docker images --format '{{.CreatedAt}}  {{.Repository}}:{{.Tag}}' | grep pubmedgemini | sort -r
 ```
 
-3. Look at which one `.env` uses now:
+4. Look at which one `.env` uses now:
 
 ```
 grep '^APP_IMAGE=' .env
 ```
 
-4. Put the previous one in. Replace `<PREVIOUS_IMAGE>` with the full name from
-step 2 (it ends with a long commit code):
+5. Put the previous one in. Replace `<PREVIOUS_IMAGE>` with the full name from
+step 3 (it ends with a long commit code):
 
 ```
 sed -i 's|^APP_IMAGE=.*|APP_IMAGE=<PREVIOUS_IMAGE>|' .env
 ```
 
-5. Start it:
+6. Start it:
 
 ```
 docker compose up -d
 ```
 
-6. Check that `app` says `healthy`:
+7. Check that `app` says `healthy`:
 
 ```
 docker compose ps
