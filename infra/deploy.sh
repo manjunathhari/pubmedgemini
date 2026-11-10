@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Deploy one app image on the VPS. The deploy workflow copies this release's compose file to
-# compose.yaml.new in APP_DIR, then runs:  deploy.sh <image>
+# Deploy one app image on the VPS. The deploy workflow copies this release's files into
+# APP_DIR as compose.yaml.new and backup.sh.new (and this script as deploy.sh), then runs:
+#   deploy.sh <image>
 #
 # Works for any account that can run docker and write APP_DIR and .env (no account is
 # assumed). Before changing anything it checks .env and saves copies of .env and
 # compose.yaml (.env.previous, mode 600, and compose.yaml.previous). On any failure after
 # that, and on HUP, INT, TERM or PIPE (an SSH drop or a cancelled job), it puts both back,
 # starts the previous version again, removes its temporary files and exits non-zero.
+# backup.sh.new replaces backup.sh only after the new version is healthy.
 #
 # If it was killed outright (no chance to clean up), .env.previous is still there at the
 # next run. That copy is complete by construction (written to a temporary file and moved
@@ -142,7 +144,7 @@ roll_back() {
     cleanup_tmp
     exit 1
   fi
-  rm -f compose.yaml.new
+  rm -f compose.yaml.new backup.sh.new
   cleanup_tmp
   if [ -z "$previous_image" ] || [ "$had_compose" = 0 ]; then
     say "no previous version to go back to; containers are left as they are"
@@ -267,6 +269,10 @@ docker compose pull app gate || roll_back "docker compose pull failed"
 docker compose up -d || roll_back "docker compose up failed"
 wait_until_up "$new_image" ||
   roll_back "app not healthy on the new image, or gate not running steadily, after $HEALTH_TRIES checks"
+if [ -f backup.sh.new ]; then
+  { chmod 700 backup.sh.new && mv -f backup.sh.new backup.sh; } ||
+    roll_back "could not install the new backup.sh"
+fi
 
 phase=finished
 rm -f .env.previous

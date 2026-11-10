@@ -59,7 +59,7 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
-      - name: Copy the release files to the VPS (compose.yaml goes in as compose.yaml.new)
+      - name: Copy the release files to the VPS (each goes in as <name>.new; nothing live is overwritten)
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
@@ -67,8 +67,8 @@ jobs:
           opts=(-i "$HOME/.ssh/deploy_key" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$HOME/.ssh/known_hosts" -o IdentitiesOnly=yes)
           dest="${VPS_USER}@${VPS_HOST}:/opt/pubmedgemini"
           scp "${opts[@]}" compose.yaml "${dest}/compose.yaml.new"
-          scp "${opts[@]}" infra/deploy.sh "${dest}/deploy.sh"
-          scp "${opts[@]}" infra/backup.sh "${dest}/backup.sh"
+          scp "${opts[@]}" infra/deploy.sh "${dest}/deploy.sh.new"
+          scp "${opts[@]}" infra/backup.sh "${dest}/backup.sh.new"
       - name: Deploy (infra/deploy.sh rolls back and fails if the new version is not up)
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -76,8 +76,14 @@ jobs:
         run: |
           opts=(-i "$HOME/.ssh/deploy_key" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$HOME/.ssh/known_hosts" -o IdentitiesOnly=yes)
           # Built here on purpose: the image name is known on the runner, not on the VPS.
-          remote="chmod 700 /opt/pubmedgemini/deploy.sh /opt/pubmedgemini/backup.sh"
-          remote+=" && /opt/pubmedgemini/deploy.sh $(printf '%q' "$IMAGE")"
+          # deploy.sh.new is moved into place (an atomic rename) before it runs, so no
+          # running copy is ever overwritten. deploy.sh moves backup.sh.new into place only
+          # after a healthy deploy, and removes it on rollback, so cron never reads a
+          # half-copied backup.sh.
+          dir=/opt/pubmedgemini
+          remote="chmod 700 $dir/deploy.sh.new $dir/backup.sh.new"
+          remote+=" && mv -f $dir/deploy.sh.new $dir/deploy.sh"
+          remote+=" && $dir/deploy.sh $(printf '%q' "$IMAGE")"
           # shellcheck disable=SC2029 # client-side expansion is intended (see above)
           ssh "${opts[@]}" "${VPS_USER}@${VPS_HOST}" "$remote"
       - name: Remove the SSH key

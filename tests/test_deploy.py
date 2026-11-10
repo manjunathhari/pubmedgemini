@@ -11,17 +11,19 @@ OLD = "ghcr.io/example/pubmedgemini:old"
 NEW = "ghcr.io/example/pubmedgemini:new"
 ENV = f"POSTGRES_PASSWORD=dummy\nAPP_IMAGE={OLD}\nAPP_HOST=app.example.org\n"
 FAST = {"HEALTH_TRIES": "2", "HEALTH_INTERVAL": "0", "GATE_STABLE_INTERVAL": "0"}
-CLEAN = [".env", "compose.yaml"]
+CLEAN = [".env", "backup.sh", "compose.yaml"]
 
 
 def _vps(tmp_path, env_text=ENV):
-    """An app folder as the workflow leaves it: old files plus compose.yaml.new."""
+    """An app folder as the workflow leaves it: old files plus the release's .new files."""
     app = tmp_path / "app"
     app.mkdir()
     (app / ".env").write_text(env_text)
     (app / ".env").chmod(0o600)
     (app / "compose.yaml").write_text("old compose\n")
     (app / "compose.yaml.new").write_text("new compose\n")
+    (app / "backup.sh").write_text("old backup\n")
+    (app / "backup.sh.new").write_text("new backup\n")
     state = tmp_path / "state"
     state.mkdir()
     (state / "running_image").write_text(OLD + "\n")
@@ -48,16 +50,19 @@ def _assert_restored(app, state, env_text=ENV):
     assert (app / ".env").read_bytes() == env_text.encode()  # bytes: keeps a CR visible
     assert stat.S_IMODE((app / ".env").stat().st_mode) == 0o600
     assert (app / "compose.yaml").read_text() == "old compose\n"
+    assert (app / "backup.sh").read_text() == "old backup\n"
     assert _names(app) == CLEAN  # no .previous, .new or temporary files left
 
 
-def test_success_switches_image_and_compose_file(tmp_path):
+def test_success_switches_image_compose_file_and_backup_script(tmp_path):
     app, state = _vps(tmp_path)
     r = _deploy(app, state, NEW)
     assert r.returncode == 0, r.stderr
     assert (app / ".env").read_text() == ENV.replace(OLD, NEW)
     assert stat.S_IMODE((app / ".env").stat().st_mode) == 0o600
     assert (app / "compose.yaml").read_text() == "new compose\n"
+    assert (app / "backup.sh").read_text() == "new backup\n"
+    assert stat.S_IMODE((app / "backup.sh").stat().st_mode) == 0o700
     assert _names(app) == CLEAN
     assert _running(state) == NEW
     calls = docker_calls(state)
@@ -138,7 +143,7 @@ def test_missing_app_image_line_changes_nothing(tmp_path):
     assert "no APP_IMAGE= line" in r.stderr
     assert (app / ".env").read_text() == env_text
     assert (app / "compose.yaml").read_text() == "old compose\n"
-    assert _names(app) == sorted(CLEAN + ["compose.yaml.new"])
+    assert _names(app) == sorted(CLEAN + ["backup.sh.new", "compose.yaml.new"])
     assert docker_calls(state) == []
 
 
@@ -277,3 +282,30 @@ def test_stray_compose_copy_without_env_copy_is_discarded(tmp_path):
     assert r.returncode != 0
     _assert_restored(app, state)
 
+
+# ---- the workflow's side ----
+
+
+def _deploy_job_script() -> str:
+    from pathlib import Path
+
+    import yaml
+
+    steps = yaml.safe_load(Path(".github/workflows/deploy.yml").read_text())["jobs"]["deploy"]
+    return "\n".join(s.get("run", "") for s in steps["steps"])
+
+
+def test_workflow_copies_every_release_file_as_new():
+    import re
+
+    script = _deploy_job_script()
+    targets = re.findall(r'scp "\$\{opts\[@\]\}" \S+ "\$\{dest\}/([^"]+)"', script)
+    assert sorted(targets) == ["backup.sh.new", "compose.yaml.new", "deploy.sh.new"]
+
+
+def test_workflow_moves_deploy_script_into_place_before_running_it():
+    script = _deploy_job_script()
+    move = script.index('mv -f $dir/deploy.sh.new $dir/deploy.sh"')
+    run = script.index('&& $dir/deploy.sh $(printf')
+    assert move < run
+    assert "backup.sh.new $dir/backup.sh" not in script  # deploy.sh installs it, if healthy
