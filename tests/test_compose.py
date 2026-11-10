@@ -45,6 +45,7 @@ GATE_FLAGS = [
     "--authenticated-emails-file",
     "--pass-user-headers",
     "--cookie-secure",
+    "--cookie-samesite",
     "--reverse-proxy",
     "--trusted-proxy-ip",
     "--redirect-url",
@@ -66,6 +67,13 @@ def test_gate_environment_keys_are_exactly_the_reviewed_ones():
     gate = _gate()
     assert "env_file" not in gate and "entrypoint" not in gate
     assert set(gate["environment"]) == GATE_ENV_KEYS
+
+
+def test_gate_cookie_is_samesite_lax():
+    # oauth2-proxy v7.15.6: flag `cookie-samesite` (pkg/apis/options/cookie.go), "lax" parsed
+    # by pkg/cookies/cookies.go ParseSameSite; the CSRF cookie inherits it (pkg/cookies/csrf.go
+    # getCSRFSameSite). Lax still goes with Google's callback, a top-level GET.
+    assert "--cookie-samesite=lax" in _gate()["command"]
 
 
 def test_gate_trusts_forwarded_headers_only_from_the_traefik_subnet():

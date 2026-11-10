@@ -62,6 +62,10 @@ services:
       - --authenticated-emails-file=/etc/gate/emails.txt
       - --pass-user-headers=true
       - --cookie-secure=true
+      # Lax: the browser does not send the sign-in cookie with a form post another site
+      # makes, so such a post is not signed in. Google's callback is a top-level GET, which
+      # Lax cookies (the CSRF cookie inherits this setting) still go with.
+      - --cookie-samesite=lax
       # Traefik terminates HTTPS and sets X-Forwarded-Proto/Host/For. --reverse-proxy makes
       # the gate read them, so the redirects it builds use https and the public host, and its
       # logs show the real client address. The gate publishes no port, but any container on
