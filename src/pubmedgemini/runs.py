@@ -215,8 +215,15 @@ def create_run(pool: ConnectionPool, user_id: int, question: str, model: str) ->
     """A queued run for `question`. Raises QuestionBlocked (checked first, on the question
     exactly as received, locally, before any database write or network call) when the
     patient-details check finds anything, and ActiveRunExists when a run is queued or
-    running. A question that passes is stored as `stored_question` gives it."""
+    running. A question that passes is stored as `stored_question` gives it.
+
+    The check runs twice: on the text as received (so a NUL or another hidden character is
+    seen) and on the stored form Gemini is sent (LF line breaks; the port's byte windows can
+    read a CR LF differently). A finding in either blocks; the first form's outcome is shown
+    when both find something."""
     blocked = check_question(question)
+    if blocked is None:
+        blocked = check_question(stored_question(question))
     if blocked is not None:
         log.info(
             "ask kind=blocked_identifiers categories=%d %s",

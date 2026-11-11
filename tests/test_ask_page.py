@@ -312,6 +312,33 @@ def test_a_nul_is_seen_by_the_check_and_blocks(env):
     assert env.gemini.sent == [] and env.upstream.sent == []
 
 
+# Review L1: the check sees both the text as received (CR LF) and the text Gemini gets (LF).
+# An "Address" label is 60 bytes back at most: inside it with LF, outside it with CR LF.
+ADDRESS_LF = "Address\n" + "x\n" * 20 + "560001"
+
+
+def test_found_only_in_the_lf_form_blocks(env):
+    from pubmedgemini.deid import scan
+
+    raw = ADDRESS_LF.replace("\n", "\r\n")
+    assert scan(raw) == [] and scan(ADDRESS_LF)  # the case is real
+    r = env.ask(raw)
+    assert r.status_code == 400 and BLOCKED in r.text
+    assert env.one("SELECT count(*) FROM runs") == 0
+    assert env.gemini.sent == [] and env.upstream.sent == []
+
+
+def test_found_only_in_the_raw_form_blocks(env):
+    from pubmedgemini.deid import scan
+
+    lf = "Medicare\n\n123456\n\nbeneficiaries"
+    raw = lf.replace("\n", "\r\n")
+    assert scan(lf) == [] and scan(raw)
+    r = env.ask(raw)
+    assert r.status_code == 400 and BLOCKED in r.text
+    assert env.one("SELECT count(*) FROM runs") == 0 and env.gemini.sent == []
+
+
 def test_blocked_question_shows_the_message_and_refills_the_box(env):
     q = "Mrs. Lakshmi ph 9845012345 and 9845012346 <b>hernia</b> mesh?"
     r = env.ask(q)
