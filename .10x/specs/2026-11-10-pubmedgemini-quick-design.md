@@ -45,7 +45,7 @@ Figures from a third-party page dated 19 Oct 2026 that cites Google AI Studio. G
 
 ## 4. Shape of the system
 
-**Code.** One repo. Python 3.12, FastAPI, Jinja2 templates, a little JavaScript so the page refreshes while a run works. `httpx` for PubMed and Europe PMC. The `google-genai` SDK for Gemini. Pydantic models for the answer. `psycopg` 3 with plain SQL. `pytest` for tests.
+**Code.** One repo. Python 3.12, FastAPI, Jinja2 templates; no JavaScript (the run page refreshes itself with a `<meta http-equiv="refresh">` while a run works). `httpx` for PubMed and Europe PMC, and `httpx` against Gemini's REST API (`generateContent`, v1beta) for Gemini, not the `google-genai` SDK (corrected 11 Nov 2026 to match the code; reason in the F2 plan's differences table). Pydantic models for the answer. `psycopg` 3 with plain SQL. `pytest` for tests.
 
 **On the VPS.** One Docker Compose project with three services:
 
@@ -97,7 +97,7 @@ Rules carried over from Incisive, unchanged:
 - **No check may fail a run.**
 - **Early summary.** The summary part is shown as soon as it has been read and checked, before the other parts finish.
 - **One-piece fallback.** If a writer part fails twice, the answer is written in one call instead.
-- **Time.** A run stops after 6 minutes. The writer is not started with less than 150 seconds left; the run then ends "partial" with the references.
+- **Time.** As Incisive Quick: a time limit of 6 minutes (360 s); the research wraps up at 210 s (360 − 150, the writer's allowance) and the run is stopped hard at 420 s (360 + 60), ending "failed" with "This run ran out of time (7 minutes)." (corrected 11 Nov 2026 to match the code). The writer is not started with less than 150 seconds left; the run then ends "partial" with the references.
 
 **Prompts.** The researcher, study-list, writer and number-completion prompts are copied from Incisive. The only edits are the ones Gemini's tool-calling format requires. Any other prompt change is an engine change and is discussed with the owner first.
 
@@ -126,15 +126,25 @@ Plain HTML: headings, paragraphs, simple lists and one table style for outcomes.
 
 ## 7. What is stored
 
+Tables as built (F0 to F2; brought in line with the migrations on 11 Nov 2026):
+
+| Table | Holds | Migration |
+|---|---|---|
+| `schema_migrations` | The name of each migration file applied | made by `migrate.py` |
+| `users` | Email addresses set up to use the app, with a role | `0001_users.sql` |
+| `papers` | Each paper once: PMID, PMCID, DOI, title, authors, journal, year, publication types, design, abstract, retracted, when fetched. Served for 30 days, removed after 90 | `0002_papers.sql` |
+| `model_calls` | One row per Gemini attempt: model, time, UTC and Pacific day, step, attempt, token counts, latency, a fixed status kind, the run. No text | `0003_model_calls.sql`, `0004_runs.sql` (run) |
+| `runs` | One row per question: question text, mode, status, error kind, stop reason, rounds, model, timings. At most one queued or running run for the whole app | `0004_runs.sql` |
+| `run_steps` | The step lines shown on the page | `0004_runs.sql` |
+| `run_searches` | The search trail, recorded by code as each search returns: source, query, hits | `0004_runs.sql` |
+| `run_seen` | The papers the model saw in this run: PMID, title, journal, year | `0004_runs.sql` |
+| `run_papers` | Which papers a run selected (with the design label and why), only considered (with the reason) or flagged as a possible contradiction (with the note) | `0004_runs.sql` |
+
+Planned for F3, not built yet:
+
 | Table | Holds |
 |---|---|
-| `users` | Email addresses set up to use the app, with a role |
-| `runs` | One row per question: question text, status, error kind, timings, model |
-| `run_steps` | The step lines shown on the page |
-| `papers` | Each paper once: PMID, DOI, title, abstract, design, year, journal. A repeat search does not fetch it again |
-| `run_papers` | Which papers a run selected and which it only considered, with the reason |
-| `answers` | The finished answer as JSON, in the shape of Incisive's `AnswerV3` (Quick fields only), including the search trail and number-check results |
-| `model_calls` | One row per Gemini call: model, day, step, token counts. No text |
+| `answers` | The finished answer as JSON, in the shape of Incisive's `AnswerV3` (Quick fields only), including the number-check results |
 
 - Changed from the section shown in chat: there is no `extractions` table, because Incisive Quick has no separate extraction step. The number-check results live inside the answer, as in Incisive.
 - Table changes are numbered SQL files in `migrations/`, applied in order at start-up.

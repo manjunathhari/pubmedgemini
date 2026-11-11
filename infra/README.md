@@ -428,6 +428,103 @@ docker compose ps
 
 To remove the key, delete the two lines (step 2 first) and run step 5 again.
 
+## The Gemini key (for questions)
+
+Without this key the app works as before: the key-word search works and the
+question box says "Questions are not set up yet: the Gemini key is missing on
+the server." With the key, "Ask a question" works.
+
+The key is typed only into the VPS's web console, with typing hidden. It never
+appears on screen, in the shell history, in this repo or in chat. The checks
+below say only whether it is there, never what it is. The app's logs only ever
+say `gemini api_key=true` or `false`.
+
+1. In Google AI Studio, make an API key **in a Google project that has billing
+turned off**. Google refuses a key from a project linked to billing (it
+answers "prepayment credits are depleted"; seen on 10 Nov 2026), and the run
+page then says "Google refused the Gemini key because its Google project is
+linked to billing." Keep the key in AI Studio's window for step 4; do not paste
+it anywhere else.
+
+2. Open the VPS's web console and go to the folder:
+
+```
+cd /opt/pubmedgemini
+```
+
+3. Check for `.env.previous` exactly as in step 2 of "Rollback" below, and
+remove it if it is there:
+
+```
+ls -l .env.previous
+```
+
+4. Type this, press Enter, paste the key, press Enter. Nothing is shown while
+you paste; that is on purpose:
+
+```
+read -rs k
+```
+
+5. Add it to `.env` and forget it in the shell:
+
+```
+printf '\nGEMINI_API_KEY=%s\n' "$k" >> .env && unset k
+```
+
+6. Counting check. It must print `1`:
+
+```
+grep -c '^GEMINI_API_KEY=' .env
+```
+
+If it prints `2` or more, an older line is there too: open `nano .env`, delete
+every `GEMINI_API_KEY=` line but the last, save, and run this step again.
+
+7. Set or empty check. It must print `set` (it never prints the key):
+
+```
+grep -q '^GEMINI_API_KEY=.' .env && echo set || echo EMPTY
+```
+
+If it prints `EMPTY`, the paste in step 4 was empty: run step 3, then
+`sed -i '/^GEMINI_API_KEY=/d' .env`, then steps 4 to 7 again.
+
+8. Restart the app so it reads the key. This restarts only `app` (the database
+and the gate keep running) on the image `.env` already names:
+
+```
+cd /opt/pubmedgemini && docker compose up -d app
+```
+
+9. Check that `app` says `healthy` (run it again after a few seconds if it says
+`starting`):
+
+```
+docker compose ps
+```
+
+10. Check the app saw a key. It must print `1`:
+
+```
+docker compose logs app | grep -c 'gemini api_key=true'
+```
+
+11. Open `https://<APP_HOST>`. The home page now shows "Ask a question" with a
+question box, "Free runs left today: about 45" and the line "Google may use
+what you type here, and its reviewers may read it (Gemini free tier). Do not
+type anything that identifies a patient." Below it, "Key-word search" works as
+before.
+
+To change the free limits later, add a line such as `GEMINI_RPD=400` the same
+way (step 3 first, then `nano .env`; no `read -rs` needed, these are not
+secrets) and run steps 8 and 9 again. The names are `GEMINI_RPM` (requests a
+minute, default 10), `GEMINI_TPM` (tokens a minute, default 250000) and
+`GEMINI_RPD` (requests a day, default 500).
+
+To remove the key: step 3, then `sed -i '/^GEMINI_API_KEY=/d' .env`, then steps
+8 and 9. The question box then shows "Questions are not set up yet".
+
 ## Rollback (go back to the previous version)
 
 Rollback changes the app code only. It does not undo database changes.

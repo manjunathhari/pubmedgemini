@@ -1,7 +1,9 @@
 # Every variable below uses the required form (NAME:?message): if it is empty or unset in .env,
 # docker compose stops before anything starts and names the variable (never its value).
-# The two exceptions are the optional NCBI_API_KEY and NCBI_EMAIL (app only), which use
-# NAME:- so they are empty when unset; the app runs without them.
+# The exceptions are the optional NCBI_API_KEY and NCBI_EMAIL, and GEMINI_API_KEY,
+# GEMINI_MODEL, GEMINI_RPM, GEMINI_TPM and GEMINI_RPD (app only), which use NAME:- so they are
+# empty when unset; the app runs without them (no Gemini key: questions are off, the key-word
+# search works; the other four fall back to their defaults).
 services:
   db:
     image: postgres:17
@@ -29,6 +31,11 @@ services:
       OWNER_EMAIL: ${OWNER_EMAIL:?set OWNER_EMAIL in .env}
       NCBI_API_KEY: ${NCBI_API_KEY:-}
       NCBI_EMAIL: ${NCBI_EMAIL:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      GEMINI_RPM: ${GEMINI_RPM:-}
+      GEMINI_TPM: ${GEMINI_TPM:-}
+      GEMINI_RPD: ${GEMINI_RPD:-}
     depends_on:
       db:
         condition: service_healthy
