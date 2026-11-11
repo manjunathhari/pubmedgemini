@@ -278,3 +278,55 @@ def test_good_rows_are_accepted_and_cascade_on_delete(migrated_pool, owner_id):
                 for t in ("run_steps", "run_searches", "run_seen", "run_papers")]
         kept = conn.execute("SELECT run_id FROM model_calls WHERE id = %s", (call_id,)).fetchone()
     assert left == [0, 0, 0, 0] and kept == (None,)  # the day count keeps the call
+
+
+# ---------- F3a: answers, write and check steps, writer steps (migration 0005) ----------
+
+
+def test_0005_applies_after_0004_and_is_recorded(pool):
+    applied = apply_migrations(pool, Path("migrations"))
+    assert applied.index("0005_answers.sql") == applied.index("0004_runs.sql") + 1
+    assert [r[0] for r in pool_rows(
+        pool, "SELECT name FROM schema_migrations WHERE name = '0005_answers.sql'")] == [
+        "0005_answers.sql"]
+    assert apply_migrations(pool, Path("migrations")) == []
+
+
+def test_answers_columns(migrated_pool):
+    cols = pool_rows(
+        migrated_pool,
+        "SELECT column_name, data_type, is_nullable FROM information_schema.columns "
+        "WHERE table_name = 'answers' ORDER BY ordinal_position")
+    assert cols == [("run_id", "uuid", "NO"), ("version", "smallint", "NO"),
+                    ("body", "jsonb", "NO"), ("created_at", "timestamp with time zone", "NO")]
+
+
+def test_answers_refuse_other_versions(migrated_pool, owner_id):
+    run_id = insert_run(migrated_pool, owner_id, status="done")
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pool_exec(migrated_pool,
+                  "INSERT INTO answers (run_id, version, body) VALUES (%s, 2, '{}')", (run_id,))
+    pool_exec(migrated_pool,
+              "INSERT INTO answers (run_id, version, body) VALUES (%s, 3, '{}')", (run_id,))
+
+
+def test_answers_are_removed_with_their_run(migrated_pool, owner_id):
+    run_id = insert_run(migrated_pool, owner_id, status="done")
+    pool_exec(migrated_pool,
+              "INSERT INTO answers (run_id, version, body) VALUES (%s, 3, '{}')", (run_id,))
+    pool_exec(migrated_pool, "DELETE FROM runs WHERE id = %s", (run_id,))
+    assert pool_one(migrated_pool, "SELECT count(*) FROM answers") == 0
+
+
+def test_the_constraints_replaced_are_found_by_name_in_the_catalog(migrated_pool):
+    """0005 drops and re-adds the CHECKs of 0003 and 0004 by their catalog names; the new
+    definitions list the writer steps and the five step kinds."""
+    defs = dict(pool_rows(
+        migrated_pool,
+        "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE contype = 'c' "
+        "AND conrelid::regclass::text IN ('model_calls', 'run_steps')"))
+    for step in ("writer_trials", "writer_outcomes_retry", "writer_one_piece_retry",
+                 "study_list_nudge"):
+        assert step in defs["model_calls_step_check"]
+    for kind in ("search", "note", "write", "check", "present"):
+        assert f"'{kind}'" in defs["run_steps_kind_check"]

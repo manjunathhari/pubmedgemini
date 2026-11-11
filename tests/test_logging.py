@@ -501,7 +501,8 @@ def test_question_refusals_log_fixed_lines(db_url, caplog, app_debug):
 def test_no_model_text_in_any_table_but_the_reviewed_ones(migrated_pool):
     """Every text column in the schema, reviewed: model_calls holds none of the model's
     text; the question lives only in runs.question; the model's notes only in the clipped
-    run_papers.note and the step lines; queries only in run_searches."""
+    run_papers.note and the step lines; queries only in run_searches; the written answer
+    only in answers.body (spec section 4: Postgres only, never a log line)."""
     with migrated_pool.connection() as conn:
         cols = {(t, c) for t, c in conn.execute(
             "SELECT table_name, column_name FROM information_schema.columns "
@@ -521,6 +522,7 @@ def test_no_model_text_in_any_table_but_the_reviewed_ones(migrated_pool):
         ("run_seen", "pmid"), ("run_seen", "title"), ("run_seen", "journal"),
         ("run_papers", "role"), ("run_papers", "pmid"), ("run_papers", "design"),
         ("run_papers", "note"),
+        ("answers", "body"),
     }, sorted(cols)
 
 

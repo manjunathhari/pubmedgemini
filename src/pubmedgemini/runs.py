@@ -17,6 +17,7 @@ Logs hold run ids, counts and fixed kinds only; never the question or any text o
 """
 
 import logging
+import threading
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 import psycopg
+from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from pubmedgemini.deid import BlockedIdentifiers, check_question
@@ -36,6 +38,12 @@ from pubmedgemini.researcher.studylist import Validated
 log = logging.getLogger("pubmedgemini.runs")
 
 MAX_STEP_LINE = 160  # agent/mod.rs MAX_STEP_LINE
+
+# Step lines are written from the run's thread and from the writer's four part threads. The
+# next `seq` is MAX(seq)+1, which two writers at once would both read, so one writer inserts at a
+# time. One process runs the app (one active run for the whole app), so a lock in the process is
+# enough.
+_STEP_LOCK = threading.Lock()
 
 # India has no daylight saving: a fixed +05:30 offset is Asia/Kolkata, with no tz database needed.
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -156,6 +164,7 @@ class RunView:
     selected: list[SelectedView]
     considered: list[ConsideredView]
     contradictions: list[ContradictionView]
+    answer: dict | None = None  # the stored AnswerV3 body, None when no answer was stored
 
     @property
     def lines(self) -> list[str]:
@@ -268,7 +277,7 @@ def add_step(pool: ConnectionPool, run_id: UUID, kind: str, line: str) -> None:
     otherwise ignored (Incisive `add_line`)."""
     text = clip(line, MAX_STEP_LINE)
     try:
-        with pool.connection() as conn:
+        with _STEP_LOCK, pool.connection() as conn:
             conn.execute(
                 "INSERT INTO run_steps (run_id, seq, kind, line) SELECT %s, "
                 "COALESCE(MAX(seq), 0) + 1, %s, %s FROM run_steps WHERE run_id = %s",
@@ -338,6 +347,30 @@ def finish_run(pool: ConnectionPool, run_id: UUID, status: str, error_kind: str 
     return applied
 
 
+def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
+                       error_kind: str | None, stop_reason: str | None, rounds: int | None,
+                       body: dict) -> None:
+    """The run's outcome and its written answer, in one transaction: both are stored or
+    neither. As `finish_run`, the outcome is written only while the run is still `queued` or
+    `running`; when it is not (a restart stopped it), nothing is stored and the case is logged
+    by a fixed kind. A body the database refuses raises the database error (the status stays
+    as it was); the caller decides what to do with it. Nothing of the body is logged."""
+    with pool.connection() as conn, conn.transaction():
+        cur = conn.execute(
+            "UPDATE runs SET status = %s, error_kind = %s, stop_reason = %s, rounds = %s, "
+            "finished_at = now() WHERE id = %s AND status IN ('queued', 'running')",
+            (status, error_kind, stop_reason, rounds, run_id),
+        )
+        applied = cur.rowcount == 1
+        if applied:
+            conn.execute(
+                "INSERT INTO answers (run_id, version, body) VALUES (%s, 3, %s)",
+                (run_id, Jsonb(body)),
+            )
+    if not applied:
+        log.info("run kind=finish_not_applied run_id=%s", run_id)
+
+
 def stop_unfinished(pool: ConnectionPool) -> int:
     """At start-up: every queued or running run belonged to the previous process."""
     with pool.connection() as conn:
@@ -377,6 +410,8 @@ def get_run(pool: ConnectionPool, run_id: UUID, user_id: int) -> RunView | None:
         papers = conn.execute(
             "SELECT role, pmid, design, note FROM run_papers WHERE run_id = %s "
             "ORDER BY role, rank", (run_id,)).fetchall()
+        answer_row = conn.execute(
+            "SELECT body FROM answers WHERE run_id = %s", (run_id,)).fetchone()
     chosen = [p for p in papers if p[0] == "selected"]
     records = get_for_display(pool, [p[1] for p in chosen]) if chosen else {}
     selected = []
@@ -389,7 +424,8 @@ def get_run(pool: ConnectionPool, run_id: UUID, user_id: int) -> RunView | None:
     contradictions = [ContradictionView(pmid, note, seen.get(pmid))
                       for role, pmid, _, note in papers if role == "contradiction"]
     return RunView(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], steps,
-                   searches, selected, considered, contradictions)
+                   searches, selected, considered, contradictions,
+                   answer_row[0] if answer_row else None)
 
 
 def list_runs(pool: ConnectionPool, user_id: int, limit: int = 20) -> list[RunRow]:

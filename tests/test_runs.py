@@ -40,6 +40,7 @@ from pubmedgemini.runs import (
     create_run,
     end_message,
     finish_run,
+    finish_with_answer,
     get_run,
     list_runs,
     save_list,
@@ -661,3 +662,110 @@ def test_thread_starter_runs_in_the_background(run_app):
     release.set()
     starter.join(timeout=10)
     assert not t.is_alive() and run_app.view(rid).status == "done"
+
+
+# ---------- F3a Task 1: writer steps, step kinds, safe lines, the stored answer ----------
+
+WRITER_STEPS = [f"writer_{p}{r}" for p in ("trials", "outcomes", "context", "summary")
+                for r in ("", "_retry")] + ["writer_one_piece", "writer_one_piece_retry"]
+
+
+@pytest.mark.parametrize("step", WRITER_STEPS)
+def test_writer_steps_are_counted(run_app, step):
+    from pubmedgemini.gemini.quota import calls_today, record_attempt
+
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    record_attempt(run_app.pool, model=MODEL, run_id=rid, step=step, attempt=1)
+    assert calls_today(run_app.pool, MODEL) == 1
+
+
+def test_an_unknown_writer_step_is_refused(run_app):
+    from pubmedgemini.gemini.quota import record_attempt
+
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    for step in ("writer", "writer_outcomes_retry_retry", "writer_intro"):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            record_attempt(run_app.pool, model=MODEL, run_id=rid, step=step, attempt=1)
+
+
+def test_step_kinds_write_and_check_are_stored(run_app):
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    for kind in ("search", "note", "write", "check", "present"):
+        add_step(run_app.pool, rid, kind, f"line {kind}")
+    assert rows(run_app.pool, "SELECT seq, kind FROM run_steps ORDER BY seq") == [
+        (1, "search"), (2, "note"), (3, "write"), (4, "check"), (5, "present")]
+
+
+def test_unknown_step_kind_is_refused(run_app, caplog):
+    caplog.set_level(logging.WARNING)
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    add_step(run_app.pool, rid, "answer", "x")  # a CHECK violation: logged, ignored
+    assert rows(run_app.pool, "SELECT count(*) FROM run_steps") == [(0,)]
+    assert "run kind=step_not_stored" in [r.getMessage() for r in caplog.records]
+    with run_app.pool.connection() as conn, pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute("INSERT INTO run_steps (run_id, seq, kind, line) VALUES (%s, 1, 'x', 'l')",
+                     (rid,))
+
+
+def test_four_threads_store_every_line(run_app, caplog):
+    caplog.set_level(logging.WARNING)
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    barrier = threading.Barrier(4)
+
+    def work(n):
+        barrier.wait(timeout=10)
+        for i in range(50):
+            add_step(run_app.pool, rid, "write", f"t{n} line {i}")
+
+    threads = [threading.Thread(target=work, args=(n,)) for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+    got = rows(run_app.pool, "SELECT seq FROM run_steps WHERE run_id = %s ORDER BY seq", (rid,))
+    assert [r[0] for r in got] == list(range(1, 201))
+    assert "step_not_stored" not in caplog.text
+
+
+BODY = {"summary": {"text": "A finding."}, "references": []}
+
+
+def test_finish_with_answer_stores_answer_and_status_together(run_app):
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    set_running(run_app.pool, rid)
+    assert finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, BODY) is None
+    assert rows(run_app.pool, "SELECT version, body FROM answers WHERE run_id = %s", (rid,)) \
+        == [(3, BODY)]
+    v = run_app.view(rid)
+    assert (v.status, v.stop_reason, v.rounds, v.answer) == ("done", "end_turn", 9, BODY)
+    assert rows(run_app.pool, "SELECT finished_at IS NOT NULL FROM runs WHERE id = %s",
+                (rid,)) == [(True,)]
+
+
+def test_get_run_has_no_answer_when_none_was_stored(run_app):
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    assert run_app.view(rid).answer is None
+
+
+def test_answer_and_status_are_stored_together(run_app):
+    """A body that cannot be stored (a NUL in a JSON string): no answer row and the status
+    stays running, in one rollback."""
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    set_running(run_app.pool, rid)
+    with pytest.raises(psycopg.Error):
+        finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, {"summary": "a\x00b"})
+    assert rows(run_app.pool, "SELECT count(*) FROM answers") == [(0,)]
+    assert rows(run_app.pool, "SELECT status, finished_at FROM runs WHERE id = %s",
+                (rid,)) == [("running", None)]
+
+
+def test_a_late_answer_never_overwrites_a_stopped_run(run_app, caplog):
+    caplog.set_level(logging.INFO)
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    set_running(run_app.pool, rid)
+    stop_unfinished(run_app.pool)
+    assert finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, BODY) is None
+    assert rows(run_app.pool, "SELECT count(*) FROM answers") == [(0,)]
+    assert rows(run_app.pool, "SELECT status FROM runs WHERE id = %s", (rid,)) == [("stopped",)]
+    assert f"run kind=finish_not_applied run_id={rid}" in [
+        r.getMessage() for r in caplog.records]
