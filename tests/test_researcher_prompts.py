@@ -8,6 +8,7 @@ Every expected string below is typed out from the Incisive source (commit 12630f
 """
 
 import json
+from datetime import date
 
 import pytest
 
@@ -21,6 +22,7 @@ from pubmedgemini.researcher.prompts import (
     RETRY_LINE,
     RETRY_STEP_LINE,
     SCHEMA_NUDGE,
+    SEARCH_CHECKLIST,
     SOURCE_RULE,
     TOOLS,
     TURN_MAX_TOKENS,
@@ -171,10 +173,61 @@ def test_numbers_are_incisives():  # runs/mod.rs DepthSettings::QUICK, AGENT_MAX
     assert (TURNS, TURN_MAX_TOKENS, FINAL_MAX_TOKENS, MAX_SELECTED) == (8, 4000, 4000, 10)
 
 
-def test_prompt_is_incisives_quick_prompt():  # Incisive the_prompt_is_general_and_states_the_budget
-    p = system_prompt(8)
-    assert p == INCISIVE_QUICK_SYSTEM_8
-    assert system_prompt() == p
+# The owner-approved addition of 11 Nov 2026 (NOT from Incisive), typed out from the owner's
+# approved wording; {from_year} and {to_year} are filled from the run's date.
+OWNER_SEARCH_CHECKLIST = (
+    "BEFORE YOU STOP, check that you have run every search below. Run any that are missing in "
+    "your next turn (several can go in one turn):\n"
+    "a. A broad trial search: the condition, the intervention and the comparator, with a trial "
+    "filter (\"randomized controlled trial\"[pt]). Do not add outcome words to this search; "
+    "outcome words hide trials.\n"
+    "b. The same trial search limited to the last five years (AND {from_year}:{to_year}[dp]).\n"
+    "c. A search for systematic reviews and meta-analyses limited to the last five years.\n"
+    "d. At least one search in Europe PMC (search_europepmc) with the same topic terms.\n"
+    "e. For each key trial you found, a search of its name, acronym or registration number to "
+    "find longer follow-up reports. Select the newest follow-up as well as the primary report.\n"
+    "f. find_related on the two most important trials.\n"
+    "If a search returns fewer than 40 results, it is probably too narrow: run it again with "
+    "fewer terms.\n"
+    "Select a guideline only when the question asks about practice recommendations; otherwise "
+    "list it under considered_not_selected."
+)
+DAY = date(2026, 11, 11)
+
+
+def _without_checklist(p: str, checklist: str) -> str:
+    """The prompt with the owner's block and its separating blank line taken out."""
+    assert p.count(checklist) == 1
+    return p.replace(checklist + "\n\n", "", 1)
+
+
+def test_checklist_constant_is_the_owners_wording():
+    assert SEARCH_CHECKLIST == OWNER_SEARCH_CHECKLIST
+
+
+@pytest.mark.parametrize("today,years", [
+    (date(2026, 11, 11), (2021, 2026)),
+    (date(2026, 1, 1), (2021, 2026)),
+    (date(2027, 1, 1), (2022, 2027)),
+    (date(2026, 12, 31), (2021, 2026)),
+])
+def test_checklist_is_in_the_prompt_once_with_the_years(today, years):
+    p = system_prompt(8, today=today)
+    block = OWNER_SEARCH_CHECKLIST.format(from_year=years[0], to_year=years[1])
+    assert p.count(block) == 1
+    assert p.count("BEFORE YOU STOP") == 1
+    assert f"(AND {years[0]}:{years[1]}[dp])" in p
+    # Between METHOD step 5 and its blank line, and SELECTION, with blank lines either side.
+    assert ("or when your turns run out.\n\n" + block + "\n\nSELECTION: 6 to 10") in p
+    assert _without_checklist(p, block) == INCISIVE_QUICK_SYSTEM_8
+
+
+def test_prompt_is_incisives_quick_prompt_plus_the_checklist():
+    # Incisive the_prompt_is_general_and_states_the_budget; Incisive's words are unchanged.
+    p = system_prompt(8, today=DAY)
+    assert _without_checklist(
+        p, OWNER_SEARCH_CHECKLIST.format(from_year=2021, to_year=2026)) == INCISIVE_QUICK_SYSTEM_8
+    assert system_prompt(today=DAY) == p
     assert "at most 8 tool turns" in p and "get_full_text" not in p
     assert "SELECTION: 6 to 10 studies that matter most" in p
     assert "must have come back from a tool result in this run" in p
@@ -186,8 +239,17 @@ def test_prompt_is_incisives_quick_prompt():  # Incisive the_prompt_is_general_a
         assert word not in p.lower()
 
 
+def test_prompt_needs_the_date():
+    with pytest.raises(TypeError):
+        system_prompt(8)  # type: ignore[call-arg]
+
+
 def test_turns_go_into_the_prompt():
-    assert "at most 3 tool turns" in system_prompt(3)
+    p = system_prompt(3, today=DAY)
+    assert "at most 3 tool turns" in p
+    assert _without_checklist(
+        p, OWNER_SEARCH_CHECKLIST.format(from_year=2021, to_year=2026)
+    ) == INCISIVE_QUICK_SYSTEM_8.replace("at most 8 tool turns", "at most 3 tool turns")
 
 
 def test_final_texts_and_tools_are_incisives():
@@ -196,6 +258,7 @@ def test_final_texts_and_tools_are_incisives():
     assert RETRY_LINE == INCISIVE_RETRY_LINE and RETRY_STEP_LINE == INCISIVE_RETRY_STEP_LINE
     assert SOURCE_RULE == INCISIVE_SOURCE_RULE and SCHEMA_NUDGE == INCISIVE_SCHEMA_NUDGE
     assert "at most 10 studies" in FINAL_SYSTEM and "its trial's primary report" in FINAL_SYSTEM
+    assert "BEFORE YOU STOP" not in FINAL_SYSTEM
     assert [t.name for t in TOOLS] == ["search_pubmed", "search_europepmc", "get_abstracts",
                                        "find_related"]
     assert [t.description for t in TOOLS] == INCISIVE_TOOL_DESCRIPTIONS

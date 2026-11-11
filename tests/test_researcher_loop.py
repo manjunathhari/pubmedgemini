@@ -7,6 +7,7 @@ FakeClock: it moves only when something sleeps, or when a test moves it from a s
 
 import json
 import logging
+from datetime import UTC, date, datetime
 
 import httpx
 import pytest
@@ -59,6 +60,7 @@ from pubmedgemini.researcher.prompts import (
 )
 
 MODEL = "gemini-3.5-flash-lite"
+TODAY = date(2026, 11, 11)
 QUESTION = ("In adults with inguinal hernia is laparoscopic repair better than open mesh repair "
             "for chronic pain")
 ECHO_OF_THE_QUESTION = "adults with inguinal hernia is laparoscopic repair better than"
@@ -140,7 +142,7 @@ def run_research(migrated_pool, upstream):
     progress). `on_line(text, clock, timing)` runs after each step line."""
     from conftest import make_tools
 
-    def run(script, tools=None, on_line=None, up=None, question=QUESTION):
+    def run(script, tools=None, on_line=None, up=None, question=QUESTION, today=TODAY):
         clock = FakeClock()
         g = FakeGemini(script)
         client = GeminiClient(SecretStr(FAKE_KEY), MODEL, g.transport, clock=clock.now)
@@ -150,8 +152,9 @@ def run_research(migrated_pool, upstream):
         timing = Timing.quick(clock.t)
         prog = CollectingProgress((lambda t: on_line(t, clock, timing)) if on_line else None)
         lit = tools if tools is not None else make_tools(migrated_pool, up or upstream)
+        extra = {} if today is None else {"today": lambda: today}
         r = research(question, tools=lit, caller=caller, run_id=None, timing=timing,
-                     progress=prog, clock=clock.now)
+                     progress=prog, clock=clock.now, **extra)
         return r, g, prog
 
     return run
@@ -233,12 +236,23 @@ def test_eight_turns_then_the_final_call_at_the_cap(run_research):
 def test_every_turn_sends_the_quick_prompt_with_the_source_rule(run_research):
     _r, g, _ = run_research(SEARCH_THEN_END + [LIST_OK])
     b = bodies(g)[0]
-    assert b["systemInstruction"]["parts"][0]["text"] == f"{system_prompt(8)}\n\n{SOURCE_RULE}"
+    assert b["systemInstruction"]["parts"][0]["text"] == \
+        f"{system_prompt(8, today=TODAY)}\n\n{SOURCE_RULE}"
+    assert "(AND 2021:2026[dp])" in b["systemInstruction"]["parts"][0]["text"]
+    assert all(x["systemInstruction"] == b["systemInstruction"] for x in bodies(g) if "tools" in x)
     assert b["contents"] == [{"role": "user", "parts": [{"text": task(QUESTION)}]}]
     assert b["toolConfig"] == {"functionCallingConfig": {"mode": "AUTO"}}
     assert b["generationConfig"] == {"maxOutputTokens": 4000}
     assert [d["name"] for d in b["tools"][0]["functionDeclarations"]] == \
         ["search_pubmed", "search_europepmc", "get_abstracts", "find_related"]
+
+
+def test_the_prompt_dates_default_to_today_in_utc(run_research):
+    before = datetime.now(UTC).date()
+    _r, g, _ = run_research(SEARCH_THEN_END + [LIST_OK], today=None)
+    after = datetime.now(UTC).date()
+    text = bodies(g)[0]["systemInstruction"]["parts"][0]["text"]
+    assert text in {f"{system_prompt(8, today=d)}\n\n{SOURCE_RULE}" for d in (before, after)}
 
 
 def test_several_calls_in_one_turn_come_back_in_one_user_turn(run_research):

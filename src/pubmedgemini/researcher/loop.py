@@ -33,6 +33,7 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
@@ -339,11 +340,17 @@ def _papers_of(result: SearchResult | AbstractsResult) -> list[SeenPaper]:
 # ---------- the loop ----------
 
 
+def utc_today() -> date:
+    """Today's date in UTC: the year the researcher prompt's search checklist counts from."""
+    return datetime.now(UTC).date()
+
+
 class _Run:
     def __init__(self, question: str, tools: LitTools, caller: ModelCaller,
                  run_id: UUID | None, timing: Timing, progress: Progress,
-                 clock: Callable[[], float]) -> None:
+                 clock: Callable[[], float], today: date) -> None:
         self.question = question
+        self.today = today
         self.caller = caller
         self.run_id = run_id
         self.timing = timing
@@ -425,7 +432,7 @@ class _Run:
         return tuple(out)
 
     def loop(self) -> tuple[LoopStop, int]:
-        system = with_source_rule(system_prompt(TURNS))
+        system = with_source_rule(system_prompt(TURNS, today=self.today))
         declarations = function_declarations(TOOLS)
         contents: list[dict] = [user_text(task(self.question))]
         done = 0
@@ -604,11 +611,12 @@ def research(
     timing: Timing,
     progress: Progress,
     clock: Callable[[], float] = time.monotonic,
+    today: Callable[[], date] = utc_today,
 ) -> Research:
     """Run the researcher for one question (see the module doc). Raises HardStop,
     FatalModelError and the caller's RunCapReached (no step catches it, so the cap ends the
     run from any call); everything else ends in a Research."""
-    run = _Run(question, tools, caller, run_id, timing, progress, clock)
+    run = _Run(question, tools, caller, run_id, timing, progress, clock, today())
     progress.line("search", SEARCHING_LINE)
     stop, rounds = run.loop()
     run.check_hard_stop("after_loop")

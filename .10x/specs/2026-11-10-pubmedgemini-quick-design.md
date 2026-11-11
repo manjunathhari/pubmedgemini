@@ -101,6 +101,10 @@ Rules carried over from Incisive, unchanged:
 
 **Prompts.** The researcher, study-list, writer and number-completion prompts are copied from Incisive. The only edits are the ones Gemini's tool-calling format requires. Any other prompt change is an engine change and is discussed with the owner first.
 
+**Owner-approved differences from Incisive's prompts:**
+
+- **Researcher search checklist** (owner approved 11 Nov 2026, "ok"). One block, the owner's wording word for word, is added to the researcher's system prompt between METHOD step 5 and SELECTION (`researcher/prompts.py` `SEARCH_CHECKLIST`): before it stops, the researcher checks it has run a broad trial search without outcome words, the same limited to the last five years, a five-year search for systematic reviews and meta-analyses, at least one Europe PMC search, a search for each key trial's name, acronym or registration number (selecting the newest follow-up as well as the primary report), and `find_related` on the two most important trials; a search with fewer than 40 results is re-run with fewer terms; a guideline is selected only when the question asks about practice recommendations. The five years are this year and the five before it in UTC, filled by code from the run's date (`from_year:to_year[dp]`, 2021:2026 in 2026). Incisive's words are unchanged around it; the study-list prompt, tool texts, turn and call caps are unchanged. Why: in the four real runs of 11 Nov the model searched too little (4 to 6 searches, narrow queries, Europe PMC in one run of four, older trials), and on the hernia question Incisive Quick with the same prompts found 10 studies against our 7, 3 of them in common.
+
 **Top of every answer:** "Searched PubMed and Europe PMC (free sources); answer written by <model name>".
 
 ## 6. The page

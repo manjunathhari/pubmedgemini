@@ -24,3 +24,8 @@ Nothing is deployed yet. Entries start with the first merge to `main` that chang
 - Review fix (11 Nov 2026): when Gemini sends back something that is not readable, no part of its reply is kept with the error.
 - Never logged: the question, queries, titles, abstracts, the model's text, tool results, Google's error messages, the Gemini key. Tested in the app and under the real server.
 - New optional settings `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_RPM`, `GEMINI_TPM`, `GEMINI_RPD`. The app runs without them; without the key the question box says "Questions are not set up yet" and the key-word search works. One step on the VPS to add the key (runbook: "The Gemini key (for questions)").
+
+## F2 search checklist (branch `f2-search-checklist`, not merged yet)
+
+- The researcher's instructions get one added block, approved by the owner on 11 Nov 2026 (not from Incisive): before it stops, the researcher checks that it has run a broad trial search, the same search for the last five years, a five-year search for reviews and meta-analyses, at least one Europe PMC search, a search for each key trial's longer follow-up, and similar articles for the two most important trials; it re-runs a search that finds fewer than 40 papers with fewer terms, and selects a guideline only when the question asks about practice recommendations. The five years count back from the current year (2021 to 2026 this year).
+- Nothing else changes: the same 8 rounds, the same 14-request cap, the same tools and the same study-list step. Nothing to do on the VPS.

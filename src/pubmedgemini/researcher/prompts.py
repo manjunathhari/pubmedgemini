@@ -14,12 +14,14 @@ Sources (Incisive commit 12630f7, `crates/incisive-app/src/`):
 | `TURNS`, `TURN_MAX_TOKENS`, `FINAL_MAX_TOKENS` | `runs/mod.rs` `DepthSettings::QUICK`, `AGENT_MAX_TOKENS` |
 
 The only changes for Gemini are outside this file: the schemas go through `to_openapi`, tool
-results go back as `functionResponse` parts, and the final call has no `effort`. No word of a
-prompt or a description is changed.
+results go back as `functionResponse` parts, and the final call has no `effort`. Incisive's
+words are unchanged; one block is added: `SEARCH_CHECKLIST`, approved by the owner on
+11 Nov 2026, goes into the researcher's system prompt between METHOD and SELECTION.
 """
 
 import re
 from dataclasses import dataclass
+from datetime import date
 
 TURNS = 8  # DepthSettings::QUICK.researcher_turns
 TURN_MAX_TOKENS = 4000  # AGENT_MAX_TOKENS
@@ -76,15 +78,45 @@ _SYSTEM = (
 )
 
 
-def system_prompt(turns: int = TURNS) -> str:
-    """Incisive's Quick researcher prompt for a loop of at most `turns` tool turns."""
-    return _SYSTEM.format(
+# OWNER-APPROVED ADDITION of 11 Nov 2026. NOT FROM INCISIVE. The owner's wording, word for
+# word, after four real runs searched too little (spec: owner-approved differences). The two
+# years are filled from the run's date: the last five years up to this year.
+SEARCH_CHECKLIST = (
+    "BEFORE YOU STOP, check that you have run every search below. Run any that are missing in "
+    "your next turn (several can go in one turn):\n"
+    "a. A broad trial search: the condition, the intervention and the comparator, with a trial "
+    "filter (\"randomized controlled trial\"[pt]). Do not add outcome words to this search; "
+    "outcome words hide trials.\n"
+    "b. The same trial search limited to the last five years (AND {from_year}:{to_year}[dp]).\n"
+    "c. A search for systematic reviews and meta-analyses limited to the last five years.\n"
+    "d. At least one search in Europe PMC (search_europepmc) with the same topic terms.\n"
+    "e. For each key trial you found, a search of its name, acronym or registration number to "
+    "find longer follow-up reports. Select the newest follow-up as well as the primary report.\n"
+    "f. find_related on the two most important trials.\n"
+    "If a search returns fewer than 40 results, it is probably too narrow: run it again with "
+    "fewer terms.\n"
+    "Select a guideline only when the question asks about practice recommendations; otherwise "
+    "list it under considered_not_selected."
+)
+# The checklist goes in front of this, after METHOD step 5 and its blank line.
+_CHECKLIST_BEFORE = "\n\nSELECTION:"
+
+
+def system_prompt(turns: int = TURNS, *, today: date) -> str:
+    """Incisive's Quick researcher prompt for a loop of at most `turns` tool turns, with the
+    owner's `SEARCH_CHECKLIST` added for the five years up to `today`'s year."""
+    incisive = _SYSTEM.format(
         tools=_TOOLS_LINE,
         turns=turns,
         reading=_READING,
         selection=_SELECTION.format(max=MAX_SELECTED),
         max=MAX_SELECTED,
     )
+    head, sep, tail = incisive.partition(_CHECKLIST_BEFORE)
+    if not sep or _CHECKLIST_BEFORE in tail:
+        raise ValueError("the SELECTION paragraph must appear exactly once")
+    checklist = SEARCH_CHECKLIST.format(from_year=today.year - 5, to_year=today.year)
+    return f"{head}\n\n{checklist}{sep}{tail}"
 
 
 FINAL_SYSTEM = (
