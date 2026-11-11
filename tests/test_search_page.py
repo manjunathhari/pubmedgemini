@@ -1,4 +1,5 @@
 import json
+import re
 from html.parser import HTMLParser
 
 import httpx
@@ -334,10 +335,25 @@ class _Tags(HTMLParser):
         self.attrs.update(name for name, _ in attrs)
 
 
+class _LinksAndClasses(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.link_hrefs: list[str] = []
+        self.classes: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        for name, value in attrs:
+            if tag == "link" and name == "href":
+                self.link_hrefs.append(value)
+            if name == "class":
+                self.classes.append(value or "")
+
+
 PAGE_TAGS = {"html", "head", "meta", "title", "style", "body", "main", "h1", "h2", "p", "form",
-             "label", "input", "button", "article", "a", "strong"}
+             "label", "input", "button", "article", "a", "strong",
+             "link", "header", "div", "section"}
 PAGE_ATTRS = {"lang", "charset", "name", "content", "method", "action", "for", "id", "type",
-              "maxlength", "required", "value", "href"}
+              "maxlength", "required", "value", "href", "class", "rel", "aria-hidden"}
 
 
 def test_nothing_from_upstream_is_rendered_as_html(client_for):
@@ -364,7 +380,11 @@ def test_nothing_from_upstream_is_rendered_as_html(client_for):
     assert "&lt;h4&gt;" in r.text and "<h4>" not in r.text
     for raw in ("<iframe", "<svg", "<img", "<script>alert", "onmouseover=\"x"):
         assert raw not in r.text, raw
-    assert r.text.count("<style>") == 1  # the page's own
+    assert "<style" not in r.text
+    seen = _LinksAndClasses()
+    seen.feed(r.text)
+    assert seen.link_hrefs == ["/static/app.css"]
+    assert seen.classes and all(re.fullmatch(r"[A-Za-z0-9 -]+", c) for c in seen.classes)
     assert "https://doi.org/10.1/%22%3E%3Cscript%3E" in r.text
 
 

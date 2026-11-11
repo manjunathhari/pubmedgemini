@@ -3,14 +3,18 @@
 <h1>pubmedgemini</h1>
 <p>Signed in as {{ email }}</p>
 {% include "_ask_form.html" %}
+<section class="card">
 <h2>Key-word search</h2>
 <p>Searches PubMed and Europe PMC with exactly what you type. No model.</p>
 {% include "_search_form.html" %}
-<p>Written answers arrive in the next stage.</p>
+</section>
+<p class="muted">Written answers arrive in the next stage.</p>
+<section class="card">
 <h2>Your questions</h2>
 {% for r in runs %}
-<p><a href="/runs/{{ r.id }}">{{ r.short }}</a><br>{{ r.created_ist }} · {{ r.status_word }}</p>
+<div class="item"><p><a href="/runs/{{ r.id }}">{{ r.short }}</a></p><p>{{ r.created_ist }} · {{ r.status_word }}</p></div>
 {% else %}
 <p>No questions yet.</p>
 {% endfor %}
+</section>
 {% endblock %}

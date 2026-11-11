@@ -156,7 +156,8 @@ def test_home_has_both_boxes_and_no_script(env):
     r = env.c.get("/", headers=H)
     assert r.status_code == 200
     assert r.text.count('name="question"') == 1 and r.text.count('name="q"') == 1
-    assert "<script" not in r.text and "<link" not in r.text and "src=" not in r.text
+    assert "<script" not in r.text and "src=" not in r.text
+    assert re.findall(r"<link[^>]*>", r.text) == ['<link rel="stylesheet" href="/static/app.css">']
     assert r.text.index("Ask a question") < r.text.index("Key-word search") \
         < r.text.index("Your questions")
     assert '<form method="post" action="/ask">' in r.text

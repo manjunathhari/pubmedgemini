@@ -2,15 +2,21 @@
 {% block content %}
 <h1>pubmedgemini</h1>
 <p>Signed in as {{ email }}</p>
+<section class="card">
 {% include "_search_form.html" %}
+</section>
 {% if rejected %}
+<section class="card">
 <p>{{ rejected }}</p>
+</section>
 {% else %}
+<section class="card">
 <p>{{ status_line }}</p>
 <p>{{ counts_line }}</p>
 {% if result.abstracts_failed %}
 <p>Abstracts could not be fetched just now; titles only.</p>
 {% endif %}
+</section>
 {% for paper in result.papers %}
 <article>
 <h2>{{ paper.title }}</h2>
@@ -19,9 +25,9 @@
 <p>Publication types: {{ paper.pub_types|join(", ") }}</p>
 {% endif %}
 {% if paper.pmid %}
-<p><a href="https://pubmed.ncbi.nlm.nih.gov/{{ paper.pmid }}/">PMID {{ paper.pmid }}</a></p>
+<p class="row"><a href="https://pubmed.ncbi.nlm.nih.gov/{{ paper.pmid }}/">PMID {{ paper.pmid }}</a></p>
 {% elif paper.doi %}
-<p><a href="https://doi.org/{{ paper.doi|urlencode }}">DOI {{ paper.doi }}</a></p>
+<p class="row"><a href="https://doi.org/{{ paper.doi|urlencode }}">DOI {{ paper.doi }}</a></p>
 {% endif %}
 {% if paper.retracted %}
 <p><strong>Retracted</strong></p>
@@ -33,7 +39,9 @@
 {% endfor %}
 </article>
 {% else %}
+<section class="card">
 <p>No papers found.</p>
+</section>
 {% endfor %}
 {% endif %}
 {% endblock %}

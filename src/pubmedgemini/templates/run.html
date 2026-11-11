@@ -6,7 +6,8 @@
 {% endblock %}
 {% block content %}
 <h1>pubmedgemini</h1>
-<p><a href="/">Home</a></p>
+<p class="row"><a href="/">Home</a></p>
+<section class="card">
 <h2>Question</h2>
 {% for para in question_paragraphs %}
 <p>{{ para }}</p>
@@ -14,6 +15,8 @@
 {% if active %}
 <p>Working. This page refreshes itself; you can leave it and come back from the home page.</p>
 {% endif %}
+</section>
+<section class="card">
 <h2>Steps</h2>
 {% if run.lines %}
 <ul>
@@ -24,7 +27,10 @@
 {% else %}
 <p>Waiting to start.</p>
 {% endif %}
+</section>
 {% if not active %}
+{% if outcome or run.status in ("stopped", "failed", "partial") %}
+<section class="card">
 {% if outcome %}
 <p><strong>{{ outcome }}</strong></p>
 {% endif %}
@@ -33,7 +39,10 @@
 <p><button type="submit">Run again</button></p>
 </form>
 {% endif %}
+</section>
+{% endif %}
 {% if run.selected %}
+<section class="card">
 <h2>Selected studies</h2>
 {% for s in selected %}
 <article>
@@ -43,7 +52,7 @@
 {% if s.pub_types %}
 <p>Publication types: {{ s.pub_types|join(", ") }}</p>
 {% endif %}
-<p><a href="https://pubmed.ncbi.nlm.nih.gov/{{ s.pmid }}/">PMID {{ s.pmid }}</a></p>
+<p class="row"><a href="https://pubmed.ncbi.nlm.nih.gov/{{ s.pmid }}/">PMID {{ s.pmid }}</a></p>
 {% if s.retracted %}
 <p><strong>Retracted</strong></p>
 {% endif %}
@@ -54,30 +63,37 @@
 {% endfor %}
 </article>
 {% endfor %}
+</section>
 {% endif %}
 {% if run.considered %}
+<section class="card">
 <h2>Considered, not selected</h2>
 <ul>
 {% for c in run.considered %}
 <li><a href="https://pubmed.ncbi.nlm.nih.gov/{{ c.pmid }}/">PMID {{ c.pmid }}</a>{% if c.title %} · {{ c.title }}{% endif %} · {{ c.reason }}</li>
 {% endfor %}
 </ul>
+</section>
 {% endif %}
 {% if run.contradictions %}
+<section class="card">
 <h2>Possible contradictions</h2>
 <ul>
 {% for c in run.contradictions %}
 <li><a href="https://pubmed.ncbi.nlm.nih.gov/{{ c.pmid }}/">PMID {{ c.pmid }}</a>{% if c.title %} · {{ c.title }}{% endif %} · {{ c.note }}</li>
 {% endfor %}
 </ul>
+</section>
 {% endif %}
 {% if trail %}
+<section class="card">
 <h2>Search trail</h2>
 <ul>
 {% for line in trail %}
 <li>{{ line }}</li>
 {% endfor %}
 </ul>
+</section>
 {% endif %}
 {% if run.down_line %}
 <p>{{ run.down_line }}</p>
