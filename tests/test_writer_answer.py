@@ -12,12 +12,12 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
 from pubmedgemini.gemini.structured import value_string
 from pubmedgemini.researcher.loop import SearchEntry
 from pubmedgemini.writer.answer import (
     ANSWER_VERSION,
+    AnswerInvalid,
     AnswerV3,
     Applicability,
     AtAGlance,
@@ -41,6 +41,7 @@ from pubmedgemini.writer.answer import (
     check_citations,
     citation_check_line,
     clean_citations,
+    read_body,
     references_from,
     split_citations,
 )
@@ -488,7 +489,7 @@ def test_created_at_as_chrono():
     assert at(400000) == "2025-11-11T10:00:00.400Z"
     assert at(123456) == "2025-11-11T10:00:00.123456Z"
     assert at(120) == "2025-11-11T10:00:00.000120Z"
-    with pytest.raises(ValidationError):  # a naive time has no UTC offset to write
+    with pytest.raises(AnswerInvalid):  # a naive time has no UTC offset to write
         AnswerV3.model_validate({**quick_sample().to_body(), "created_at": "2025-11-11T10:00:00"})
 
 
@@ -509,9 +510,94 @@ def test_enum_spellings_as_serde():
 def test_quick_answer_has_no_full_parts():
     # Quick never has a skeptic or evidence rows (t.rs:203-226 base()).
     body = quick_sample().to_body()
-    with pytest.raises(ValidationError):
+    with pytest.raises(AnswerInvalid):
         AnswerV3.model_validate({**body, "skeptic": {"verdict": "holds"}})
-    with pytest.raises(ValidationError):
+    with pytest.raises(AnswerInvalid):
         AnswerV3.model_validate({**body, "evidence": [{"pmid": A}]})
-    with pytest.raises(ValidationError):
+    with pytest.raises(AnswerInvalid):
         AnswerV3.model_validate({**body, "version": 2})
+
+
+# ---------- Round 2: nothing private in an exception; non-finite numbers ----------
+
+MARK = "PRIVATE-MARKER-7f3a"
+
+
+def assert_no_marker(e: BaseException) -> None:
+    assert e.__cause__ is None and e.__context__ is None
+    assert e.__suppress_context__
+    for text in (str(e), repr(e), repr(e.args), str(e.__dict__)):
+        assert MARK not in text, text
+
+
+@pytest.mark.parametrize("change, kind", [
+    (lambda b: b.update(skeptic={"verdict": MARK}), "not_quick"),
+    (lambda b: b.update(evidence=[{"pmid": MARK, "text": MARK}]), "not_quick"),
+    (lambda b: b.update(mode=MARK), "not_quick"),
+    (lambda b: b.update(version=2, question=MARK), "not_quick"),
+    (lambda b: b["answer"]["bottom_line"].update(certainty=MARK), "invalid"),
+    (lambda b: b.update(question=[MARK]), "invalid"),
+    (lambda b: b.update(created_at=MARK), "invalid"),
+    (lambda b: b["references"].append({"n": 2, "pmid": MARK}), "invalid"),
+])
+def test_reading_a_stored_body_never_raises_with_its_content(change, kind):
+    body = quick_sample().to_body()
+    change(body)
+    with pytest.raises(AnswerInvalid) as caught:
+        read_body(body)
+    assert caught.value.kind == kind
+    assert caught.value.args == (kind,)
+    assert_no_marker(caught.value)
+    # The model's own entry points route the same way.
+    with pytest.raises(AnswerInvalid) as caught:
+        AnswerV3.model_validate(body)
+    assert_no_marker(caught.value)
+    assert read_body(quick_sample().to_body()) == quick_sample()
+
+
+def test_building_task_5_models_never_raises_with_their_content():
+    with pytest.raises(AnswerInvalid) as caught:
+        AnswerV3(question=MARK, created_at=datetime(2025, 11, 11, 10, 0), answer=None,
+                 empty_reason=MARK, references=[], searches=[], integrity=IntegrityV3(),
+                 stopped_early=None, elapsed_s=0)  # a naive time
+    assert caught.value.kind == "invalid"
+    assert_no_marker(caught.value)
+    with pytest.raises(AnswerInvalid) as caught:
+        ReferenceV3(n=1, pmid="1", title=[MARK], journal=None, year=None, doi=None,
+                    retracted=False)
+    assert_no_marker(caught.value)
+    with pytest.raises(AnswerInvalid) as caught:
+        references_from([StudyInput(pmid="1", title=None, journal=MARK, year=None, pub_types=(),
+                                    doi=None, retracted=False, abstract=MARK, design="RCT",
+                                    why=MARK)])
+    assert_no_marker(caught.value)
+    with pytest.raises(AnswerInvalid) as caught:
+        IntegrityV3(removed_citations=MARK)
+    assert_no_marker(caught.value)
+
+
+def test_to_body_never_raises_with_its_content():
+    a = quick_sample()
+    a.answer.bottom_line.text = object()  # what no checked answer holds
+    a.question = MARK
+    with pytest.raises(AnswerInvalid) as caught:
+        a.to_body()
+    assert caught.value.kind == "unserialisable"
+    assert_no_marker(caught.value)
+
+
+@pytest.mark.parametrize("x", [float("inf"), float("-inf"), float("nan")])
+def test_non_finite_numbers_are_stored_as_null(x):
+    # serde_json writes a non-finite f64 as null (Rust probe: `to_value(f64::INFINITY)`,
+    # `f64::NAN` give Value::Null); JSON has no Infinity or NaN and Postgres refuses them.
+    a = quick_sample()
+    n = a.answer.outcomes[0].numbers[0]
+    n.value, n.ci_low, n.ci_high = x, x, x
+    body = a.to_body()
+    assert body["answer"]["outcomes"][0]["numbers"][0]["value"] is None
+    assert body["answer"]["outcomes"][0]["numbers"][0]["ci_low"] is None
+    assert body["answer"]["outcomes"][0]["numbers"][0]["ci_high"] is None
+    assert "Infinity" not in json.dumps(body) and "NaN" not in json.dumps(body)
+    json.dumps(body, allow_nan=False)
+    # Finite numbers are untouched.
+    assert body["answer"]["outcomes"][0]["numbers"][1]["value"] == 80.0

@@ -38,6 +38,7 @@ Unicode 16's digits, and its `\\s` also matches U+001C..U+001F), so both classes
 out. An id's length is counted in UTF-8 bytes, as Rust's `str::len`.
 """
 
+import math
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -51,9 +52,11 @@ from pydantic import (
     Field,
     SerializationInfo,
     SerializerFunctionWrapHandler,
+    ValidationError,
     field_serializer,
     model_serializer,
 )
+from pydantic_core import PydanticSerializationError
 
 from pubmedgemini.gemini.structured import rust_trim
 from pubmedgemini.researcher.loop import SearchEntry
@@ -357,8 +360,68 @@ def clean_citations(text: str, known: Callable[[str], bool]) -> tuple[str, int]:
 
 # ---------- the stored answer ----------
 
+AnswerInvalidKind = Literal["not_quick", "invalid", "unserialisable"]
 
-class ReferenceV3(BaseModel):
+# Top-level keys whose refusal means a body that is not a Quick AnswerV3 (Full parts, another
+# version or mode), as opposed to a Quick body that is malformed.
+_NOT_QUICK = frozenset({"version", "mode", "skeptic", "evidence", "coverage", "completeness"})
+
+
+class AnswerInvalid(Exception):
+    """A stored answer, or one of Task 5's models, could not be read, built or written.
+    Carries only `kind`: never the input, the question or model text. Raised `from None`
+    outside the `except` block, so it has no `__cause__` and no `__context__` (pydantic's
+    ValidationError quotes the refused input)."""
+
+    def __init__(self, kind: AnswerInvalidKind) -> None:
+        self.kind = kind
+        super().__init__(kind)
+
+
+def _kind_of(e: ValidationError) -> AnswerInvalidKind:
+    for err in e.errors(include_input=False, include_url=False, include_context=False):
+        loc = err.get("loc") or ()
+        if loc and loc[0] in _NOT_QUICK:
+            return "not_quick"
+    return "invalid"
+
+
+class _Safe(BaseModel):
+    """Validation never raises with the input in it: building or `model_validate` raise
+    AnswerInvalid with a kind only."""
+
+    def __init__(self, /, **data: Any) -> None:
+        kind: AnswerInvalidKind | None = None
+        try:
+            super().__init__(**data)
+        except ValidationError as e:
+            kind = _kind_of(e)
+        if kind is not None:
+            raise AnswerInvalid(kind) from None
+
+    @classmethod
+    def model_validate(cls, obj: Any, **kwargs: Any):
+        kind: AnswerInvalidKind | None = None
+        try:
+            return super().model_validate(obj, **kwargs)
+        except ValidationError as e:
+            kind = _kind_of(e)
+        raise AnswerInvalid(kind) from None
+
+
+def _finite(v: Any) -> Any:
+    """`v` with every non-finite float as None: serde_json writes a NaN or infinite f64 as
+    `null` (JSON has neither; Postgres refuses them)."""
+    if isinstance(v, float):
+        return v if math.isfinite(v) else None
+    if isinstance(v, dict):
+        return {k: _finite(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_finite(x) for x in v]
+    return v
+
+
+class ReferenceV3(_Safe):
     """A numbered reference, built by code from the fetched record (`references_from`)."""
 
     n: int = Field(ge=0, le=65535)  # u16: 1-based, in the order the researcher selected
@@ -371,7 +434,7 @@ class ReferenceV3(BaseModel):
     found_by_skeptic: bool = False  # Full only; serde(default), always written
 
 
-class IntegrityV3(BaseModel):
+class IntegrityV3(_Safe):
     """What the code checks removed (counts only)."""
 
     dropped_unseen: int = 0  # selected studies that no tool returned in this run
@@ -402,7 +465,7 @@ class CompletionRule(StrEnum):
     PERCENT_FROM_COUNTS = "percent_from_counts"
 
 
-class CompletedNumber(BaseModel):
+class CompletedNumber(_Safe):
     """A "not traced" number completed against a cited abstract (F4)."""
 
     span: Span
@@ -412,7 +475,7 @@ class CompletedNumber(BaseModel):
     rule: CompletionRule
 
 
-class AnswerV3(BaseModel):
+class AnswerV3(_Safe):
     """The stored answer (`answers.body`), Quick fields only: Quick has no skeptic, no
     evidence rows, no coverage and no completeness review (`t.rs:203-226` `base`)."""
 
@@ -452,8 +515,24 @@ class AnswerV3(BaseModel):
         return _skip(handler(self), coverage=None, completeness=None, numbers_completed=[])
 
     def to_body(self) -> dict:
-        """The answer as Incisive stores it (`serde_json::to_value(&answer)`)."""
-        return self.model_dump(mode="json")
+        """The answer as Incisive stores it (`serde_json::to_value(&answer)`): a non-finite
+        number as `null`. A value no checked answer holds raises AnswerInvalid
+        ("unserialisable"), never pydantic's error (which quotes the value)."""
+        failed = False
+        try:
+            body = self.model_dump(mode="json", warnings=False)
+        except (PydanticSerializationError, ValueError, TypeError):
+            failed = True
+        if failed:
+            raise AnswerInvalid("unserialisable") from None
+        return _finite(body)
+
+
+def read_body(body: Any) -> AnswerV3:
+    """A stored body (`answers.body`) read into an AnswerV3. Anything that is not a Quick
+    AnswerV3 raises AnswerInvalid: `not_quick` (a Full part, another version or mode) or
+    `invalid` (malformed); the body's content never reaches the exception."""
+    return AnswerV3.model_validate(body)
 
 
 def references_from(studies: Sequence[StudyInput]) -> list[ReferenceV3]:
