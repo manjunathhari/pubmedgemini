@@ -113,6 +113,12 @@ class ModelCaller:
             self._sent[run_id] = n + 1
             return True
 
+    def forget(self, run_id: UUID | None) -> None:
+        """Drops the run's attempt count once the run has ended, so the map does not grow
+        with every run. Nothing is sent for a run after this call ends it."""
+        with self._cap_lock:
+            self._sent.pop(run_id, None)
+
     def _cap_reached(self, step: str, run_id: UUID | None) -> RunCapReached:
         with self._cap_lock:
             n = self._sent.get(run_id, 0)

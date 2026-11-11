@@ -93,8 +93,9 @@ class RunApp:
         self.gemini = FakeGemini(script)
         client = GeminiClient(SecretStr(FAKE_KEY), MODEL, self.gemini.transport, clock=clock.now)
         pacer = GeminiPacer(1000, 250_000, clock.now, clock.sleep)
-        return ModelCaller(client, pacer, self.pool, MODEL, sleep=clock.sleep, clock=clock.now,
-                           jitter=lambda: 0.5)
+        self.model_caller = ModelCaller(client, pacer, self.pool, MODEL, sleep=clock.sleep,
+                                        clock=clock.now, jitter=lambda: 0.5)
+        return self.model_caller
 
     def runner(self, script, tools=None):
         clock = self.clock = FakeClock()
@@ -482,6 +483,32 @@ def test_a_busy_gemini_reaches_the_cap_and_fails_the_run(run_app, caplog):
     assert end_message(v) is None  # the page words it from the kind
     assert f"run kind=finished run_id={rid} status=failed error_kind=run_call_cap" in [
         r.getMessage() for r in caplog.records]
+
+
+def test_the_runs_attempt_count_is_forgotten_when_the_run_ends(run_app, monkeypatch):
+    # The count is kept while the run goes (the cap holds: 14 attempts, none after) and is
+    # gone at its end, whether the run is done, capped or failed inside.
+    import pubmedgemini.runner as runner_mod
+
+    held = []
+    real = ModelCaller.forget
+
+    def spy(self, run_id):
+        held.append(dict(self._sent))  # what the map held at the moment of the call
+        real(self, run_id)
+
+    monkeypatch.setattr(ModelCaller, "forget", spy)
+    capped = run_app.start(script=BUSY_RUN)
+    assert held == [{capped: 14}] and run_app.model_caller._sent == {}
+    assert calls_of(run_app.pool, capped) == 14
+
+    held.clear()
+    done = run_app.start(script=ELEVEN)
+    assert held == [{done: 11}] and run_app.model_caller._sent == {}
+
+    monkeypatch.setattr(runner_mod, "research", lambda *a, **k: 1 / 0)
+    run_app.start(script=[])
+    assert run_app.model_caller._sent == {}
 
 
 def test_a_normal_eleven_call_run_is_unaffected(run_app):

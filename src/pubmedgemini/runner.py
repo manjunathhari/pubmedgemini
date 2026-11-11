@@ -217,3 +217,5 @@ def run_one(
             finish_run(pool, run_id, "failed", "internal", None, None)
         except Exception:  # noqa: BLE001
             log.error("run kind=not_finished run_id=%s", run_id)
+    finally:
+        caller.forget(run_id)  # the run's attempt count is no longer needed

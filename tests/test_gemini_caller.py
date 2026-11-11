@@ -300,6 +300,23 @@ def test_a_capped_run_reserves_no_pacer_slot_and_waits_for_nothing(caller_with):
     assert len(g.sent) == 14
 
 
+def test_forget_drops_one_runs_count_and_keeps_the_others(caller_with):
+    c, _g, _clock, _ = caller_with([reply([{"text": "x"}])] * 16)
+    a, b = uuid.uuid4(), uuid.uuid4()
+    c._sent.clear()
+    for _ in range(14):  # the cap holds while the count is kept
+        c.call({}, step="researcher", run_id=None, deadline=10**9, on_wait=print)
+    with pytest.raises(RunCapReached):
+        c.call({}, step="researcher", run_id=None, deadline=10**9, on_wait=print)
+    c.forget(None)
+    assert c._sent == {}
+    c.forget(a)  # a run that never sent anything: nothing to drop, no error
+    c.call({}, step="researcher", run_id=None, deadline=10**9, on_wait=print)
+    c._sent[a], c._sent[b] = 3, 5
+    c.forget(a)
+    assert set(c._sent) == {None, b}
+
+
 def test_each_run_has_its_own_cap(caller_with, migrated_pool):
     with migrated_pool.connection() as conn:
         uid = conn.execute("INSERT INTO users (email, role) VALUES ('o@example.com', 'owner') "
