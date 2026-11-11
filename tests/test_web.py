@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import psycopg
 from fastapi.testclient import TestClient
@@ -94,7 +95,8 @@ def test_pages_are_plain_html(client_dev):
     r = client_dev.get("/", headers={"x-dev-user-email": "owner@example.com"})
     assert "<script" not in r.text and "http://" not in r.text and "https://" not in r.text
     assert r.text.count("<main") == 1
-    assert "42rem" in r.text
+    css = Path(__file__).resolve().parent.parent / "src" / "pubmedgemini" / "static" / "app.css"
+    assert "42rem" in css.read_text(encoding="utf-8")
 
 
 def test_failed_migration_makes_healthz_not_ready(db_url, tmp_path, caplog):
