@@ -506,8 +506,14 @@ CROSS_SITE = "This request did not come from this page. Open the page and search
     ({"sec-fetch-site": "cross-site"}, True),
     ({"sec-fetch-site": "Cross-Site"}, True),
     ({"sec-fetch-site": "same-origin"}, False),
-    ({"sec-fetch-site": "same-site"}, False),
+    ({"sec-fetch-site": " Same-Origin "}, False),
     ({"sec-fetch-site": "none"}, False),
+    # a sibling subdomain of the same parent domain is not this page
+    ({"sec-fetch-site": "same-site"}, True),
+    ({"sec-fetch-site": "Same-Site"}, True),
+    ({"sec-fetch-site": "something-new"}, True),
+    ({"sec-fetch-site": ""}, True),
+    ({"sec-fetch-site": "same-site", "origin": "https://app.test", "host": "app.test"}, True),
     # Sec-Fetch-Site decides when present, whatever Origin says
     ({"sec-fetch-site": "same-origin", "origin": "https://evil.example", "host": "app.test"}, False),
     ({"sec-fetch-site": "cross-site", "origin": "https://app.test", "host": "app.test"}, True),
@@ -533,6 +539,7 @@ def test_is_cross_site(headers, refused):
 
 @pytest.mark.parametrize("headers", [
     {"sec-fetch-site": "cross-site"},
+    {"sec-fetch-site": "same-site"},
     {"origin": "https://evil.example"},
 ])
 def test_cross_site_post_is_refused_before_anything_is_sent(client_search, upstream, caplog,
@@ -546,6 +553,7 @@ def test_cross_site_post_is_refused_before_anything_is_sent(client_search, upstr
     lines = [x.getMessage() for x in caplog.records if x.getMessage().startswith("search ")]
     assert lines == ["search kind=refused_cross_site"]
     assert "evil" not in caplog.text and "cross-site" not in caplog.text
+    assert "same-site" not in caplog.text
 
 
 @pytest.mark.parametrize("headers", [

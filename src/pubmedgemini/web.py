@@ -54,14 +54,14 @@ def _host_key(host: str) -> str:
 
 
 def is_cross_site(headers: Mapping[str, str]) -> bool:
-    """True only on positive evidence that another site sent this request, so no same-site
-    post is ever refused. `Sec-Fetch-Site` decides when present ("cross-site" only;
-    "same-origin", "same-site" and "none" are fine). Without it, an `Origin` whose host
-    differs from the request's own (`X-Forwarded-Host`, else `Host`). Neither header (old
-    browsers, curl), an Origin with no host ("null"), or no own host: allowed."""
+    """True when another site sent this request. `Sec-Fetch-Site` decides when present: only
+    "same-origin" and "none" are fine; "same-site" (a sibling subdomain), "cross-site" and
+    any other value are refused. Without it, an `Origin` whose host differs from the
+    request's own (`X-Forwarded-Host`, else `Host`). Neither header (old browsers, curl), an
+    Origin with no host ("null"), or no own host: allowed."""
     site = headers.get("sec-fetch-site")
     if site is not None:
-        return site.strip().lower() == "cross-site"
+        return site.strip().lower() not in ("same-origin", "none")
     origin = headers.get("origin")
     if origin is None:
         return False
