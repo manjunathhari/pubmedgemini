@@ -715,6 +715,36 @@ def test_thread_starter_runs_in_the_background(run_app_thread): ...   # POST ret
 - [ ] **Step 4: Run** `ruff check . && pytest -v`. Expected: all PASS.
 - [ ] **Step 5: Commit** `feat: runs on a background thread, one at a time, each step stored as it happens`.
 
+### Task 8b: the patient-details check (added by owner decision, 11 Nov 2026)
+
+Owner decision: "check each question for patient details before it goes to Google; copy Incisive's check into F2". This replaces the row "Identifier filter and medical gate before a run ... no" in "Differences from Incisive" for the identifier filter only; the medical gate is still not ported.
+
+**What it copies** (Incisive commit `12630f7`, read in full): `crates/incisive-app/src/deid.rs` (every rule, word list, pattern, the character allowlist, `describe`, `hint`, `scan` with its overlap merge and mark-free rescan) and `ask.rs` `BLOCKED_MESSAGE`, `blocked_message`. The port is `src/pubmedgemini/deid.py`; its module docstring has the rule-by-rule table with the Incisive symbol for each rule. The 30 patterns, the six placeholders, the three helper patterns and the 22 word lists are Incisive's text, copied mechanically and checked equal to the Rust source. Tests: `tests/test_deid.py` ports `tests/deid.rs` one for one (each test named after the Incisive test; the BLOCK, PASS and ROUND4_PROBES tables row for row: 271, 292 and 129 rows) and the two blocked-question cases of `tests/ask.rs`.
+
+**Outcomes, as Incisive:** a question with any finding is **blocked** whole; nothing is redacted or cleaned. A question with no finding **passes** and is stored and sent exactly as given (Incisive stores the question as it came, `agent/mod.rs`: "The question as stored (post identifier filter)", which is the same text).
+
+**Where it runs:** only in `runs.create_run`, before any database write or network call. `POST /ask` and `POST /runs/{id}/again` both create runs through it.
+
+**Interface for Task 9:**
+- `runs.create_run(pool, user_id, question, model) -> UUID` raises `runs.QuestionBlocked` (checked before `ActiveRunExists`).
+- `QuestionBlocked.outcome` is a `deid.BlockedIdentifiers` with `categories: tuple[tuple[str, int], ...]` (category name and count, in Incisive's order), `labels: tuple[str, ...]` (Incisive's user-facing label per category, e.g. `phone number`), `total: int` and `message: str`. It never holds the matched text or its position.
+- The message is Incisive's: `pubmedgemini found details that could identify a patient. Please remove them and resend your question.`, plus, for hidden or unusual characters, ` Please retype the question without copy-pasted special characters (use plain hyphens, colons and spaces).`
+- Suggested page behaviour (Task 9 decides): status 400, the home page with the message and the labels, the question box empty; no run row exists.
+- One log line, from `create_run`: `ask kind=blocked_identifiers categories=<n> <name>=<count> ...`. `tests/test_logging.py` `ASK_LINE_PATTERNS` and `assert_ask_lines_fixed` are there for Task 10 to extend.
+
+**What differs, and why:**
+1. Product name in the message ("pubmedgemini" for "Incisive"), as the plan did for the long-question message.
+2. A blocked question raises `QuestionBlocked` instead of returning a value, so `create_run` keeps the `-> UUID` interface Task 9 was planned against, and a caller that forgets the case fails closed (no run) rather than redirecting to a run that does not exist.
+3. The outcome carries category names and counts only, not Incisive's byte offsets (owner's instruction).
+4. Offsets inside the module are character indices; every window Incisive measures in bytes is still measured in bytes.
+5. Python's `re` reads some characters differently from Rust's `regex`; the regexes run on a same-length shadow of the text so the results are Rust's: superscript digits and fractions are not word characters and combining marks are (for `\b`), `İ` and `ı` do not fold to `i`, U+001C to U+001F are not white space, and `$` is end of text. Without this a question such as `Aadhaar 2345 6789 0123½` would pass. Checked: on Incisive's 692 table strings, 24 edge cases and 30,000 random strings, the port's findings (kinds and spans) equal those of Incisive's own `deid.rs` built with its regex crate versions (scratch build, not in the repo; CI cannot run it).
+6. Latin and Greek script ranges are embedded from Unicode 16.0 `Scripts.txt` (Python's `unicodedata` has no script property); letter categories come from Python's own Unicode tables (15.0 on Python 3.12).
+7. Not checked: Rust's `is_alphabetic` also counts Other_Alphabetic marks (such as U+0345); the port does not. Any mark in a question triggers the mark-free rescan, so the verdict is the same; a span or kind could differ.
+
+**What it does not catch** (Incisive's own stated limits, `deid.rs` module doc): it is a set of patterns. Names are caught only after a title, a patient-context word or a relation, and only in ASCII letters, so a lower-case or non-Latin name passes; `d/m` without a year, month-and-year and a year alone pass; `c/o` + a single unknown word passes; a bare 6-digit number is a PIN only with an address cue; a rare place, an unusual identifier format, or a story that fits one person cannot be recognised. Also as Incisive: `UHİD 4471` (dotted capital I) passes. So the privacy line on the page stays.
+
+**Task 9 note:** Task 9 cleans NUL and lone surrogates before creating the run. Incisive would block a NUL (a control character); after cleaning, it is gone before the check sees it. The owner may prefer the check to see the text as typed (Needs the owner in the Task 8b report).
+
 ### Task 9: The pages
 
 **Files:**

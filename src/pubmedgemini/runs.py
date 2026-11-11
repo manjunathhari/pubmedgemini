@@ -9,6 +9,10 @@ From Incisive (commit 12630f7, `crates/incisive-app/src/`): `clip` and `MAX_STEP
 (`agent/mod.rs`), a failed step write logged and ignored (`add_line`), the end messages
 (`agent/answer.rs` `NO_EVIDENCE`, `STOPPED_NO_ANSWER`, `EMPTY_SELECTION`).
 
+The patient-details check (`deid.check_question`, ported from Incisive) runs in
+`create_run`, the one place a question becomes a run: a blocked question raises
+`QuestionBlocked` before anything is stored or sent.
+
 Logs hold run ids, counts and fixed kinds only; never the question or any text of a run.
 """
 
@@ -22,6 +26,7 @@ from uuid import UUID
 import psycopg
 from psycopg_pool import ConnectionPool
 
+from pubmedgemini.deid import BlockedIdentifiers, check_question
 from pubmedgemini.lit.cache import get_for_display
 from pubmedgemini.lit.paper import Paper
 from pubmedgemini.lit.text import clean_text
@@ -90,6 +95,16 @@ class ActiveRunExists(Exception):
         super().__init__("active_run_exists")
         self.run_id = run_id
         self.own = own
+
+
+class QuestionBlocked(Exception):
+    """The question holds details that could identify a patient. `outcome` carries the
+    category names, their counts and the message to show; never the matched text. No run was
+    created, nothing was stored and nothing was sent anywhere."""
+
+    def __init__(self, outcome: BlockedIdentifiers) -> None:
+        super().__init__("blocked_identifiers")
+        self.outcome = outcome
 
 
 @dataclass(frozen=True)
@@ -189,7 +204,17 @@ def active_run(pool: ConnectionPool) -> tuple[UUID, int] | None:
 
 
 def create_run(pool: ConnectionPool, user_id: int, question: str, model: str) -> UUID:
-    """A queued run for `question`. Raises ActiveRunExists when one is queued or running."""
+    """A queued run for `question`, stored as given. Raises QuestionBlocked (checked first,
+    locally, before any database write or network call) when the patient-details check finds
+    anything, and ActiveRunExists when a run is queued or running."""
+    blocked = check_question(question)
+    if blocked is not None:
+        log.info(
+            "ask kind=blocked_identifiers categories=%d %s",
+            len(blocked.categories),
+            " ".join(f"{k}={n}" for k, n in blocked.categories),
+        )
+        raise QuestionBlocked(blocked)
     for _ in range(2):
         run_id = uuid.uuid4()
         try:

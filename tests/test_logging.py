@@ -235,3 +235,53 @@ def test_each_search_logs_one_fixed_line(db_url, caplog, override, line):
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("search ")]
     assert len(lines) == 1 and re.fullmatch(line, lines[0]), lines
     assert "zq7" not in caplog.text
+
+
+# ---------- questions (F2) ----------
+
+# The fixed-kind `ask` lines and their exact form: names, counts and ids only. Task 10 adds
+# the other `ask kind=` lines here and calls `assert_ask_lines_fixed` after each scenario.
+ASK_LINE_PATTERNS = {
+    "blocked_identifiers": r"ask kind=blocked_identifiers categories=[1-9] [a-z_]+=[0-9]+"
+                           r"(?: [a-z_]+=[0-9]+)*",
+}
+
+
+def _ask_lines(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith("ask ")]
+
+
+def assert_ask_lines_fixed(caplog) -> None:
+    """Every `ask ` line logged so far has a known kind and that kind's exact form."""
+    import re
+
+    for line in _ask_lines(caplog):
+        kind = line.split()[1].removeprefix("kind=")
+        assert kind in ASK_LINE_PATTERNS and re.fullmatch(ASK_LINE_PATTERNS[kind], line), line
+
+
+def test_a_blocked_question_logs_categories_and_counts_only(migrated_pool, caplog):
+    import re
+
+    from pubmedgemini.identity import ensure_owner
+    from pubmedgemini.runs import QuestionBlocked, create_run
+
+    ensure_owner(migrated_pool, "owner@example.com")
+    with migrated_pool.connection() as conn:
+        uid = conn.execute("SELECT id FROM users").fetchone()[0]
+    caplog.set_level(logging.DEBUG)
+    app_log = logging.getLogger("pubmedgemini")
+    pinned = app_log.level
+    app_log.setLevel(logging.DEBUG)
+    try:
+        with pytest.raises(QuestionBlocked):
+            create_run(migrated_pool, uid,
+                       "zq7 Mrs. Lakshmi ph 9845012345 and 9845012346 hernia?", "m")
+    finally:
+        app_log.setLevel(pinned)
+    assert _ask_lines(caplog) == [
+        "ask kind=blocked_identifiers categories=2 phone=2 person_name=1"]
+    assert re.fullmatch(ASK_LINE_PATTERNS["blocked_identifiers"], _ask_lines(caplog)[0])
+    assert_ask_lines_fixed(caplog)
+    for leak in ("zq7", "Lakshmi", "9845012345", "9845012346", "hernia", "Mrs"):
+        assert leak not in caplog.text, leak
