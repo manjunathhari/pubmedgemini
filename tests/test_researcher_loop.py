@@ -472,10 +472,31 @@ def test_list_call_cut_at_the_hard_stop_is_a_hard_stop(run_research):
         run_research(SEARCH_THEN_END + [h.at_hard_stop(None)], on_line=h.on_line)
 
 
-def test_list_reply_after_the_hard_stop_is_a_hard_stop(run_research):
+def test_list_reply_after_the_hard_stop_is_a_hard_stop(run_research, monkeypatch, caplog):
+    # A 200 list reply arrives inside the client's own deadline; the clock passes the hard stop
+    # only after `generate` returns (here: when the pacer notes the reply's tokens). Only the
+    # check in `call_list` after a successful call can end this run as a hard stop.
     h = ClockHolder()
+    armed = []
+    real_note = GeminiPacer.note
+
+    def note_then_move_the_clock(self, tokens):
+        real_note(self, tokens)
+        if armed:
+            h.clock.t = max(h.clock.t, h.timing.hard_stop_at)
+
+    monkeypatch.setattr(GeminiPacer, "note", note_then_move_the_clock)
+
+    def list_reply_arrives(request):
+        armed.append(True)  # the clock has not moved yet: the call itself is in time
+        return httpx.Response(200, json=LIST_OK)
+
+    caplog.set_level(logging.INFO)
     with pytest.raises(HardStop):
-        run_research(SEARCH_THEN_END + [h.at_hard_stop(LIST_OK)], on_line=h.on_line)
+        run_research(SEARCH_THEN_END + [list_reply_arrives], on_line=h.on_line)
+    kinds = [m for m in (r.getMessage() for r in caplog.records)
+             if m.startswith("researcher kind=hard_stop")]
+    assert kinds == ["researcher kind=hard_stop_in_list_call"]
 
 
 def test_nudge_cut_at_the_hard_stop_is_a_hard_stop(run_research):
