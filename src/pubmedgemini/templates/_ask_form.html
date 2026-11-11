@@ -9,7 +9,7 @@
 <p>Found: {% for label, n in ask_found %}{{ label }} ({{ n }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>
 {% endif %}
 {% if ask_link %}
-<p><a href="{{ ask_link }}">See the question that is running</a></p>
+<p class="row"><a href="{{ ask_link }}">See the question that is running</a></p>
 {% endif %}
 <form method="post" action="/ask">
 <p><label for="question">Ask a question</label></p>

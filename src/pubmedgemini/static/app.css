@@ -73,8 +73,8 @@ li + li { margin-top: 6px; }
 
 a { color: #333333; }
 a:hover { color: #666666; }
-/* links in running text and lists flow inline; links that stand alone as a row are 44px tall */
-p > a:only-child, .item a {
+/* links flow inline; only links in a container marked row or item get the 44px target */
+.row > a, .item a {
   display: inline-block;
   min-height: 44px;
   padding: 10px 0;
@@ -98,6 +98,7 @@ article { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card article { border-top: 1px solid #DDDDDD; padding-top: 10px; }
 .card > h2 + article { border-top: 0; padding-top: 0; }
 .muted { color: #666666; }
+.item p + p { margin-top: 0; }
 .item { border-top: 1px solid #DDDDDD; padding-top: 10px; }
 .card > h2 + .item { border-top: 0; padding-top: 0; }
 

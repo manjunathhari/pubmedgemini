@@ -6,7 +6,7 @@
 {% endblock %}
 {% block content %}
 <h1>pubmedgemini</h1>
-<p><a href="/">Home</a></p>
+<p class="row"><a href="/">Home</a></p>
 <section class="card">
 <h2>Question</h2>
 {% for para in question_paragraphs %}
@@ -52,7 +52,7 @@
 {% if s.pub_types %}
 <p>Publication types: {{ s.pub_types|join(", ") }}</p>
 {% endif %}
-<p><a href="https://pubmed.ncbi.nlm.nih.gov/{{ s.pmid }}/">PMID {{ s.pmid }}</a></p>
+<p class="row"><a href="https://pubmed.ncbi.nlm.nih.gov/{{ s.pmid }}/">PMID {{ s.pmid }}</a></p>
 {% if s.retracted %}
 <p><strong>Retracted</strong></p>
 {% endif %}

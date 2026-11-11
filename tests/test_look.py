@@ -4,6 +4,7 @@ test_ask_page cover that."""
 
 import re
 import tomllib
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -72,6 +73,61 @@ def test_lists_and_inline_links_styles():
     assert not re.search(r"(^|\n)a\s*\{[^}]*min-height", text)
 
 
+def _rules():
+    """(selector list, body) for each plain rule in app.css, comments removed."""
+    text = re.sub(r"/\*.*?\*/", "", css(), flags=re.DOTALL)
+    return [(sel.strip(), body) for sel, body in re.findall(r"([^{}@]+)\{([^{}]*)\}", text)]
+
+
+def test_only_marked_links_get_the_big_target(pages):
+    bare = {"a", "p a", "p > a", "li a"}
+    for sel, body in _rules():
+        parts = {" ".join(x.split()) for x in sel.split(",")}
+        big = "min-height" in body or "display: inline-block" in body
+        if big and parts & bare:
+            raise AssertionError(f"bare link selector gets the big target: {sel}")
+        if "min-height" in body and any(re.search(r"(^|\W)a\b", x) for x in parts):
+            assert all(".row" in x or ".item" in x for x in parts if re.search(r"\ba\b", x)), sel
+
+    class Scan(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack, self.bad = [], []
+            self.p_text = self.p_marked = self.in_a = 0
+
+        def handle_starttag(self, tag, attrs):
+            classes = (dict(attrs).get("class") or "").split()
+            self.stack.append((tag, classes))
+            if tag == "p":
+                self.p_text = self.p_marked = 0
+            if tag == "a":
+                self.in_a += 1
+                if any(c in ("row", "item") for _, cl in self.stack for c in cl):
+                    self.p_marked = 1
+
+        def handle_endtag(self, tag):
+            if tag == "a":
+                self.in_a -= 1
+            if tag == "p" and self.p_marked and self.p_text:
+                self.bad.append(1)
+            while self.stack and self.stack[-1][0] != tag:
+                self.stack.pop()
+            if self.stack:
+                self.stack.pop()
+
+        def handle_data(self, data):
+            if self.in_a == 0 and data.strip() and any(t == "p" for t, _ in self.stack):
+                self.p_text = 1
+
+    marked = 0
+    for name in ("home_after", "home_active", "results", "run", "run_done"):
+        scan = Scan()
+        scan.feed(pages[name].text)
+        assert not scan.bad, name
+        marked += len(re.findall(r'class="(?:row|item)"', pages[name].text))
+    assert marked
+
+
 def test_fonts_are_self_hosted():
     text = css()
     assert "http://" not in text and "https://" not in text
@@ -95,10 +151,12 @@ def pages(db_url, upstream):
         out = {"home": e.c.get("/", headers=H)}
         out["results"] = e.c.post("/search", data={"q": "hernia mesh"}, headers=H)
         r = e.ask(QUESTION)
+        out["home_active"] = e.c.get("/", headers=H)
         out["run"] = e.run_page(r.headers["location"])
         e.starter.run(e.starter.started[0])
         out["run_done"] = e.run_page(r.headers["location"])
         out["message"] = e.run_page("/runs/not-a-uuid")
+        out["home_after"] = e.c.get("/", headers=H)
         out["client"] = e.c
         yield out
 
