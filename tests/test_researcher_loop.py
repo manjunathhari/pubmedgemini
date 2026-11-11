@@ -499,6 +499,26 @@ def test_list_reply_after_the_hard_stop_is_a_hard_stop(run_research, monkeypatch
     assert kinds == ["researcher kind=hard_stop_in_list_call"]
 
 
+def test_a_loop_that_ends_at_the_hard_stop_is_a_hard_stop_before_any_list_call(
+        run_research, caplog):
+    # The turn ends normally (end_turn) and its step line moves the clock to the hard stop.
+    # Only the check after the loop produces this log kind; the list call's own first check
+    # would log `hard_stop_before_list_call`.
+    h = ClockHolder()
+
+    def on_line(text, clock, timing):
+        h.on_line(text, clock, timing)
+        if "(turn 1 of" in text:
+            clock.t = max(clock.t, timing.hard_stop_at)
+
+    caplog.set_level(logging.INFO)
+    with pytest.raises(HardStop):
+        run_research([end_turn()], on_line=on_line)
+    kinds = [m for m in (r.getMessage() for r in caplog.records)
+             if m.startswith("researcher kind=hard_stop")]
+    assert kinds == ["researcher kind=hard_stop_after_loop"]
+
+
 def test_nudge_cut_at_the_hard_stop_is_a_hard_stop(run_research):
     h = ClockHolder()
     with pytest.raises(HardStop):
