@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block head %}
+{% if active %}
+<meta http-equiv="refresh" content="5">
+{% endif %}
+{% endblock %}
+{% block content %}
+<h1>pubmedgemini</h1>
+<p><a href="/">Home</a></p>
+<h2>Question</h2>
+{% for para in question_paragraphs %}
+<p>{{ para }}</p>
+{% endfor %}
+{% if active %}
+<p>Working. This page refreshes itself; you can leave it and come back from the home page.</p>
+{% endif %}
+<h2>Steps</h2>
+{% if run.lines %}
+<ul>
+{% for line in run.lines %}
+<li>{{ line }}</li>
+{% endfor %}
+</ul>
+{% else %}
+<p>Waiting to start.</p>
+{% endif %}
+{% if not active %}
+{% if outcome %}
+<p><strong>{{ outcome }}</strong></p>
+{% endif %}
+{% if run.status == "stopped" %}
+<form method="post" action="/runs/{{ run.id }}/again">
+<p><button type="submit">Run again</button></p>
+</form>
+{% endif %}
+{% if run.selected %}
+<h2>Selected studies</h2>
+{% for s in selected %}
+<article>
+<h3>{{ s.title }}</h3>
+<p>{{ s.facts }}</p>
+<p>{{ s.why }}</p>
+{% if s.pub_types %}
+<p>Publication types: {{ s.pub_types|join(", ") }}</p>
+{% endif %}
+<p><a href="https://pubmed.ncbi.nlm.nih.gov/{{ s.pmid }}/">PMID {{ s.pmid }}</a></p>
+{% if s.retracted %}
+<p><strong>Retracted</strong></p>
+{% endif %}
+{% for para in s.paragraphs %}
+<p>{{ para }}</p>
+{% else %}
+<p>Abstract not available.</p>
+{% endfor %}
+</article>
+{% endfor %}
+{% endif %}
+{% if run.considered %}
+<h2>Considered, not selected</h2>
+<ul>
+{% for c in run.considered %}
+<li><a href="https://pubmed.ncbi.nlm.nih.gov/{{ c.pmid }}/">PMID {{ c.pmid }}</a>{% if c.title %} · {{ c.title }}{% endif %} · {{ c.reason }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if run.contradictions %}
+<h2>Possible contradictions</h2>
+<ul>
+{% for c in run.contradictions %}
+<li><a href="https://pubmed.ncbi.nlm.nih.gov/{{ c.pmid }}/">PMID {{ c.pmid }}</a>{% if c.title %} · {{ c.title }}{% endif %} · {{ c.note }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if trail %}
+<h2>Search trail</h2>
+<ul>
+{% for line in trail %}
+<li>{{ line }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if run.down_line %}
+<p>{{ run.down_line }}</p>
+{% endif %}
+<p>Searched PubMed and Europe PMC (free sources); studies selected by {{ run.model }}</p>
+{% endif %}
+<p>Google may use what you type here, and its reviewers may read it (Gemini free tier). Do not type anything that identifies a patient.</p>
+{% endblock %}

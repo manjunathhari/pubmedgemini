@@ -203,10 +203,19 @@ def active_run(pool: ConnectionPool) -> tuple[UUID, int] | None:
     return (row[0], int(row[1])) if row else None
 
 
+def stored_question(question: str) -> str:
+    """The question as stored and sent, for a question that passed the check: a form sends a
+    line break as CR LF, which becomes LF, the line break a textarea's own value holds (and
+    so the text Incisive's page sends). Nothing else changes: no trimming, no other
+    character removed (Incisive stores the question as it came)."""
+    return question.replace("\r\n", "\n")
+
+
 def create_run(pool: ConnectionPool, user_id: int, question: str, model: str) -> UUID:
-    """A queued run for `question`, stored as given. Raises QuestionBlocked (checked first,
-    locally, before any database write or network call) when the patient-details check finds
-    anything, and ActiveRunExists when a run is queued or running."""
+    """A queued run for `question`. Raises QuestionBlocked (checked first, on the question
+    exactly as received, locally, before any database write or network call) when the
+    patient-details check finds anything, and ActiveRunExists when a run is queued or
+    running. A question that passes is stored as `stored_question` gives it."""
     blocked = check_question(question)
     if blocked is not None:
         log.info(
@@ -215,6 +224,7 @@ def create_run(pool: ConnectionPool, user_id: int, question: str, model: str) ->
             " ".join(f"{k}={n}" for k, n in blocked.categories),
         )
         raise QuestionBlocked(blocked)
+    question = stored_question(question)
     for _ in range(2):
         run_id = uuid.uuid4()
         try:

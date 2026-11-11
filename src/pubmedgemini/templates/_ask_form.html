@@ -1,0 +1,24 @@
+{% if not ask_enabled %}
+<p>Questions are not set up yet: the Gemini key is missing on the server.</p>
+{% else %}
+{% if ask_message %}
+<p><strong>{{ ask_message }}</strong></p>
+{% endif %}
+{% if ask_found %}
+<p>Found: {% for label, n in ask_found %}{{ label }} ({{ n }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>
+{% endif %}
+{% if ask_link %}
+<p><a href="{{ ask_link }}">See the question that is running</a></p>
+{% endif %}
+<form method="post" action="/ask">
+<p><label for="question">Ask a question</label></p>
+<p><textarea id="question" name="question" maxlength="4000" required rows="4">
+{{ question }}</textarea></p>
+<p><button type="submit">Ask</button></p>
+</form>
+<p>Free runs left today: about {{ runs_left }}</p>
+{% if runs_left < 1 %}
+<p>Daily free limit reached. Resets at {{ reset_time }} IST.</p>
+{% endif %}
+<p>Google may use what you type here, and its reviewers may read it (Gemini free tier). Do not type anything that identifies a patient.</p>
+{% endif %}
