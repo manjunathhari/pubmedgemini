@@ -1,6 +1,6 @@
 # Change log
 
-Nothing is deployed yet. Entries start with the first merge to `main` that changes the running app.
+Live: F0, F1, F2, the look, Library and Activity (merged and deployed on 10 and 11 Nov 2026). F3a (the writer) is on its branch `f3a-writer` and is not merged. Entries start with the first merge to `main` that changes the running app.
 
 ## F1: search tools and the plain results page (branch `f1-search-tools`, not merged yet)
 
@@ -51,7 +51,7 @@ Nothing is deployed yet. Entries start with the first merge to `main` that chang
 ## F3a: the writer (branch `f3a-writer`, not merged yet)
 
 - A finished question now shows a written answer on its page, in plain sections: At a glance, Bottom line, Clinical practice, the outcomes, the trials and the references. The page still lists the studies, as before. The Incisive layout, the Introduction and the number check come later (F3b, F4).
-- Gemini Flash-Lite writes the answer in four parts at once, from Incisive's prompts, word for word. If a part cannot be read twice, the answer is written again in one piece. The step lines show "Writer: writing the answer from N studies", a "Citation check:" line and "Answer ready".
+- Gemini Flash-Lite writes the answer in four parts at once, from Incisive's prompts, word for word. If a part fails in a way that is not final and at least 150 seconds are left, the answer is written in one piece instead. The step lines show "Writer: writing the answer from N studies", a "Citation check:" line and "Answer ready".
 - The citation check now removes a citation, a number or a trial row that points to a study that was not selected. Owner decision (11 Nov 2026), as Incisive does. This is the one stated exception to "flag, never delete".
 - A question may now send at most 26 requests to Gemini, retries included (was 14). "Free runs left today" shows 21 on a fresh day (was 45). A normal question makes 13 requests: 8 for the search, 1 for the study list, 4 for the writer. The 21 counts the worst case, so a question admitted late in the day can never pass the day's limit.
 - If the daily limit, the key or billing is refused, or the question's 26 requests are used up, while the answer is written, the run ends at once with the same plain message as before. The one-piece retry is not tried then (owner decision Q2, 11 Nov 2026).

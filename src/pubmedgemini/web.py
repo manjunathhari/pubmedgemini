@@ -5,6 +5,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
@@ -435,11 +436,15 @@ def _outcome_line(request: Request, v: RunView) -> str | None:
 
 
 def _num(x: float) -> str:
-    """A stored number as text: a whole number without ".0" (12.0 shows 12), every other one
-    exactly as Python prints the stored float (no rounding, no change of notation)."""
-    if math.isfinite(x) and abs(x) < 1e15 and x == int(x):
-        return str(int(x))
-    return str(x)
+    """A stored number as a plain decimal, never in exponent form: a whole number without
+    ".0" (12.0 shows 12, -0.0 shows 0), any other exactly the digits Python's shortest repr
+    of the stored float holds (0.00001 shows 0.00001). The value never changes."""
+    if not math.isfinite(x):
+        return str(x)
+    text = format(Decimal(repr(x)), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return "0" if text in ("-0", "") else text
 
 
 def _number_line(n: Number) -> str:

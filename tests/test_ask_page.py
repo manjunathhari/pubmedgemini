@@ -877,12 +877,27 @@ def test_a_lone_ci_end_is_shown(env):
     assert "<li>L: 1 (0.5 to 3), PMID 36262096</li>" in _num_page(env, ci_low=0.5, ci_high=3.0)
 
 
-@pytest.mark.parametrize("v,shown", [(12.0, "12"), (0.76, "0.76"), (1.1, "1.1"), (-3.0, "-3"),
-                                     (0.00001, "1e-05"), (0.0, "0"), (123456.789, "123456.789")])
-def test_whole_numbers_print_without_point_zero(v, shown):
+@pytest.mark.parametrize("v,shown", [
+    (12.0, "12"), (0.76, "0.76"), (1.1, "1.1"), (-3.0, "-3"), (-0.0, "0"), (0.0, "0"),
+    (0.00001, "0.00001"), (1e-7, "0.0000001"), (1e15, "1000000000000000"),
+    (1e16, "10000000000000000"), (123456.789, "123456.789")])
+def test_numbers_print_as_plain_decimals(v, shown):
     from pubmedgemini.web import _num
 
     assert _num(v) == shown
+
+
+def test_a_shown_number_is_the_stored_value_with_no_exponent():
+    import random
+
+    from pubmedgemini.web import _num
+
+    rng = random.Random(8)
+    values = [rng.uniform(-1, 1) * 10.0 ** rng.randint(-12, 20) for _ in range(400)]
+    values += [float(rng.randint(-10**6, 10**6)) for _ in range(50)] + [5e-324, 1.7e308]
+    for v in values:
+        t = _num(v)
+        assert float(t) == v and "e" not in t and "E" not in t, (v, t)
 
 
 def test_guidelines_show_with_each_field_and_the_flag(env):
