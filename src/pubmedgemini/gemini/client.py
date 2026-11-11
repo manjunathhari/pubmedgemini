@@ -404,12 +404,15 @@ class GeminiClient:
             },
             timeout=limit,
         )
+        failed: str | None = None
         try:
             response = self._http.send(request, stream=True)
-        except httpx.TimeoutException:
-            raise GeminiError("timeout") from None
-        except httpx.HTTPError:
-            raise GeminiError("network") from None
+        except httpx.HTTPError as e:
+            failed = _transport_kind(e)
+        if failed is not None:
+            # Raised outside the handler: no __context__, so the httpx error and its request
+            # (with the key header) are not reachable from the GeminiError.
+            raise GeminiError(failed) from None
         try:
             if self._clock() > deadline:
                 raise GeminiError("timeout") from None
@@ -444,6 +447,7 @@ class GeminiClient:
         """The body up to `cap` bytes: past it, `too_large`, or (for an error body, `cut`)
         the first `cap` bytes. The deadline is checked after every chunk."""
         body = bytearray()
+        failed: str | None = None
         try:
             for chunk in response.iter_bytes():
                 if self._clock() > deadline:
@@ -454,8 +458,13 @@ class GeminiClient:
                         break
                     raise GeminiError("too_large") from None
                 body += chunk
-        except httpx.TimeoutException:
-            raise GeminiError("timeout") from None
-        except httpx.HTTPError:
-            raise GeminiError("network") from None
+        except httpx.HTTPError as e:
+            failed = _transport_kind(e)
+        if failed is not None:
+            raise GeminiError(failed) from None  # outside the handler: no __context__
         return bytes(body)
+
+
+def _transport_kind(e: httpx.HTTPError) -> str:
+    """`timeout` for an httpx timeout, else `network`. Only the kind leaves the handler."""
+    return "timeout" if isinstance(e, httpx.TimeoutException) else "network"

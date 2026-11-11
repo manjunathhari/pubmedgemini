@@ -367,6 +367,58 @@ def test_connect_error_is_network():
     assert e.value.kind == "network" and GEMINI_HOST not in repr(e.value)
 
 
+# Review L4: on the network and timeout paths the GeminiError carries no cause and no context,
+# so the httpx error (and the request with the key header) can never ride along on it.
+
+def _no_chain(err):
+    assert err.__cause__ is None and err.__suppress_context__ and err.__context__ is None
+
+
+def _body_then(exc):
+    def handler(request):
+        def chunks():
+            yield b'{"candidates": ['
+            raise exc(f"gk-q7 {request.url}", request=request)
+        return httpx.Response(200, content=chunks())
+    return handler
+
+
+@pytest.mark.parametrize("exc,kind", [
+    (httpx.ConnectError, "network"), (httpx.RemoteProtocolError, "network"),
+    (httpx.ReadTimeout, "timeout"), (httpx.ConnectTimeout, "timeout")])
+def test_send_errors_carry_no_cause_or_context(exc, kind):
+    def fail(request):
+        raise exc(f"gk-q7 {request.url}", request=request)
+
+    with pytest.raises(GeminiError) as e:
+        client(FakeGemini([fail]), key="gk-q7").generate({}, 60)
+    assert e.value.kind == kind
+    _no_chain(e.value)
+
+
+@pytest.mark.parametrize("exc,kind", [
+    (httpx.ReadError, "network"), (httpx.RemoteProtocolError, "network"),
+    (httpx.ReadTimeout, "timeout")])
+def test_read_errors_carry_no_cause_or_context(exc, kind):
+    with pytest.raises(GeminiError) as e:
+        client(FakeGemini([_body_then(exc)]), key="gk-q7").generate({}, 60)
+    assert e.value.kind == kind
+    _no_chain(e.value)
+
+
+def test_error_body_read_errors_carry_no_cause_or_context():
+    def handler(request):
+        def chunks():
+            yield b'{"error": '
+            raise httpx.ReadError("gk-q7", request=request)
+        return httpx.Response(503, content=chunks())
+
+    with pytest.raises(GeminiError) as e:
+        client(FakeGemini([handler]), key="gk-q7").generate({}, 60)
+    assert e.value.kind == "network"
+    _no_chain(e.value)
+
+
 def test_total_deadline_is_checked_while_reading():
     clock = FakeClock()
 
