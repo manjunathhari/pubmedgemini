@@ -1,0 +1,11 @@
+{
+  "error": {
+    "code": 400,
+    "message": "made-up key message",
+    "status": "INVALID_ARGUMENT",
+    "details": [
+      {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "API_KEY_INVALID",
+       "domain": "googleapis.com"}
+    ]
+  }
+}

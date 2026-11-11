@@ -1,0 +1,18 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {"text": "made-up thinking", "thought": true},
+          {"text": "Searching."},
+          {"functionCall": {"name": "search_pubmed", "args": {"query": "alpha[tiab]", "max_results": 5}, "id": "x1"},
+           "thoughtSignature": "c2lnQQ=="},
+          {"functionCall": {"name": "search_europepmc", "args": {"query": "beta", "max_results": 5}}}
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {"promptTokenCount": 1200, "candidatesTokenCount": 80, "thoughtsTokenCount": 0}
+}
