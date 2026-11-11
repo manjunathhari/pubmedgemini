@@ -2,7 +2,8 @@
 `run_ask` for the order of the question checks, `runs/mod.rs` `RUN_NOT_FOUND_MESSAGE`).
 
 Every test runs the real routes on a dev app over fakes: `FakeUpstream` for PubMed and Europe
-PMC, `FakeGemini` for Google. No test reaches the network."""
+PMC, `RunGemini` for Google (F2's `FakeGemini` for the researcher, the writer's parts by route;
+F3a Task 7). No test reaches the network."""
 
 import re
 import uuid
@@ -11,8 +12,9 @@ from contextlib import contextmanager
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from gemini_fakes import FAKE_KEY, QUOTA_FAILURE, FakeGemini, call, error
+from gemini_fakes import FAKE_KEY, QUOTA_FAILURE, call, error
 from test_runs import BUSY_RUN, END, HAPPY_RUN, ID1, ID2, ID3, Q1, list_reply, turn
+from writer_fakes import RunGemini
 
 from pubmedgemini.config import Settings
 from pubmedgemini.gemini.quota import calls_today
@@ -88,14 +90,16 @@ class AskEnv:
 
 
 @contextmanager
-def ask_env(db_url, upstream=None, script=(), key=FAKE_KEY, starter=None, **settings_extra):
-    """A dev app: literature over `upstream`, Gemini over a FakeGemini serving `script`, an
+def ask_env(db_url, upstream=None, script=(), key=FAKE_KEY, starter=None, parts=None,
+            **settings_extra):
+    """A dev app: literature over `upstream`, Gemini over a RunGemini serving `script` to the
+    researcher and `parts` to the writer (by default every part answers at once), an
     InlineStarter (the run happens inside the POST) unless another starter is given."""
     if upstream is None:
         from lit_fakes import FakeUpstream, europepmc_routes, pubmed_routes
 
         upstream = FakeUpstream(pubmed_routes() | europepmc_routes())
-    gemini = FakeGemini(list(script))
+    gemini = RunGemini(list(script), parts)
     starter = starter if starter is not None else InlineStarter()
     extra = {"gemini_rpm": 1000} | settings_extra  # no pacing waits in tests
     if key is not None:
@@ -436,7 +440,7 @@ def test_running_page_refreshes_itself_and_finished_does_not(held):
     held.starter.run(held.starter.started[0])  # the app's run function, set at start-up
     done = held.run_page(r.headers["location"]).text
     assert "http-equiv" not in done and "Working." not in done
-    assert "Study list ready" in done
+    assert "Answer ready" in done  # F3a Task 7: the run now writes the answer
 
 
 def test_finished_page_shows_the_study_list(env):
@@ -509,6 +513,33 @@ def test_kind_messages_are_plain(db_url, upstream, script, text):
         page = env.run_page(env.ask(QUESTION).headers["location"]).text
         assert env.one("SELECT status FROM runs") == "failed"
     assert text in page and "Traceback" not in page and "made-up message" not in page
+
+
+def test_a_failed_records_fetch_shows_its_plain_message(db_url):
+    # Owner's answer Q6: the selected studies' records could not be fetched (`failed lit`).
+    from lit_fakes import EUTILS_HOST, EUTILS_PATH, FakeUpstream, europepmc_routes, pubmed_routes
+
+    listed = []
+    routes = pubmed_routes() | europepmc_routes()
+    summaries = routes[(EUTILS_HOST, EUTILS_PATH + "esummary.fcgi")]
+
+    def down_after_the_list(request):  # the searches work; the records fetch after the list
+        if listed:
+            return httpx.Response(503)
+        return httpx.Response(200, headers=summaries.headers, content=summaries.content)
+
+    def the_list(request):
+        listed.append(True)
+        return httpx.Response(200, json=HAPPY_RUN[-1])
+
+    routes[(EUTILS_HOST, EUTILS_PATH + "esummary.fcgi")] = down_after_the_list
+    with ask_env(db_url, FakeUpstream(routes), HAPPY_RUN[:-1] + [the_list]) as env:
+        page = env.run_page(env.ask(QUESTION).headers["location"]).text
+        assert env.rows("SELECT status, error_kind FROM runs") == [("failed", "lit")]
+        assert env.one("SELECT count(*) FROM answers") == 0
+    assert ("PubMed could not be reached to fetch the selected studies, so no answer could be "
+            "written. Please run the question again.") in page
+    assert "<h2>Selected studies</h2>" in page and "Traceback" not in page
 
 
 def test_hard_stop_and_internal_messages(env):

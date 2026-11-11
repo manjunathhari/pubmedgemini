@@ -327,6 +327,13 @@ def leak_script() -> list:
             + [turn(call("search_pubmed", q))] * 6 + [listed])
 
 
+def leak_parts() -> dict:
+    """The writer's four parts for the leak runs: every model-written text carries mq2."""
+    from writer_fakes import good_parts, whole_answer
+
+    return good_parts(whole_answer("mq2 written"), copies=2)
+
+
 # Every line the app's own loggers may write: fixed words, names, counts, ids and fixed
 # kinds. A line that does not match one of these (free text of any kind) fails the tests.
 K = r"[a-z_]+"
@@ -370,6 +377,20 @@ APP_LINE_PATTERNS = [
     r"researcher s3 kind=empty_list seen=\d+ reported=\d+ considered=\d+ rounds=\d+",
     r"researcher s3 outcome=usable reported=\d+ considered=\d+",
     r"researcher s3 outcome=(?:empty|not_made) seen=\d+ rounds=\d+",
+    # F3a: the writer's parts (writer/parts.py), the cap, and the runner after the writer.
+    (r"writer part=(?:trials|outcomes|context|summary|one_piece) attempt=(?:first|retry) "
+     rf"result=(?:ok|cut_off|unreadable|refused|error|skipped) kind={K} output_tokens=\d+"),
+    r"writer kind=merged labels_defaulted=\d+",
+    rf"writer kind=parts_failed failed=\d+ first={K}",
+    r"writer kind=no_time_for_one_piece left_s=\d+",
+    r"writer kind=callback_failed error=\w+",
+    rf"gemini kind=run_call_cap step={K} attempts=\d+ cap=\d+",
+    (rf"run kind=answer run_id={UUID} written=(?:true|false) references=\d+ "
+     r"dropped_unseen=\d+ dropped_unfetched=\d+ removed_citations=\d+ dropped_numbers=\d+ "
+     r"dropped_studies=\d+"),
+    r"run kind=no_time_for_writer left_s=\d+",
+    r"run kind=answer_not_stored error=\w+",
+    rf"run kind=finish_not_applied run_id={UUID}",
 ]
 
 # What must never reach a log line: the question (zq7 and its words), the model's note (yq8),
@@ -377,7 +398,7 @@ APP_LINE_PATTERNS = [
 # (uq4), the searches the model reported (tq2), Google's error message (gm-q7), the Gemini key
 # (gk-q7), the NCBI key and email (nk-q7, nq7), tool results (fixture titles and abstracts,
 # the source wrapper, tool error texts) and any URL or host.
-LEAKS = ("zq7", "recurrence", "inguinal", "yq8", "xq9", "vq3", "wq6", "vq5", "uq4", "tq2",
+LEAKS = ("zq7", "recurrence", "inguinal", "yq8", "xq9", "vq3", "wq6", "vq5", "uq4", "tq2", "mq2",
          "gm-q7", "secret text", "gk-q7", "nk-q7", "nq7", "Mesh repair", "<script",
          "BACKGROUND", "<source", "source id", "query rejected", "Error (input)", "https://",
          "generativelanguage", "googleapis", "eutils", "ebi.ac.uk")
@@ -414,7 +435,7 @@ def test_nothing_secret_or_private_is_logged_in_a_full_run(db_url, caplog, app_d
 
     caplog.set_level(logging.DEBUG)  # root: every logger that propagates
     with ask_env(db_url, None, leak_script(), key="gk-q7", ncbi_api_key="nk-q7",
-                 ncbi_email="nq7@example.org") as env:
+                 ncbi_email="nq7@example.org", parts=leak_parts()) as env:
         app_debug()
         r = env.ask(LEAK_QUESTION)
         page = env.run_page(r.headers["location"]).text
@@ -427,9 +448,15 @@ def test_nothing_secret_or_private_is_logged_in_a_full_run(db_url, caplog, app_d
         env.run_page("/runs/zq7-inguinal")
         status = env.one("SELECT status FROM runs")
         sent = env.gemini.bodies
-    # The marked texts were really in the app: Google got the question, the page shows them.
+        stored = env.one("SELECT body::text FROM answers")
+        writer_sent = env.gemini.writer.bodies()
+    # The marked texts were really in the app: Google got the question, the page shows them,
+    # the writer got the question and the abstracts, and the stored answer holds its text.
     assert status == "done" and "zq7" in sent[0]["contents"][0]["parts"][0]["text"]
-    for shown in ("Study list ready", "wq6 because", "vq5 older", "uq4 contra", "xq9[tiab]"):
+    assert len(writer_sent) == 4 and all(
+        "zq7" in b["contents"][0]["parts"][0]["text"] for b in writer_sent)
+    assert "mq2 written" in stored and "zq7" in stored
+    for shown in ("Answer ready", "wq6 because", "vq5 older", "uq4 contra", "xq9[tiab]"):
         assert shown in page, shown
     assert "zq7 does mesh" in home
     for leak in LEAKS:
@@ -442,6 +469,9 @@ def test_nothing_secret_or_private_is_logged_in_a_full_run(db_url, caplog, app_d
                             r"latency_ms=\d+", m) for m in msgs)
     assert any(m.startswith("gemini step=researcher attempt=1 status=overloaded ") for m in msgs)
     assert any(m.startswith("researcher done stop=turn_cap rounds=8 ") for m in msgs)
+    assert any(re.fullmatch(r"writer part=outcomes attempt=first result=ok kind=none "
+                            r"output_tokens=\d+", m) for m in msgs)
+    assert any(m.startswith("run kind=answer run_id=") and " written=true " in m for m in msgs)
     assert "gemini api_key=true model=gemini-3.5-flash-lite rpm=1000 tpm=250000 rpd=500" in msgs
     kinds = [m.split()[1] for m in msgs if m.startswith("ask ")]
     assert kinds == ["kind=started", "kind=rejected", "kind=rejected",
@@ -619,12 +649,13 @@ def _assert_stderr_fixed(err: str) -> list[str]:
 
 def test_a_full_run_under_uvicorn_logs_fixed_lines_only(db_url):
     page, home, err = _run_question_under_uvicorn(db_url, "happy")
-    assert "Study list ready" in page and "wq6 because" in page and "zq7 does mesh" in home
+    assert "Answer ready" in page and "wq6 because" in page and "zq7 does mesh" in home
     msgs = _assert_stderr_fixed(err)
     for leak in (*LEAKS, "Traceback", "Exception in"):
         assert leak not in err, leak
     assert sum(m.startswith("run kind=finished ") and m.endswith(" status=done error_kind=none")
                for m in msgs) == 1
+    assert "writer kind=merged labels_defaulted=0" in msgs  # the run wrote its answer
     assert sum(m.startswith("ask kind=started run_id=") for m in msgs) == 1
     assert "request method=POST route=/ask status=303" in msgs
     assert "request method=GET route=/runs/{run_id} status=200" in msgs

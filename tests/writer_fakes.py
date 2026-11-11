@@ -11,6 +11,9 @@ A step is a 200 body (dict), an httpx.Response, or a function of the request ret
 outside the lock, so it may block on a barrier or an event). An empty queue fails the test.
 `LockedClock` is lit_fakes' FakeClock behind a lock: the pacer, the caller and the part threads
 read and move it at once. Neither sleeps or reaches the network.
+
+Task 7 adds a whole run's Gemini: `RunGemini` (F2's FakeGemini for the researcher, a RoutedFake
+for the writer) and the writer replies it serves by default (`whole_answer`, `good_parts`).
 """
 
 import json
@@ -18,6 +21,7 @@ import threading
 from collections.abc import Callable, Sequence
 
 import httpx
+from gemini_fakes import FakeGemini, reply
 
 from pubmedgemini.gemini.client import GEMINI_HOST
 from pubmedgemini.writer.prompts import SECTION_HEAD, SYSTEM, Section
@@ -94,6 +98,11 @@ class LockedClock:
         with self._lock:
             return self._t
 
+    @t.setter
+    def t(self, value: float) -> None:  # `clock.t += 420` in a test, as lit_fakes' FakeClock
+        with self._lock:
+            self._t = value
+
     def set(self, t: float) -> None:
         with self._lock:
             self._t = t
@@ -106,3 +115,74 @@ class LockedClock:
         with self._lock:
             self.slept.append(seconds)
             self._t += seconds
+
+
+# ---------- a whole run: the researcher's script and the writer's parts (F3a Task 7) ----------
+
+# The F1 fixtures' PMIDs, as tests/test_runs.py and the leak script select them.
+RUN_IDS = ("33763744", "36262096")
+
+
+def whole_answer(tag: str = "w", ids: Sequence[str] = RUN_IDS) -> dict:
+    """A whole single-writer reply citing `ids`; every model-written text carries `tag`."""
+    a, b = ids[0], ids[-1]
+    return {
+        "bottom_line": {"text": f"{tag} no clear benefit [{a}; {b}].",
+                        "certainty": "Moderate", "certainty_reason": f"{tag} one trial, one review"},
+        "outcomes": [{
+            "outcome": f"{tag} chronic pain", "rct_evidence": f"1 RCT [{b}]",
+            "effect_text": f"{tag} RR 0.76 [{b}]",
+            "numbers": [{"label": "RR", "value": 0.76, "unit": None, "arm": None,
+                         "ci_low": 0.49, "ci_high": 1.1, "p": None, "pmid": b}],
+            "certainty": "Moderate", "why": f"{tag} small", "pmids": [a, b],
+        }],
+        "studies": [{"pmid": i, "label": f"{tag} study {n}", "design": "RCT", "n": 60,
+                     "setting": "s", "comparison": "c", "key_results": f"k [{i}]",
+                     "appraisal": f"{tag} appraisal"} for n, i in enumerate(ids, 1)],
+        "conflicts": [],
+        "applicability": {"case_mix": f"{tag} simple", "india_cost_context": "not known",
+                          "training": "none"},
+        "would_change": [f"{tag} a larger RCT"],
+        "at_a_glance": f"{tag} no clear benefit.\nChronic pain: RR 0.76 [{b}]\nMain caveat: small",
+        "clinical_practice": f"Default choice: {tag} lap\nCost per case: not known",
+        "notable_findings": f"- {tag} withdrawals 2 vs 9 [{b}].",
+    }
+
+
+def part_reply(s: Section, w: dict) -> dict:
+    """The 200 body of part `s` cut from the whole reply `w`."""
+    return reply([{"text": json.dumps({f: w[f] for f in s.fields})}], out=321)
+
+
+def piece_reply(w: dict) -> dict:
+    return reply([{"text": json.dumps(w)}], out=654)
+
+
+def good_parts(w: dict | None = None, copies: int = 1) -> dict[str, list[Step]]:
+    """Every part answering at its first call with its share of `w`, `copies` times (one per
+    run the fake serves)."""
+    w = whole_answer() if w is None else w
+    return {s.name: [part_reply(s, w)] * copies for s in Section.ALL}
+
+
+class RunGemini(FakeGemini):
+    """A whole run's Gemini: F2's FakeGemini serves the researcher's calls (in order, every
+    model turn sent back checked) and a RoutedFake the writer's parts and one piece, by route.
+    `.sent`, `.bodies` and `.script` are the researcher's (as FakeGemini's); `.writer` holds
+    the writer's queues and requests."""
+
+    def __init__(self, script: Sequence[Step], parts: dict[str, Sequence[Step]] | None = None,
+                 one_piece: Sequence[Step] = ()) -> None:
+        super().__init__(script)
+        self.writer = RoutedFake(good_parts(copies=8) if parts is None else parts, one_piece)
+        self.transport = httpx.MockTransport(self._route)
+
+    def _route(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host == GEMINI_HOST:
+            try:
+                body = json.loads(request.content)
+            except ValueError:
+                body = None
+            if isinstance(body, dict) and route_of(body) != F2:
+                return self.writer._handle(request)
+        return self._handle(request)

@@ -7,7 +7,8 @@ page shows each line as it happens.
 
 From Incisive (commit 12630f7, `crates/incisive-app/src/`): `clip` and `MAX_STEP_LINE`
 (`agent/mod.rs`), a failed step write logged and ignored (`add_line`), the end messages
-(`agent/answer.rs` `NO_EVIDENCE`, `STOPPED_NO_ANSWER`, `EMPTY_SELECTION`).
+(`agent/answer.rs` `NO_EVIDENCE`, `STOPPED_NO_ANSWER`, `EMPTY_SELECTION`; `agent/team.rs`
+`UNFETCHED`, `WRITER_TRUNCATED`, `WRITER_UNREADABLE`, `WRITER_NO_TIME`).
 
 The patient-details check (`deid.check_question`, ported from Incisive) runs in
 `create_run`, the one place a question becomes a run: a blocked question raises
@@ -60,7 +61,23 @@ EMPTY_SELECTION = (
     "No studies could be selected from the papers found. Please run the question again."
 )
 HARD_STOP_MESSAGE = "This run ran out of time (7 minutes). Please run the question again."
-STUDY_LIST_READY = "Study list ready"
+# The writer's end messages, the answer's `empty_reason` (Incisive `agent/team.rs:137-145`).
+UNFETCHED = (
+    "The selected studies' records could not be fetched, so no answer could be written."
+)
+WRITER_TRUNCATED = (
+    "The answer was longer than the writer's output limit and could not be finished. The "
+    "studies found are listed below; please ask again."
+)
+WRITER_UNREADABLE = (
+    "The writer's answer could not be read. The studies found are listed below; please ask "
+    "again."
+)
+WRITER_NO_TIME = (
+    "Not enough of the time limit was left to write the answer. The studies found are listed "
+    "below; please ask again."
+)
+ANSWER_READY = "Answer ready"  # team.rs `finish`, kind `present`
 DOWN_LINES = {
     "europepmc": "Europe PMC could not be reached; searched PubMed only",
     "pubmed": "PubMed could not be reached; searched Europe PMC only",
@@ -275,17 +292,19 @@ def set_running(pool: ConnectionPool, run_id: UUID) -> None:
         )
 
 
+_INSERT_STEP = (
+    "INSERT INTO run_steps (run_id, seq, kind, line) SELECT %s, "
+    "COALESCE(MAX(seq), 0) + 1, %s, %s FROM run_steps WHERE run_id = %s"
+)
+
+
 def add_step(pool: ConnectionPool, run_id: UUID, kind: str, line: str) -> None:
     """Appends a step line (cut to MAX_STEP_LINE). A failed write is logged by kind only and
     otherwise ignored (Incisive `add_line`)."""
     text = clip(line, MAX_STEP_LINE)
     try:
         with _STEP_LOCK, pool.connection() as conn:
-            conn.execute(
-                "INSERT INTO run_steps (run_id, seq, kind, line) SELECT %s, "
-                "COALESCE(MAX(seq), 0) + 1, %s, %s FROM run_steps WHERE run_id = %s",
-                (run_id, kind, text, run_id),
-            )
+            conn.execute(_INSERT_STEP, (run_id, kind, text, run_id))
     except psycopg.Error:
         log.warning("run kind=step_not_stored")
 
@@ -352,19 +371,23 @@ def finish_run(pool: ConnectionPool, run_id: UUID, status: str, error_kind: str 
 
 def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
                        error_kind: str | None, stop_reason: str | None, rounds: int | None,
-                       body: dict) -> bool:
+                       body: dict, closing_line: tuple[str, str] | None = None) -> bool:
     """The run's outcome and its written answer, in one transaction: both are stored or
     neither. As `finish_run`, the outcome is written only while the run is still `queued` or
     `running`; when it is not (a restart stopped it), nothing is stored and the case is logged
     by a fixed kind. A body the database refuses raises the database error (the status stays
     as it was); the caller decides what to do with it. Nothing of the body is logged.
 
+    `closing_line` (kind, text), when given, is the run's closing step line ("Answer ready"),
+    stored in the same transaction (cut as `add_step` cuts), so the page never shows it for an
+    answer that was not stored, nor a stored answer without it.
+
     True only when the outcome and the answer were both stored; False when the run was no
     longer queued or running. A `status` that is not final raises ValueError before anything
     is written."""
     if status not in FINAL_STATUSES:
         raise ValueError("status must be final")
-    with pool.connection() as conn, conn.transaction():
+    with _STEP_LOCK, pool.connection() as conn, conn.transaction():
         cur = conn.execute(
             "UPDATE runs SET status = %s, error_kind = %s, stop_reason = %s, rounds = %s, "
             "finished_at = now() WHERE id = %s AND status IN ('queued', 'running')",
@@ -376,6 +399,9 @@ def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
                 "INSERT INTO answers (run_id, version, body) VALUES (%s, 3, %s)",
                 (run_id, Jsonb(body)),
             )
+            if closing_line is not None:
+                kind, line = closing_line
+                conn.execute(_INSERT_STEP, (run_id, kind, clip(line, MAX_STEP_LINE), run_id))
     if not applied:
         log.info("run kind=finish_not_applied run_id=%s", run_id)
     return applied

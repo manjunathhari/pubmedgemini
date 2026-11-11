@@ -75,6 +75,12 @@ KIND_MESSAGES = {
         "Gemini stayed busy, so this run used up its share of today's free calls. "
         "Please run the question again."
     ),
+    # Owner's answer Q6 (F3a plan, 11 Nov 2026): the selected studies' records could not be
+    # fetched (Incisive ends the run `failed` with `lit` and has no message of its own).
+    "lit": (
+        "PubMed could not be reached to fetch the selected studies, so no answer could be "
+        "written. Please run the question again."
+    ),
     **{k: GEMINI_UNAVAILABLE for k in ("overloaded", "timeout", "network", "http",
                                        "request_refused", "not_found", "too_large", "parse")},
 }
