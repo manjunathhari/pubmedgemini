@@ -903,6 +903,9 @@ The owner's answers to the questions left open by the first F2 review round:
 2. **Call cap (M2):** cap calls per run. A run sends at most `RUN_CALLS + CALL_RESERVE = 14` Gemini attempts, every attempt counted as the day count counts it (turns, the list call, its nudge, the S3 retry and every transport retry). The cap lives in `ModelCaller`, per run id; at the cap nothing more is sent, the run ends failed with `error_kind = run_call_cap`, and the page says "Gemini stayed busy, so this run used up its share of today's free calls. Please run the question again." The log line holds the kind, the step word and counts only. `runs_left` keeps its number ((rpd − used − 3) // 11, 45 on a fresh day of 500, as before) and is now written as "room for the next run's 14, then 11 for each one after", so a run admitted with 1 left cannot pass `GEMINI_RPD` even at its cap.
 3. **Run again:** on failed and partial runs too, as well as stopped ones; not on done, queued or running ones. The POST route, its cross-site guard and the patient-details check are unchanged.
 4. **Test emails (the email domains in F0 test files):** leave.
+5. **The 7-minute limit is approximate (re-check, low 3):** note it and tighten later. A Gemini call already in flight can finish a little after 420 s on a very slow network, because the HTTP time limits apply to connecting, sending and each read separately. The run still ends failed with the time-out message. One overall time limit per call is a later engine change.
+6. **Slow source on the key-word page (d10):** the gate waits 2 minutes. Not part of F2; a separate small change to the gate's settings, with its own review.
+7. **Repo:** stays public.
 
 ## Manual check for sign-off (owner, on the live page, after the deploy and the key)
 
