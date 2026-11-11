@@ -1,4 +1,5 @@
 import logging
+import math
 import re
 import uuid
 from collections.abc import Mapping
@@ -433,12 +434,24 @@ def _outcome_line(request: Request, v: RunView) -> str | None:
     return KIND_MESSAGES.get(v.error_kind or "", INTERNAL_ERROR)
 
 
+def _num(x: float) -> str:
+    """A stored number as text: a whole number without ".0" (12.0 shows 12), every other one
+    exactly as Python prints the stored float (no rounding, no change of notation)."""
+    if math.isfinite(x) and abs(x) < 1e15 and x == int(x):
+        return str(int(x))
+    return str(x)
+
+
 def _number_line(n: Number) -> str:
-    """One number as the answer holds it: "label: value unit (ci_low to ci_high), arm, p x,
+    """One number as the answer holds it: "label: value unit (CI low to high), arm, p x,
     PMID n". Nothing is rounded or computed; a part that is absent is left out."""
-    head = f"{n.label}: {n.value}" + (f" {n.unit}" if n.unit else "")
+    head = f"{n.label}: {_num(n.value)}" + (f" {n.unit}" if n.unit else "")
     if n.ci_low is not None and n.ci_high is not None:
-        head += f" ({n.ci_low} to {n.ci_high})"
+        head += f" ({_num(n.ci_low)} to {_num(n.ci_high)})"
+    elif n.ci_low is not None:
+        head += f" (CI from {_num(n.ci_low)})"
+    elif n.ci_high is not None:
+        head += f" (CI to {_num(n.ci_high)})"
     parts = [head]
     if n.arm:
         parts.append(n.arm)
@@ -496,6 +509,7 @@ def _shown_answer(v: RunView) -> dict:
             ("India cost context", w.applicability.india_cost_context),
             ("Training", w.applicability.training))
         shown["would_change"] = w.would_change
+        shown["guidelines"] = w.guidelines
         shown["findings"] = [f.text for f in w.notable_findings]
     return shown
 

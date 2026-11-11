@@ -746,7 +746,7 @@ def test_answer_sections_in_order(env):
     assert "Who may benefit" not in page and "India cost context" not in page
     assert "<h3>Recurrence</h3>" in page and "Certainty: Low · RCTs" in page
     assert "<li>RR: 0.76 (0.49 to 1.1), mesh, p 0.2, PMID 36262096</li>" in page
-    assert "<li>Events: 12.0 %, PMID 33763744</li>" in page
+    assert "<li>Events: 12 %, PMID 33763744</li>" in page
     assert "None" not in page
     assert "<h3>Trial A</h3>" in page and "Appraisal: Unblinded" in page
     assert "<li>A larger trial</li>" in page
@@ -810,3 +810,94 @@ def test_unreadable_answer_shows_a_plain_line_and_logs_the_kind(env, caplog):
     assert "SECRET-MODEL-TEXT" not in page and "SECRET-MODEL-TEXT" not in caplog.text
     assert "kind=invalid" in caplog.text
     assert "studies selected by" in page and "<h2>Bottom line</h2>" not in page
+
+
+# ---------- Task 8, round 2 ----------
+
+def _set_ending(env, rid, error_kind=None, stop_reason=None):
+    with env.pool.connection() as conn:
+        conn.execute("UPDATE runs SET error_kind = %s, stop_reason = %s WHERE id = %s",
+                     (error_kind, stop_reason, rid))
+
+
+@pytest.mark.parametrize("error_kind,stop_reason,const", [
+    ("researcher_incomplete", None, "STOPPED_NO_ANSWER"),
+    ("empty_selection", None, "EMPTY_SELECTION"),
+    (None, None, "NO_EVIDENCE"),
+])
+def test_the_same_ending_text_shows_once(env, error_kind, stop_reason, const):
+    from pubmedgemini import runs
+
+    text = getattr(runs, const)
+    rid = insert_run(env, status="partial", error_kind=error_kind)
+    _set_ending(env, rid, error_kind, stop_reason)
+    store_answer(env, rid, empty_reason=text, refs=[])
+    page = env.run_page(f"/runs/{rid}").text
+    from html import escape
+    assert page.count(escape(text)) == 1
+
+
+def test_a_different_reason_still_shows_beside_the_outcome_line(env):
+    from pubmedgemini import runs
+
+    reason = "Not enough of the time limit was left to write the answer."
+    rid = insert_run(env, status="partial", error_kind=None)
+    store_answer(env, rid, empty_reason=reason, refs=[])
+    page = env.run_page(f"/runs/{rid}").text
+    assert reason in page and runs.NO_EVIDENCE in page
+
+
+@pytest.mark.parametrize("pmid", ["12/../x?y#z", "１２３４５６７", "12３"])
+def test_a_pmid_that_is_not_ascii_digits_gets_no_link(env, pmid):
+    from html import escape
+
+    from pubmedgemini.writer.answer import ReferenceV3
+
+    w = _written(studies=[{"pmid": pmid, "label": "L", "design": "d", "n": None, "setting": "s",
+                           "comparison": "c", "key_results": "k", "appraisal": "a"}],
+                 guidelines=[{"pmid": pmid, "body": "Soc", "year": None, "statement": "S"}])
+    refs = [ReferenceV3(n=1, pmid=pmid, title="T", journal=None, year=None, doi=None,
+                        retracted=False)]
+    page = answered(env, written=w, refs=refs)
+    assert "pubmed.ncbi.nlm.nih.gov/" + pmid not in page and "nih.gov/12/" not in page
+    assert page.count("pubmed.ncbi.nlm.nih.gov/") == 0  # trial, guideline and reference: no link
+    assert f"PMID {escape(pmid)}" in page
+
+
+def _num_page(env, **n):
+    base = {"label": "L", "value": 1.0, "unit": None, "arm": None, "ci_low": None,
+            "ci_high": None, "p": None, "pmid": "36262096"}
+    o = _written().outcomes[0].model_dump(mode="json") | {"numbers": [base | n]}
+    return answered(env, written=_written(outcomes=[o]))
+
+
+def test_a_lone_ci_end_is_shown(env):
+    assert "<li>L: 1 (CI from 0.5), PMID 36262096</li>" in _num_page(env, ci_low=0.5)
+    assert "<li>L: 1 (CI to 2.5), PMID 36262096</li>" in _num_page(env, ci_high=2.5)
+    assert "<li>L: 1 (0.5 to 3), PMID 36262096</li>" in _num_page(env, ci_low=0.5, ci_high=3.0)
+
+
+@pytest.mark.parametrize("v,shown", [(12.0, "12"), (0.76, "0.76"), (1.1, "1.1"), (-3.0, "-3"),
+                                     (0.00001, "1e-05"), (0.0, "0"), (123456.789, "123456.789")])
+def test_whole_numbers_print_without_point_zero(v, shown):
+    from pubmedgemini.web import _num
+
+    assert _num(v) == shown
+
+
+def test_guidelines_show_with_each_field_and_the_flag(env):
+    w = _written(guidelines=[
+        {"pmid": "36262096", "body": "Hernia Society", "year": 2021, "statement": "Use mesh."},
+        {"pmid": None, "body": "Other Body", "year": None, "statement": "Watch.",
+         "pmid_removed": True}])
+    page = answered(env, written=w)
+    sec = page.split("<h2>Guidelines</h2>", 1)[1].split("<h2>", 1)[0]
+    assert "<h3>Hernia Society</h3>" in sec and "<p>Use mesh.</p>" in sec
+    assert "<p>Year: 2021</p>" in sec and ">PMID 36262096</a>" in sec
+    assert "<h3>Other Body</h3>" in sec and sec.count("was removed") == 1
+    assert page.index("What would change this answer") < page.index("<h2>Guidelines</h2>") \
+        < page.index("<h2>Other notable findings</h2>")
+
+
+def test_no_guidelines_section_when_the_list_is_empty(env):
+    assert "<h2>Guidelines</h2>" not in answered(env, written=_written())
