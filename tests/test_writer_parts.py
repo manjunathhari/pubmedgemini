@@ -463,11 +463,32 @@ def test_two_parts_fail_the_line_names_the_first_in_order(harness):
     assert h.lines.got == [("write", ONE_PIECE_LINE.format(name="outcomes"))]
 
 
-def _at_decision(h, left):
-    """A step that, as the last part's last reply, leaves `left` seconds to the hard stop."""
+class Arrivals:
+    """Hooks in the fake's queues: `step(s, body)` serves `body` and marks part `s` as in (its
+    request has passed the pacer, so it will not move the shared clock again); `wait(*parts)`
+    returns once those parts are in. A test that sets the clock waits for every sibling first,
+    so no sibling's pacer sleep can land after the set."""
+
+    def __init__(self) -> None:
+        self._in = {x.name: threading.Event() for x in Section.ALL}
+
+    def step(self, s: Section, body):
+        def serve(_request):
+            self._in[s.name].set()
+            return body if isinstance(body, httpx.Response) else httpx.Response(200, json=body)
+        return serve
+
+    def wait(self, *parts: Section) -> None:
+        for x in parts:
+            assert self._in[x.name].wait(GUARD), x.name
+
+
+def _at_decision(h, left, arrivals, siblings, body=UNREADABLE):
+    """A step that, once `siblings` are in, leaves `left` seconds to the hard stop."""
     def step(_request):
+        arrivals.wait(*siblings)
         h.clock.set(h.timing.hard_stop_at - left)
-        return httpx.Response(200, json=UNREADABLE)
+        return httpx.Response(200, json=body) if isinstance(body, dict) else body
     return step
 
 
@@ -476,20 +497,14 @@ def _at_decision(h, left):
 @pytest.mark.parametrize("left,start", [(149.0, 200.0), (0.5, 100.0)])
 def test_no_time_for_one_piece_raises_the_first_failure(harness, left, start, caplog):
     caplog.set_level(logging.DEBUG)
-    gate = threading.Event()
     h = None
-
-    def trials_second(_request):
-        gate.set()
-        return httpx.Response(200, json=CUT)
-
-    def outcomes_second(request):
-        assert gate.wait(GUARD)
-        return _at_decision(h, left)(request)
-
-    parts = all_ok()
-    parts["trials"] = [CUT, trials_second]
-    parts["outcomes"] = [UNREADABLE, outcomes_second]
+    arr = Arrivals()
+    parts = {
+        "trials": [CUT, arr.step(T, CUT)],
+        "outcomes": [UNREADABLE, lambda r: _at_decision(h, left, arr, (T, C, S))(r)],
+        "context": [arr.step(C, ok(C))],
+        "summary": [arr.step(S, ok(S))],
+    }
     h = harness(parts, left=start)
     with pytest.raises(WriterFailed) as got:
         h.run()
@@ -502,8 +517,9 @@ def test_no_time_for_one_piece_raises_the_first_failure(harness, left, start, ca
 
 def test_150_seconds_left_is_time_for_one_piece(harness):
     h = None
-    parts = all_ok()
-    parts["trials"] = [UNREADABLE, lambda r: _at_decision(h, 150.0)(r)]
+    arr = Arrivals()
+    parts = {s.name: [arr.step(s, ok(s))] for s in (O, C, S)}
+    parts["trials"] = [UNREADABLE, lambda r: _at_decision(h, 150.0, arr, (O, C, S))(r)]
     h = harness(parts, one_piece=[piece()])
     assert h.run()[2] is False
     assert h.fake.count(ONE_PIECE) == 1
@@ -511,13 +527,9 @@ def test_150_seconds_left_is_time_for_one_piece(harness):
 
 def test_no_time_after_a_failed_call_raises_its_kind(harness):
     h = None
-
-    def fail(_request):
-        h.clock.set(h.timing.hard_stop_at - 100)
-        return REFUSED_400
-
-    parts = all_ok()
-    parts["context"] = [fail]
+    arr = Arrivals()
+    parts = {s.name: [arr.step(s, ok(s))] for s in (T, O, S)}
+    parts["context"] = [lambda r: _at_decision(h, 100.0, arr, (T, O, S), REFUSED_400)(r)]
     h = harness(parts)
     with pytest.raises(WriterFailed) as got:
         h.run()
@@ -614,6 +626,86 @@ def test_fatal_part_waits_for_the_others_then_raises(harness):
     assert h.fake.count(ONE_PIECE) == 0
 
 
+def test_a_sibling_sends_no_retry_after_another_part_is_fatal(harness):
+    """Owner Q2: once a part is fatal, a sibling whose reply was unreadable sends no retry
+    (Incisive would send it: `llm.rs:1260` checks only the user's cancel)."""
+    withdrawn = threading.Event()
+
+    def trials_first(_request):
+        assert withdrawn.wait(GUARD)  # arrives after context's fatal error
+        return httpx.Response(200, json=UNREADABLE)
+
+    def on_part(ev):
+        if ev[0] == "withdraw":
+            withdrawn.set()
+
+    events = []
+    parts = all_ok()
+    parts["trials"] = [trials_first, ok(T)]  # the retry, never sent
+    parts["context"] = [DAILY]
+    h = harness(parts, one_piece=[piece()])
+    with pytest.raises(FatalModelError) as got:
+        h.run(on_part=lambda ev: (events.append(ev), on_part(ev)))
+    assert got.value.kind == "daily_limit"
+    assert h.fake.count() == 4
+    assert h.fake.count("trials") == 1 and h.fake.count(ONE_PIECE) == 0
+    assert "writer_trials_retry" not in h.steps()
+    assert [e[0] for e in events].count("withdraw") == 1
+
+
+def test_a_retry_already_sent_before_the_fatal_part_is_unaffected(harness):
+    retry_sent = threading.Event()
+    withdrawn = threading.Event()
+    finished = []
+
+    def trials_retry(_request):
+        retry_sent.set()
+        assert withdrawn.wait(GUARD)  # in flight while context is fatal
+        finished.append("trials_retry")
+        return httpx.Response(200, json=ok(T))
+
+    def context_first(_request):
+        assert retry_sent.wait(GUARD)
+        return DAILY
+
+    def on_part(ev):
+        if ev[0] == "withdraw":
+            withdrawn.set()
+
+    parts = all_ok()
+    parts["trials"] = [UNREADABLE, trials_retry]
+    parts["context"] = [context_first]
+    h = harness(parts, one_piece=[piece()])
+    with pytest.raises(FatalModelError) as got:
+        h.run(on_part=on_part)
+    assert got.value.kind == "daily_limit"
+    assert finished == ["trials_retry"]
+    assert h.fake.count() == 5 and h.fake.count("trials") == 2
+    assert h.fake.count(ONE_PIECE) == 0
+
+
+def test_the_stop_flag_does_not_fire_for_a_non_fatal_failure(harness):
+    withdrawn = threading.Event()
+
+    def trials_first(_request):
+        assert withdrawn.wait(GUARD)  # arrives after context failed (not fatally)
+        return httpx.Response(200, json=UNREADABLE)
+
+    def on_part(ev):
+        if ev[0] == "withdraw":
+            withdrawn.set()
+
+    parts = all_ok()
+    parts["trials"] = [trials_first, ok(T)]
+    parts["context"] = [REFUSED_400]
+    h = harness(parts, one_piece=[piece()])
+    answer, _, merged = h.run(on_part=on_part)
+    assert merged is False and answer == merged_answer(PIECE)[0]
+    assert h.fake.count("trials") == 2  # its retry was sent
+    assert h.fake.count() == 6 and h.fake.count(ONE_PIECE) == 1
+    assert h.lines.got == [("write", ONE_PIECE_LINE.format(name="context"))]
+
+
 def test_rate_limit_wait_past_the_hard_stop_is_a_hard_stop(harness, caplog):
     caplog.set_level(logging.DEBUG)
     parts = all_ok()
@@ -628,13 +720,10 @@ def test_rate_limit_wait_past_the_hard_stop_is_a_hard_stop(harness, caplog):
 
 def test_a_reply_after_the_hard_stop_is_a_hard_stop(harness):
     h = None
-
-    def late(_request):
-        h.clock.set(h.timing.hard_stop_at)  # within the attempt's limit: the reply is read
-        return httpx.Response(200, json=ok(T))
-
-    parts = all_ok()
-    parts["trials"] = [late]
+    arr = Arrivals()
+    parts = {s.name: [arr.step(s, ok(s))] for s in (O, C, S)}
+    # At the hard stop exactly: within the attempt's limit, so the reply is read.
+    parts["trials"] = [lambda r: _at_decision(h, 0.0, arr, (O, C, S), ok(T))(r)]
     h = harness(parts, one_piece=[piece()], left=100.0)
     with pytest.raises(HardStop):
         h.run()

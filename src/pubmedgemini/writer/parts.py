@@ -36,6 +36,10 @@ tries the one piece). The fatal kinds raise `FatalModelError`, as the researcher
 stop is any call's DeadlineReached (the caller's deadline is the hard stop) or the clock at or
 past the hard stop after a call (Incisive's worker drops the run then).
 
+| Point | Incisive | Here | Source |
+|---|---|---|---|
+| A sibling's nudge retry after a part is fatal | sent: a call checks only the user's cancel before it starts (`agent/llm.rs:1260`) | not sent: the first fatal error (HardStop, RunCapReached, FatalModelError) sets a flag under the writer's lock; a part checks it just before its retry and, if set, sends nothing more and ends skipped (not a failure of its own: no withdraw, no one piece). A call already in flight finishes. The error raised is still the first fatal one in Section order | owner's answer Q2, 11 Nov 2026 |
+
 Threads: every part runs on its own thread of one ThreadPoolExecutor, left only when all four
 are done. They share the ModelCaller (its per-run count is under a lock), the pacer (one lock,
 one schedule), one httpx.Client (documented as shareable between threads), the database pool
@@ -148,6 +152,9 @@ class _Raised:
     error: BaseException
 
 
+_SKIPPED = object()  # a part's result when it sent no retry after a sibling's fatal error
+
+
 def _refused(reply: Reply) -> bool:
     return bool(reply.block_reason) or reply.finish in REFUSAL_FINISHES
 
@@ -157,11 +164,21 @@ def _log(part: str, attempt: str, result: str, kind: str, output_tokens: int) ->
              result, kind, output_tokens)
 
 
+class _Skipped(Exception):
+    """A part did not send its retry because a sibling was fatal (owner Q2)."""
+
+
+_FATAL = (HardStop, RunCapReached, FatalModelError)
+
+
 class _Writer:
-    """One structured write (a part or the one piece): its calls, its reading, its retry."""
+    """One structured write (a part or the one piece): its calls, its reading, its retry.
+    `stopped`, when given, is asked just before the retry: True raises _Skipped."""
 
     def __init__(self, caller: ModelCaller, run_id: UUID | None, timing: Timing,
-                 on_wait: Callable[[int], None], clock: Callable[[], float]) -> None:
+                 on_wait: Callable[[int], None], clock: Callable[[], float],
+                 stopped: Callable[[], bool] | None = None) -> None:
+        self.stopped = stopped
         self.caller = caller
         self.run_id = run_id
         self.timing = timing
@@ -225,6 +242,10 @@ class _Writer:
         if got is not None:
             return got
         fail: WriteFailure = "truncated" if first.finish == "MAX_TOKENS" else "unreadable"
+        if self.stopped is not None and self.stopped():
+            log.info("writer part=%s attempt=retry result=skipped kind=sibling_fatal"
+                     " output_tokens=0", part)
+            raise _Skipped()
         retry = self.call(structured_body(system, user + SCHEMA_NUDGE, schema, max_tokens),
                           f"{step}_retry", part, "retry")
         if isinstance(retry, str):
@@ -279,9 +300,20 @@ def write_parts(
     their default, and whether it was merged from the four parts (False: written in one
     piece after a part failed). `progress.line` takes the one-piece step line. Raises
     WriterFailed, HardStop, FatalModelError and RunCapReached; never before every part's
-    thread has ended."""
+    thread has ended. `on_part` is called while the writer's lock is held, so a callback must
+    not block or wait on a part."""
     lock = threading.Lock()
     withdrawn = False
+    fatal = False  # a part's call raised a fatal error: no sibling sends its retry (Q2)
+
+    def stopped() -> bool:
+        with lock:
+            return fatal
+
+    def mark_fatal() -> None:
+        nonlocal fatal
+        with lock:
+            fatal = True
 
     def report(ev: PartEvent) -> None:
         with lock:
@@ -299,12 +331,16 @@ def write_parts(
     system = with_source_rule(SYSTEM)
 
     def run(s: Section) -> dict | _Failed | _Raised:
-        w = _Writer(caller, run_id, timing, on_wait, clock)
+        w = _Writer(caller, run_id, timing, on_wait, clock, stopped)
         try:
             got = w.write(system, section_user(user, s), section_schema(s),
                           s.max_tokens(WRITER_MAX_TOKENS), _READERS[s.name], f"writer_{s.name}",
                           s.name)
+        except _Skipped:
+            return _SKIPPED  # a sibling's fatal error is raised below; it already withdrew
         except Exception as e:  # noqa: BLE001 - raised on the calling thread, below
+            if isinstance(e, _FATAL):
+                mark_fatal()
             withdraw()
             return _Raised(e)
         if isinstance(got, _Failed):
@@ -322,6 +358,8 @@ def write_parts(
     for r in results:
         if isinstance(r, _Raised):
             raise r.error
+    if any(r is _SKIPPED for r in results):  # cannot happen: skipped only after a fatal one
+        raise RuntimeError("writer_part_skipped_without_fatal")
     failed = [(s, r) for s, r in zip(Section.ALL, results, strict=True)
               if isinstance(r, _Failed)]
     if not failed:
