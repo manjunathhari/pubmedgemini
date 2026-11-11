@@ -8,8 +8,8 @@ Ports of Incisive (commit 12630f7, `crates/incisive-app/src/agent/writer_v3.rs`,
 | `write_parts` | `w.rs:2145-2310` `write_quick_parallel_with` |
 | `_write` for a part | `w.rs:2075-2123` `section_reply` |
 | `write_one_piece`, `_write` for the whole | `w.rs:1614-1670` `write_counted` |
-| `WriteFailure`, `WriterFailed` | `w.rs:1574-1585` `WriteFailure` |
-| `PartEvent` | `w.rs:2018-2035` `PartEvent` |
+| `WriteFailure`, `WriterFailed` | `w.rs:1574-1586` `WriteFailure` |
+| `PartEvent` | `w.rs:2023-2036` `PartEvent` |
 | `ONE_PIECE_LINE` | `run_tracker.rs:161-166` `one_piece_line` |
 | `WRITER_MIN_SECONDS` (150 s) | `agent/team.rs:152` `WRITER_MIN_TIME_QUICK` (via `researcher/loop.py`) |
 
