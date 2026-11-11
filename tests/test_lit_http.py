@@ -544,6 +544,37 @@ def test_a_slow_reply_head_past_the_total_deadline_is_a_timeout():
     assert (e.value.kind, len(up.sent)) == ("timeout", 3)
 
 
+def test_an_empty_body_after_a_slow_reply_head_is_still_a_timeout():
+    """Guards the check right after the head arrives: an empty body has no chunk, so the
+    check inside the body loop never runs."""
+    clock = FakeClock()
+
+    def slow_head(request):
+        clock.t += REQUEST_TIMEOUT_SECONDS + 1
+        return httpx.Response(200, content=b"")
+
+    up = FakeUpstream({(NCBI_HOST, "/x"): slow_head})
+    with pytest.raises(LitError) as e:
+        LitClient(up.transport, sleep=lambda s: None, clock=clock.now).get_text(NCBI_URL, {})
+    assert (e.value.kind, len(up.sent)) == ("timeout", 3)
+
+
+def test_a_redirect_that_arrives_past_the_deadline_is_a_timeout_and_is_not_followed():
+    """Guards the check in the redirect branch."""
+    clock = FakeClock()
+
+    def slow_redirect(request):
+        clock.t += REQUEST_TIMEOUT_SECONDS + 1
+        return httpx.Response(302, headers={"location": f"https://{NCBI_HOST}/y"})
+
+    up = FakeUpstream(
+        {(NCBI_HOST, "/x"): slow_redirect, (NCBI_HOST, "/y"): httpx.Response(200, json={})}
+    )
+    with pytest.raises(LitError) as e:
+        LitClient(up.transport, sleep=lambda s: None, clock=clock.now).get_json(NCBI_URL, {})
+    assert e.value.kind == "timeout" and [r.url.path for r in up.sent] == ["/x"] * 3
+
+
 def test_the_deadline_is_per_attempt_so_a_retry_starts_afresh():
     clock = FakeClock()
     replies = iter([
