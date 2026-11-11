@@ -733,7 +733,7 @@ BODY = {"summary": {"text": "A finding."}, "references": []}
 def test_finish_with_answer_stores_answer_and_status_together(run_app):
     rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
     set_running(run_app.pool, rid)
-    assert finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, BODY) is None
+    assert finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, BODY) is True
     assert rows(run_app.pool, "SELECT version, body FROM answers WHERE run_id = %s", (rid,)) \
         == [(3, BODY)]
     v = run_app.view(rid)
@@ -764,8 +764,25 @@ def test_a_late_answer_never_overwrites_a_stopped_run(run_app, caplog):
     rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
     set_running(run_app.pool, rid)
     stop_unfinished(run_app.pool)
-    assert finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, BODY) is None
+    assert finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, BODY) is False
     assert rows(run_app.pool, "SELECT count(*) FROM answers") == [(0,)]
     assert rows(run_app.pool, "SELECT status FROM runs WHERE id = %s", (rid,)) == [("stopped",)]
     assert f"run kind=finish_not_applied run_id={rid}" in [
         r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "interrupted"])
+def test_finish_with_answer_refuses_a_non_final_status(run_app, status):
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    set_running(run_app.pool, rid)
+    with pytest.raises(ValueError):
+        finish_with_answer(run_app.pool, rid, status, None, "end_turn", 9, BODY)
+    assert rows(run_app.pool, "SELECT count(*) FROM answers") == [(0,)]
+    assert rows(run_app.pool, "SELECT status, finished_at FROM runs WHERE id = %s",
+                (rid,)) == [("running", None)]
+
+
+@pytest.mark.parametrize("status", ["done", "partial", "failed", "stopped"])
+def test_finish_with_answer_accepts_each_final_status(run_app, status):
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    assert finish_with_answer(run_app.pool, rid, status, None, None, None, BODY) is True

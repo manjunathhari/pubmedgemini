@@ -48,6 +48,9 @@ _STEP_LOCK = threading.Lock()
 # India has no daylight saving: a fixed +05:30 offset is Asia/Kolkata, with no tz database needed.
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# The run statuses that end a run (every status of `runs` but queued and running).
+FINAL_STATUSES = frozenset({"done", "partial", "failed", "stopped"})
+
 NO_EVIDENCE = "No relevant evidence found."
 STOPPED_NO_ANSWER = (
     "No answer could be written: the search stopped early, before enough evidence was read and "
@@ -349,12 +352,18 @@ def finish_run(pool: ConnectionPool, run_id: UUID, status: str, error_kind: str 
 
 def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
                        error_kind: str | None, stop_reason: str | None, rounds: int | None,
-                       body: dict) -> None:
+                       body: dict) -> bool:
     """The run's outcome and its written answer, in one transaction: both are stored or
     neither. As `finish_run`, the outcome is written only while the run is still `queued` or
     `running`; when it is not (a restart stopped it), nothing is stored and the case is logged
     by a fixed kind. A body the database refuses raises the database error (the status stays
-    as it was); the caller decides what to do with it. Nothing of the body is logged."""
+    as it was); the caller decides what to do with it. Nothing of the body is logged.
+
+    True only when the outcome and the answer were both stored; False when the run was no
+    longer queued or running. A `status` that is not final raises ValueError before anything
+    is written."""
+    if status not in FINAL_STATUSES:
+        raise ValueError("status must be final")
     with pool.connection() as conn, conn.transaction():
         cur = conn.execute(
             "UPDATE runs SET status = %s, error_kind = %s, stop_reason = %s, rounds = %s, "
@@ -369,6 +378,7 @@ def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
             )
     if not applied:
         log.info("run kind=finish_not_applied run_id=%s", run_id)
+    return applied
 
 
 def stop_unfinished(pool: ConnectionPool) -> int:

@@ -330,3 +330,28 @@ def test_the_constraints_replaced_are_found_by_name_in_the_catalog(migrated_pool
         assert step in defs["model_calls_step_check"]
     for kind in ("search", "note", "write", "check", "present"):
         assert f"'{kind}'" in defs["run_steps_kind_check"]
+
+
+def test_0005_applies_over_existing_rows(pool, tmp_path):
+    """Migrate to 0004 only (a temporary directory holding the real files up to 0004), store
+    rows of every old step and kind, then apply the real 0005 over them."""
+    import shutil
+
+    for name in ("0001_users.sql", "0002_papers.sql", "0003_model_calls.sql", "0004_runs.sql"):
+        shutil.copy(Path("migrations") / name, tmp_path / name)
+    assert len(apply_migrations(pool, tmp_path)) == 4
+    user_id = pool_one(
+        pool, "INSERT INTO users (email, role) VALUES ('o@example.com', 'owner') RETURNING id")
+    run_id = insert_run(pool, user_id, status="done")
+    for seq, kind in enumerate(("search", "note", "present"), 1):
+        pool_exec(pool, "INSERT INTO run_steps (run_id, seq, kind, line) VALUES (%s, %s, %s, 'l')",
+                  (run_id, seq, kind))
+    for step in ("researcher", "study_list", "study_list_nudge", "study_list_retry"):
+        pool_exec(pool, "INSERT INTO model_calls (model, run_id, step, attempt, status_kind) "
+                        "VALUES ('m', %s, %s, 1, 'ok')", (run_id, step))
+    assert apply_migrations(pool, Path("migrations")) == ["0005_answers.sql"]
+    assert pool_one(pool, "SELECT count(*) FROM users") == 1
+    assert pool_one(pool, "SELECT count(*) FROM runs") == 1
+    assert pool_one(pool, "SELECT count(*) FROM run_steps") == 3
+    assert pool_one(pool, "SELECT count(*) FROM model_calls") == 4
+    assert table_exists(pool, "answers")
