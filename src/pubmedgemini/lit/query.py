@@ -67,3 +67,35 @@ def query_rejected_message(kind: str, source: QuerySource) -> str:
         f"spaces and - \" ( ) [ ] * / : , . '{extra} with balanced quotes and brackets, "
         "no URLs or newlines"
     )
+
+
+# ---------- the echo guard (Incisive `agent/mod.rs` `ECHO_WORDS`, `contains_question`) ----------
+
+# A query holding this many consecutive words of the question is refused, so the question's
+# free text never leaves for NCBI or Europe PMC.
+ECHO_WORDS = 8
+# Incisive's text (`agent/tools/lit.rs` `LitTools::check_query`).
+ECHO_MESSAGE = (
+    "query rejected (echo): it repeats the question's wording; "
+    "use search terms and field tags instead"
+)
+
+
+def _echo_words(s: str) -> list[str]:
+    """Lower-cased words with everything but letters and digits removed; empty words
+    dropped (Incisive `echo_words`)."""
+    words = ("".join(c for c in w if c.isalnum()).lower() for w in s.split())
+    return [w for w in words if w]
+
+
+def contains_question(text: str, question: str) -> bool:
+    """True when `text` holds a run of ECHO_WORDS (8) or more consecutive words of
+    `question`, ignoring case, whitespace and punctuation, matched on whole words. A question
+    of fewer than eight words never matches."""
+    q = _echo_words(question)
+    if len(q) < ECHO_WORDS:
+        return False
+    t = " " + " ".join(_echo_words(text)) + " "
+    return any(
+        " " + " ".join(q[i : i + ECHO_WORDS]) + " " in t for i in range(len(q) - ECHO_WORDS + 1)
+    )

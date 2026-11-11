@@ -21,7 +21,13 @@ from pubmedgemini.lit.europepmc import EuropePmc
 from pubmedgemini.lit.http import LitError
 from pubmedgemini.lit.paper import Paper
 from pubmedgemini.lit.pubmed import PubMed
-from pubmedgemini.lit.query import QuerySource, query_rejected_message, validate_query
+from pubmedgemini.lit.query import (
+    ECHO_MESSAGE,
+    QuerySource,
+    contains_question,
+    query_rejected_message,
+    validate_query,
+)
 
 log = logging.getLogger("pubmedgemini.lit.tools")
 
@@ -157,13 +163,19 @@ def _count(value: object, key: str, cap: int) -> int:
     return value
 
 
-def _query(value: object, max_results: object, cap: int, source: QuerySource) -> tuple[str, int]:
-    """Incisive's order: the query is a string, the count is in range, then the query rule."""
+def _query(
+    value: object, max_results: object, cap: int, source: QuerySource, question: str | None
+) -> tuple[str, int]:
+    """Incisive's order (`LitTools::check_query`): the query is a string, the count is in
+    range, the query rule, then the echo guard when a question is given (a run's tool calls;
+    the key-word page passes none)."""
     query = _string(value, "query")
     n = _count(max_results, "max_results", cap)
     kind = validate_query(query, source)
     if kind is not None:
         raise ToolInputError(query_rejected_message(kind, source))
+    if question is not None and contains_question(query, question):
+        raise ToolInputError(ECHO_MESSAGE)
     return query, n
 
 
@@ -236,8 +248,13 @@ class LitTools:
 
     def search_pubmed_papers(self, query: object, max_results: object) -> tuple[int, list[Paper]]:
         """search_pubmed's work: the total count and the papers, in relevance order."""
+        return self._search_pubmed(query, max_results, None)
+
+    def _search_pubmed(
+        self, query: object, max_results: object, question: str | None
+    ) -> tuple[int, list[Paper]]:
         tool = "search_pubmed"
-        q, n = _query(query, max_results, MAX_SEARCH_RESULTS, "pubmed")
+        q, n = _query(query, max_results, MAX_SEARCH_RESULTS, "pubmed", question)
         try:
             hits = self._pubmed.search(q, n)
             papers = self._summaries(list(hits.pmids))
@@ -250,8 +267,13 @@ class LitTools:
         self, query: object, max_results: object
     ) -> tuple[int, list[Paper]]:
         """search_europepmc's work: the total count and at most `max_results` papers."""
+        return self._search_europepmc(query, max_results, None)
+
+    def _search_europepmc(
+        self, query: object, max_results: object, question: str | None
+    ) -> tuple[int, list[Paper]]:
         tool = "search_europepmc"
-        q, n = _query(query, max_results, MAX_SEARCH_RESULTS, "europepmc")
+        q, n = _query(query, max_results, MAX_SEARCH_RESULTS, "europepmc", question)
         try:
             hits = self._epmc.search(q, n)
         except LitError as e:
@@ -259,14 +281,20 @@ class LitTools:
         log.info("lit tool=%s count=%d items=%d", tool, hits.count, len(hits.papers))
         return hits.count, list(hits.papers[:n])
 
-    def search_pubmed(self, query: object, max_results: object) -> SearchResult:
-        """PubMed search: the total count and items without pmcid or doi."""
-        count, papers = self.search_pubmed_papers(query, max_results)
+    def search_pubmed(
+        self, query: object, max_results: object, *, question: str | None = None
+    ) -> SearchResult:
+        """PubMed search: the total count and items without pmcid or doi. With `question`
+        (a run), a query repeating eight of its words in a row is refused unsent."""
+        count, papers = self._search_pubmed(query, max_results, question)
         return SearchResult(count=count, items=tuple(Item.of(p, ids=False) for p in papers))
 
-    def search_europepmc(self, query: object, max_results: object) -> SearchResult:
-        """Europe PMC search: the total count and items with pmcid and doi when present."""
-        count, papers = self.search_europepmc_papers(query, max_results)
+    def search_europepmc(
+        self, query: object, max_results: object, *, question: str | None = None
+    ) -> SearchResult:
+        """Europe PMC search: the total count and items with pmcid and doi when present. With
+        `question` (a run), a query repeating eight of its words in a row is refused unsent."""
+        count, papers = self._search_europepmc(query, max_results, question)
         return SearchResult(count=count, items=tuple(Item.of(p, ids=True) for p in papers))
 
     def _fetch_papers(
@@ -314,6 +342,26 @@ class LitTools:
             papers[pmid] = p
         self._store(fetched)
         return papers, cached, False
+
+    def fetch_papers(self, pmids: Sequence[str]) -> dict[str, Paper]:
+        """The records of the selected studies, by PMID (Incisive `LitTools::fetch_papers`):
+        the cache first, then esummary and efetch; ids PubMed does not know are absent. Not a
+        model tool. Ids that are not 1 to 9 digits are skipped. A failed lookup with nothing
+        cached is ToolFailed; a partial failure returns what was found."""
+        tool = "fetch_papers"
+        ids: list[str] = []
+        for p in pmids:
+            if isinstance(p, str) and valid_pmid(p) and p not in ids:
+                ids.append(p)
+        if not ids:
+            return {}
+        try:
+            papers, cached, _ = self._fetch_papers(ids, tool)
+        except LitError as e:
+            raise self._failed(tool, e) from None
+        found = {i: papers[i] for i in ids if i in papers}
+        log.info("lit tool=%s asked=%d cached=%d returned=%d", tool, len(ids), cached, len(found))
+        return found
 
     def get_abstracts(self, pmids: object) -> AbstractsResult:
         """Abstracts for 1 to 20 PMIDs, in the order asked; unknown ids in `not_found`."""

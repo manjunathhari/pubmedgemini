@@ -178,3 +178,14 @@ def test_nul_and_lone_surrogates_are_cleaned_so_the_whole_batch_is_cached(cache_
     assert (one.title, one.abstract, one.journal) == ("Mesh repair", "ab", "J\ufffd")
     assert (one.authors, one.pub_types, one.doi, one.pmcid) == (
         ["Smith J"], ["Review"], "10.1/x", "PMC9")
+
+
+def test_get_for_display_ignores_freshness(cache_pool):
+    from pubmedgemini.lit.cache import get_for_display
+
+    put_many(cache_pool, [paper(pmid="1", abstract="A"), paper(pmid="2")])
+    age(cache_pool, "1", 60)
+    assert get_many(cache_pool, ["1"]) == []  # stale for the tools
+    got = get_for_display(cache_pool, ["1", "2", "3"])
+    assert set(got) == {"1", "2"} and got["1"].abstract == "A" and got["1"].pmid == "1"
+    assert get_for_display(cache_pool, []) == {}

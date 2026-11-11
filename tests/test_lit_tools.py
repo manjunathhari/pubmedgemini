@@ -482,3 +482,82 @@ def test_cached_abstracts_checks_its_input(tools, upstream):
     with pytest.raises(ToolInputError):
         tools.cached_abstracts(["12x"])
     assert upstream.sent == []
+
+
+# ---------- F2: the echo guard and fetch_papers (Incisive LitTools::check_query, fetch_papers) ----------
+
+Q = (
+    "In adults with inguinal hernia is laparoscopic repair better than open mesh repair "
+    "for chronic pain"
+)
+ECHO = "adults with inguinal hernia is laparoscopic repair better than"
+
+
+@pytest.mark.parametrize("tool", ["search_pubmed", "search_europepmc"])
+def test_search_tools_refuse_an_echo_before_sending(tools, upstream, tool):
+    with pytest.raises(ToolInputError) as e:
+        getattr(tools, tool)(ECHO, 5, question=Q)
+    assert str(e.value) == (
+        "query rejected (echo): it repeats the question's wording; "
+        "use search terms and field tags instead"
+    )
+    assert upstream.sent == []
+
+
+def test_query_rule_is_checked_before_the_echo(tools, upstream):
+    with pytest.raises(ToolInputError, match=r"query rejected \(character\)"):
+        tools.search_europepmc(ECHO + "?", 5, question=Q)
+    with pytest.raises(ToolInputError, match=r"query rejected \(character\)"):
+        tools.search_pubmed(ECHO + "?", 5, question=Q)
+    assert upstream.sent == []
+
+
+def test_count_is_checked_before_the_echo(tools):
+    with pytest.raises(ToolInputError, match="max_results"):
+        tools.search_pubmed(ECHO, 51, question=Q)
+
+
+def test_a_query_with_search_terms_passes_the_echo_guard(tools, upstream):
+    r = tools.search_pubmed("inguinal hernia[tiab] AND laparoscop*[tiab]", 3, question=Q)
+    assert r.count == 5160 and paths(upstream)[0] == "esearch.fcgi"
+
+
+def test_page_search_has_no_echo_guard(tools, upstream):
+    assert tools.search_pubmed(ECHO, 3).count == 5160  # question=None: the same text searches
+    assert tools.search_europepmc(ECHO, 3).count > 0
+    assert tools.search_pubmed_papers(ECHO, 3)[0] == 5160
+    assert tools.search_europepmc_papers(ECHO, 3)[0] > 0
+
+
+def test_echo_refusal_never_repeats_the_query(tools):
+    with pytest.raises(ToolInputError) as e:
+        tools.search_pubmed(ECHO, 5, question=Q)
+    assert "inguinal" not in str(e.value) and "hernia" not in str(e.value)
+
+
+def test_fetch_papers_returns_by_pmid(tools, upstream):
+    got = tools.fetch_papers([ID1, UNKNOWN_ID, ID2])
+    assert set(got) == {ID1, ID2}  # unknown id absent
+    assert got[ID1].abstract and got[ID1].pmid == ID1
+    assert paths(upstream) == ["esummary.fcgi", "efetch.fcgi"]
+    upstream.sent.clear()
+    again = tools.fetch_papers([ID2, ID1])
+    assert set(again) == {ID1, ID2} and upstream.sent == []  # cached by the first call
+
+
+def test_fetch_papers_with_nothing_asked_sends_nothing(tools, upstream):
+    assert tools.fetch_papers([]) == {} and upstream.sent == []
+
+
+def test_fetch_papers_failure_is_tool_failed(migrated_pool):
+    tools, _ = tools_with(migrated_pool, {ESUMMARY: httpx.Response(503)})
+    with pytest.raises(ToolFailed) as e:
+        tools.fetch_papers([ID1])
+    assert str(e.value) == FAILED_UNREACHABLE and e.value.error_kind == "http"
+
+
+def test_fetch_papers_logs_counts_only(tools, caplog):
+    caplog.set_level(logging.DEBUG)
+    tools.fetch_papers([ID1, ID2])
+    msgs = [r.getMessage() for r in caplog.records if r.name.startswith("pubmedgemini")]
+    assert msgs == ["lit tool=fetch_papers asked=2 cached=0 returned=2"]

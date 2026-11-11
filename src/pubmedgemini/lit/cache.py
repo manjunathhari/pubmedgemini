@@ -22,16 +22,7 @@ def _clean(s: str | None) -> str | None:
 _COLUMNS = "pmid, pmcid, doi, title, authors, journal, year, pub_types, abstract, retracted"
 
 
-def get_many(pool: ConnectionPool, pmids: Sequence[str]) -> list[Paper]:
-    """Fresh cached papers for the given PMIDs. Unknown and stale ids are absent."""
-    if not pmids:
-        return []
-    with pool.connection() as conn:
-        rows = conn.execute(
-            f"SELECT {_COLUMNS} FROM papers "
-            "WHERE pmid = ANY(%s) AND fetched_at > now() - make_interval(days => %s)",
-            (list(pmids), FRESH_DAYS),
-        ).fetchall()
+def _papers(rows) -> list[Paper]:
     return [
         Paper(
             pmid=pmid,
@@ -48,6 +39,31 @@ def get_many(pool: ConnectionPool, pmids: Sequence[str]) -> list[Paper]:
         )
         for pmid, pmcid, doi, title, authors, journal, year, pub_types, abstract, retracted in rows
     ]
+
+
+def get_many(pool: ConnectionPool, pmids: Sequence[str]) -> list[Paper]:
+    """Fresh cached papers for the given PMIDs. Unknown and stale ids are absent."""
+    if not pmids:
+        return []
+    with pool.connection() as conn:
+        rows = conn.execute(
+            f"SELECT {_COLUMNS} FROM papers "
+            "WHERE pmid = ANY(%s) AND fetched_at > now() - make_interval(days => %s)",
+            (list(pmids), FRESH_DAYS),
+        ).fetchall()
+    return _papers(rows)
+
+
+def get_for_display(pool: ConnectionPool, pmids: Sequence[str]) -> dict[str, Paper]:
+    """Cached papers for the given PMIDs at any age, by PMID: the run page of an old run.
+    Rows are pruned after PRUNE_DAYS; a pruned or unknown id is absent."""
+    if not pmids:
+        return {}
+    with pool.connection() as conn:
+        rows = conn.execute(
+            f"SELECT {_COLUMNS} FROM papers WHERE pmid = ANY(%s)", (list(pmids),)
+        ).fetchall()
+    return {p.pmid: p for p in _papers(rows) if p.pmid is not None}
 
 
 def put_many(pool: ConnectionPool, papers: Sequence[Paper]) -> None:

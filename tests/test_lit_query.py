@@ -1,9 +1,12 @@
 import pytest
 
 from pubmedgemini.lit.query import (
+    ECHO_MESSAGE,
+    ECHO_WORDS,
     EUROPEPMC_EXTRA_PUNCTUATION,
     MAX_QUERY_CHARS,
     QUERY_PUNCTUATION,
+    contains_question,
     query_rejected_message,
     validate_query,
 )
@@ -108,3 +111,50 @@ def test_message_names_the_underscore_for_europepmc_only():
     assert ", _ " in query_rejected_message("character", "europepmc")
     assert "_" not in query_rejected_message("character", "pubmed")
     assert query_rejected_message("url", "europepmc").startswith("query rejected (url): ")
+
+
+# ---------- the echo guard (Incisive agent/mod.rs `contains_question`) ----------
+
+Q = (
+    "In adults with inguinal hernia is laparoscopic repair better than open mesh repair "
+    "for chronic pain"
+)
+
+
+def test_echo_constants_match_incisive():
+    assert ECHO_WORDS == 8
+    assert ECHO_MESSAGE == (
+        "query rejected (echo): it repeats the question's wording; "
+        "use search terms and field tags instead"
+    )
+
+
+def test_echo_guard_cases():  # Review Focus 2
+    assert contains_question("adults with inguinal hernia is laparoscopic repair better than", Q)
+    assert contains_question(
+        '"Adults, with INGUINAL hernia; is laparoscopic repair better than"[tiab]', Q)
+    assert not contains_question(
+        "inguinal hernia[tiab] AND laparoscop*[tiab] AND chronic pain[tiab]", Q)
+    assert not contains_question("a b c d e f g", "a b c d e f g")  # fewer than 8 words
+    assert not contains_question("adultswith inguinal hernia is laparoscopic repair better than", Q)
+
+
+def test_incisive_echo_cases_carry_over():  # tests/agent.rs contains_question_detects_...
+    q = "In adults having colorectal resection, does ICG angiography reduce anastomotic leak?"
+    assert contains_question(
+        "x ADULTS having  colorectal\tresection does icg ANGIOGRAPHY reduce y", q)
+    assert contains_question(q, q)
+    assert not contains_question("adults having colorectal resection does icg angiography", q)
+    assert not contains_question(
+        "adults colorectal having resection does icg angiography reduce", q)
+    assert not contains_question(
+        "adultsx having colorectal resection does icg angiography reduce", q)
+    assert not contains_question("ICG for leak", "ICG for leak")
+    assert not contains_question("", q)
+
+
+def test_echo_guard_drops_punctuation_only_words_and_matches_at_the_end():
+    assert not contains_question("x y open mesh repair for chronic pain", Q)  # 6 in a row
+    assert contains_question("better than open mesh repair for chronic pain", Q)
+    assert contains_question("better than - open mesh repair for chronic pain", Q)
+    assert not contains_question("better than open mesh repair for chronic", Q)  # 7 words
