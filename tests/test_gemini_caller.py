@@ -284,6 +284,22 @@ def test_every_sent_attempt_counts_and_unsent_ones_do_not(caller_with):
         c.call({}, step="researcher", run_id=RUN, deadline=10**9, on_wait=print)
 
 
+def test_a_capped_run_reserves_no_pacer_slot_and_waits_for_nothing(caller_with):
+    # rpm=10 spaces attempts 6 s apart, so a pacer visit by the capped call would sleep and
+    # reserve a slot; the cap check runs before the pacer, so neither happens.
+    c, g, clock, _ = caller_with([reply([{"text": "x"}])] * 14, rpm=10)
+    for _ in range(14):
+        c.call({}, step="researcher", run_id=RUN, deadline=10**9, on_wait=print)
+    visits = []
+    real_wait = c._pacer.wait
+    c._pacer.wait = lambda *a: visits.append(a) or real_wait(*a)
+    slots, now = len(c._pacer._window), clock.t
+    with pytest.raises(RunCapReached):
+        c.call({}, step="study_list", run_id=RUN, deadline=10**9, on_wait=print)
+    assert visits == [] and len(c._pacer._window) == slots and clock.t == now
+    assert len(g.sent) == 14
+
+
 def test_each_run_has_its_own_cap(caller_with, migrated_pool):
     with migrated_pool.connection() as conn:
         uid = conn.execute("INSERT INTO users (email, role) VALUES ('o@example.com', 'owner') "
