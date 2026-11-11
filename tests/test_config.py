@@ -101,3 +101,89 @@ def test_ncbi_key_is_never_shown(monkeypatch):
     s = load_settings()
     assert "k-q7-secret" not in repr(s) and "k-q7-secret" not in str(s)
     assert s.ncbi_api_key.get_secret_value() == "k-q7-secret"
+
+
+GEMINI_NAMES = ("GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_RPM", "GEMINI_TPM", "GEMINI_RPD")
+
+
+def test_gemini_settings_default(monkeypatch):
+    for name in GEMINI_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    s = load_settings()
+    assert (s.gemini_api_key, s.gemini_model, s.gemini_rpm, s.gemini_tpm, s.gemini_rpd) == (
+        None, "gemini-3.5-flash-lite", 10, 250_000, 500
+    )
+
+
+def test_blank_gemini_settings_take_defaults(monkeypatch):
+    """What compose passes when the names are unset in .env."""
+    for name in GEMINI_NAMES:
+        monkeypatch.setenv(name, " ")
+    s = load_settings()
+    assert (s.gemini_api_key, s.gemini_model, s.gemini_rpm, s.gemini_tpm, s.gemini_rpd) == (
+        None, "gemini-3.5-flash-lite", 10, 250_000, 500
+    )
+
+
+def test_empty_gemini_settings_take_defaults(monkeypatch):
+    for name in GEMINI_NAMES:
+        monkeypatch.setenv(name, "")
+    s = load_settings()
+    assert (s.gemini_api_key, s.gemini_model, s.gemini_rpm) == (None, "gemini-3.5-flash-lite", 10)
+
+
+def test_gemini_key_is_never_shown(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gk-q7-secret")
+    s = load_settings()
+    assert "gk-q7-secret" not in repr(s) and "gk-q7-secret" not in str(s)
+    assert s.gemini_api_key.get_secret_value() == "gk-q7-secret"
+
+
+def test_gemini_settings_are_read(monkeypatch):
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-9.0-x")
+    monkeypatch.setenv("GEMINI_RPM", "15")
+    monkeypatch.setenv("GEMINI_TPM", "1000")
+    monkeypatch.setenv("GEMINI_RPD", "1000000")
+    s = load_settings()
+    assert (s.gemini_model, s.gemini_rpm, s.gemini_tpm, s.gemini_rpd) == (
+        "gemini-9.0-x", 15, 1000, 1_000_000
+    )
+
+
+@pytest.mark.parametrize(
+    "model", ["../x", "gemini 3", "Gemini", "a/b", "x:generateContent", "a" * 65, "-x", "x?y", "é"]
+)
+def test_model_id_that_could_change_the_url_is_refused(monkeypatch, model):
+    monkeypatch.setenv("GEMINI_MODEL", model)
+    with pytest.raises(SettingsError) as e:
+        load_settings()
+    assert str(e.value) == "missing or invalid settings: GEMINI_MODEL" and model not in str(e.value)
+
+
+def test_model_id_of_64_characters_is_accepted(monkeypatch):
+    monkeypatch.setenv("GEMINI_MODEL", "a" * 64)
+    assert load_settings().gemini_model == "a" * 64
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("GEMINI_RPM", "0"), ("GEMINI_RPM", "1001"), ("GEMINI_RPM", "ten"),
+        ("GEMINI_TPM", "10"), ("GEMINI_TPM", "999"), ("GEMINI_TPM", "100000001"),
+        ("GEMINI_RPD", "-1"), ("GEMINI_RPD", "0"), ("GEMINI_RPD", "1000001"),
+    ],
+)
+def test_limits_out_of_range_are_refused(monkeypatch, name, value):
+    monkeypatch.setenv(name, value)
+    with pytest.raises(SettingsError) as e:
+        load_settings()
+    assert str(e.value) == f"missing or invalid settings: {name}"
+
+
+@pytest.mark.parametrize(
+    "name,value", [("GEMINI_RPM", "1"), ("GEMINI_RPM", "1000"), ("GEMINI_TPM", "1000"),
+                   ("GEMINI_TPM", "100000000"), ("GEMINI_RPD", "1")]
+)
+def test_limit_bounds_are_accepted(monkeypatch, name, value):
+    monkeypatch.setenv(name, value)
+    assert getattr(load_settings(), name.lower()) == int(value)
