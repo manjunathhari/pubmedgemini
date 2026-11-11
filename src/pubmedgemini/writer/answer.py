@@ -12,12 +12,26 @@ Ports of Incisive (commit 12630f7, `crates/incisive-app/src/agent/answer_v3.rs`,
 | `KeyNumber`, `AtAGlance`, `ClinicalPractice`, `NotableFinding` | `a.rs:163-207` |
 | `Span` | `a.rs:236-243` |
 | `Study`, `Conflict`, `Applicability`, `WrittenAnswer` | `a.rs:295-335` |
+| `ReferenceV3` | `a.rs:337-352` |
+| `IntegrityV3` | `a.rs:511-549` |
+| `CompletionRule`, `CompletedNumber` | `a.rs:551-605` |
+| `AnswerV3` (Quick fields), `ANSWER_VERSION` | `a.rs:32-33, 892-944` |
 | `CITE`, `DIGITS`, `MIN_PMID_DIGITS`, `split_citations` | `a.rs:979-1031` |
+| `clean_citations` | `a.rs:1895-1946` |
+| `check_citations` | `w.rs:2641-2772` (`agent/writer_v3.rs`) |
+| `references_from` | `t.rs:448-462` (`agent/team.rs`, inline in `run`) |
+| `plural`, `citation_check_line` | `t.rs:198-200`, `t.rs:649-669` (inline in `run`) |
 
-Task 4 builds only what reading the writer's parts needs. Task 5 adds AnswerV3, the
-references, the citation check and these models' JSON form (serde's: `"Very low"`,
-`ClinicalPractice.text` and `NotableFinding.spans` left out when empty, `pmid_removed` when
-false); until then `model_dump` is pydantic's default.
+Task 4 built the written-answer models and `split_citations`; Task 5 added the stored answer,
+the references, the citation check and serde's JSON form.
+
+**The JSON form is serde's** (`AnswerV3.to_body()`, what `serde_json::to_value(&answer)` gives,
+`t.rs:176`): field names and order as the Rust structs declare them; `Option` as `null`; `Vec`
+as `[]`; left out only where Rust says `skip_serializing_if` (`ClinicalPractice.text` empty,
+`NotableFinding.spans` empty, `GuidelineV3.pmid_removed` false, `IntegrityV3.numbers_completed`
+0, `AnswerV3.numbers_completed` empty, `coverage` and `completeness` None); `Certainty` by
+variant name with `"Very low"`; `EvidenceType`, `CompletionRule` and the mode in snake_case;
+`created_at` as chrono writes a `DateTime<Utc>` (RFC 3339, `Z`, no fraction or 3/6 digits).
 
 Rust's regex `\\d` is Unicode `Nd` and `\\s` Unicode White_Space; Python's `re` differs (it lacks
 Unicode 16's digits, and its `\\s` also matches U+001C..U+001F), so both classes are spelled
@@ -25,12 +39,28 @@ out. An id's length is counted in UTF-8 bytes, as Rust's `str::len`.
 """
 
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC
 from enum import StrEnum
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    field_serializer,
+    model_serializer,
+)
 
+from pubmedgemini.gemini.structured import rust_trim
+from pubmedgemini.researcher.loop import SearchEntry
 from pubmedgemini.writer._rust_unicode import DIGIT_CLASS, SPACE_CLASS
+from pubmedgemini.writer.prompts import StudyInput
+
+ANSWER_VERSION = 3  # a.rs:33 `run_answers.answer_version` of an AnswerV3
 
 
 class Certainty(StrEnum):
@@ -80,6 +110,12 @@ _EVIDENCE_LABELS = {
 }
 
 
+def _skip(d: dict, **empty: Any) -> dict:
+    """`d` without each key whose value is the given empty value (serde's
+    `skip_serializing_if`); every other key, `None` included, is kept."""
+    return {k: v for k, v in d.items() if not (k in empty and v == empty[k])}
+
+
 class BottomLine(BaseModel):
     """2-3 sentences and the overall certainty with its reason."""
 
@@ -121,7 +157,12 @@ class GuidelineV3(BaseModel):
     body: str
     year: int | None
     statement: str
-    pmid_removed: bool = False
+    pmid_removed: bool = False  # not in the writer's schema; set by the citation check
+
+    @model_serializer(mode="wrap")
+    def _serde(self, handler: SerializerFunctionWrapHandler) -> dict:
+        # a.rs:157 `skip_serializing_if = "std::ops::Not::not"`
+        return _skip(handler(self), pmid_removed=False)
 
 
 class KeyNumber(BaseModel):
@@ -149,6 +190,11 @@ class ClinicalPractice(BaseModel):
     cost_per_case: str
     text: str = ""  # the writer's text under no label, drawn as written
 
+    @model_serializer(mode="wrap")
+    def _serde(self, handler: SerializerFunctionWrapHandler) -> dict:
+        # a.rs:191 `skip_serializing_if = "String::is_empty"`
+        return _skip(handler(self), text="")
+
 
 class Span(BaseModel):
     """A marked run of stored text: `len` bytes from byte `start` of the text at `field`."""
@@ -164,6 +210,11 @@ class NotableFinding(BaseModel):
     text: str
     pmids: list[str]
     spans: list[Span] = []
+
+    @model_serializer(mode="wrap")
+    def _serde(self, handler: SerializerFunctionWrapHandler) -> dict:
+        # a.rs:203 `skip_serializing_if = "Vec::is_empty"`
+        return _skip(handler(self), spans=[])
 
 
 class Study(BaseModel):
@@ -265,3 +316,294 @@ def split_citations(text: str, known) -> list[Segment]:
     if plain:
         out.append(Text(plain))
     return out
+
+
+def clean_citations(text: str, known: Callable[[str], bool]) -> tuple[str, int]:
+    """`text` with every citation marker (`split_citations`) rewritten to keep only PMIDs for
+    which `known` is true (de-duplicated, in order, as `[a; b]`); a marker left empty is
+    removed with the spaces and tabs before it. Returns the text and how many PMID citations
+    were removed. Port of `a.rs:1895-1946`."""
+    removed = 0
+    out = ""
+    for seg in split_citations(text, known):
+        if isinstance(seg, Text):
+            out += seg.text
+        elif not any(known(i) for i in seg.ids):
+            # No selected study in it: unknown PMIDs (5+ bytes) are removed and counted; short
+            # numbers stay as text.
+            short: list[str] = []
+            for i in seg.ids:
+                if _utf8_len(i) >= MIN_PMID_DIGITS:
+                    removed += 1
+                else:
+                    short.append(i)
+            if not short:
+                out = out.rstrip(" \t")  # trim_end_matches([' ', '\t'])
+            else:
+                out += "[" + "; ".join(short) + "]"
+        else:
+            keep: list[str] = []
+            for i in seg.ids:
+                if not known(i):
+                    removed += 1
+                elif i not in keep:
+                    keep.append(i)
+            if not keep:
+                out = out.rstrip(" \t")
+            else:
+                out += "[" + "; ".join(keep) + "]"
+    return out, removed
+
+
+# ---------- the stored answer ----------
+
+
+class ReferenceV3(BaseModel):
+    """A numbered reference, built by code from the fetched record (`references_from`)."""
+
+    n: int = Field(ge=0, le=65535)  # u16: 1-based, in the order the researcher selected
+    pmid: str
+    title: str
+    journal: str | None
+    year: int | None
+    doi: str | None
+    retracted: bool
+    found_by_skeptic: bool = False  # Full only; serde(default), always written
+
+
+class IntegrityV3(BaseModel):
+    """What the code checks removed (counts only)."""
+
+    dropped_unseen: int = 0  # selected studies that no tool returned in this run
+    dropped_unfetched: int = 0  # selected studies whose record could not be fetched
+    removed_citations: int = 0  # [PMID] citations of a study outside the selection
+    dropped_numbers: int = 0  # number entries whose source study is outside the selection
+    dropped_studies: int = 0  # trial rows whose study is outside the selection
+    numbers_checked: int = 0
+    numbers_untraced: int = 0
+    numbers_unverified: int = 0
+    outcomes_unverified: int = 0
+    labels_defaulted: int = 0  # certainty or evidence labels not recognised
+    numbers_completed: int = 0
+
+    @model_serializer(mode="wrap")
+    def _serde(self, handler: SerializerFunctionWrapHandler) -> dict:
+        # a.rs:543 `skip_serializing_if = "is_zero"`
+        return _skip(handler(self), numbers_completed=0)
+
+
+class CompletionRule(StrEnum):
+    """How a completed number follows from its source's words (F4)."""
+
+    AS_WRITTEN = "as_written"
+    SIGN_IN_WORDS = "sign_in_words"
+    SUM = "sum"
+    DIFFERENCE = "difference"
+    PERCENT_FROM_COUNTS = "percent_from_counts"
+
+
+class CompletedNumber(BaseModel):
+    """A "not traced" number completed against a cited abstract (F4)."""
+
+    span: Span
+    written: str
+    pmid: str
+    quote: str
+    rule: CompletionRule
+
+
+class AnswerV3(BaseModel):
+    """The stored answer (`answers.body`), Quick fields only: Quick has no skeptic, no
+    evidence rows, no coverage and no completeness review (`t.rs:203-226` `base`)."""
+
+    version: Literal[3] = ANSWER_VERSION
+    question: str
+    mode: Literal["quick"] = "quick"
+    created_at: AwareDatetime
+    answer: WrittenAnswer | None  # None when nothing could be written; empty_reason says why
+    empty_reason: str | None
+    references: list[ReferenceV3]
+    searches: list[SearchEntry]
+    integrity: IntegrityV3
+    stopped_early: str | None  # "time limit" / "a failed model call"
+    cost_paise: int = 0
+    elapsed_s: int = Field(ge=0)
+    skeptic: None = None
+    evidence: list[Any] = Field(default=[], max_length=0)
+    notes: list[str] = []
+    untraced: list[Span] = []
+    notable_code: list[NotableFinding] = []
+    coverage: None = None
+    completeness: None = None
+    numbers_completed: list[CompletedNumber] = []
+
+    @field_serializer("created_at")
+    def _chrono(self, t, _info: SerializationInfo) -> str:
+        """chrono's `DateTime<Utc>` serialisation: RFC 3339, `Z`, SecondsFormat::AutoSi (no
+        fraction, else 3, 6 or 9 digits; Python holds microseconds, so at most 6)."""
+        t = t.astimezone(UTC)
+        us = t.microsecond
+        frac = "" if us == 0 else f".{us // 1000:03d}" if us % 1000 == 0 else f".{us:06d}"
+        return t.strftime("%Y-%m-%dT%H:%M:%S") + frac + "Z"
+
+    @model_serializer(mode="wrap")
+    def _serde(self, handler: SerializerFunctionWrapHandler) -> dict:
+        # a.rs:932-943 `skip_serializing_if`: Option::is_none, Option::is_none, Vec::is_empty
+        return _skip(handler(self), coverage=None, completeness=None, numbers_completed=[])
+
+    def to_body(self) -> dict:
+        """The answer as Incisive stores it (`serde_json::to_value(&answer)`)."""
+        return self.model_dump(mode="json")
+
+
+def references_from(studies: Sequence[StudyInput]) -> list[ReferenceV3]:
+    """The references, from the fetched records in selection order (`t.rs:448-462`): `n` from
+    1, `pmid`, `title`, `journal`, `year`, `doi`, `retracted` from the record;
+    `found_by_skeptic` false. Never from the model's text."""
+    return [
+        ReferenceV3(n=min(i + 1, 65535), pmid=s.pmid, title=s.title, journal=s.journal,
+                    year=s.year, doi=s.doi, retracted=s.retracted, found_by_skeptic=False)
+        for i, s in enumerate(studies)
+    ]
+
+
+# ---------- the citation check ----------
+
+
+def check_citations(a: WrittenAnswer, selected: Sequence[str], integrity: IntegrityV3) -> None:
+    """The citation check, in place (`w.rs:2641-2772`): `[PMID]` markers in every text field
+    and the `pmids` / `pmid` fields must name a selected study. Unknown markers are removed
+    from the text, unknown ids from `pmids`; number entries and trial rows whose `pmid` is
+    unknown are dropped. Sets (does not add to) `integrity.removed_citations`,
+    `dropped_numbers` and `dropped_studies`. Owner's Q8: removal, as Incisive."""
+
+    def known(p: str) -> bool:
+        return any(s == p for s in selected)
+
+    removed = 0
+
+    def clean(t: str) -> str:
+        nonlocal removed
+        c, n = clean_citations(t, known)
+        removed += n
+        return c
+
+    for o in a.outcomes:
+        for n in o.numbers:
+            n.label = clean(n.label)
+            # `[&mut n.unit, &mut n.arm, &mut n.p].into_iter().flatten()`: Some values only
+            if n.unit is not None:
+                n.unit = clean(n.unit)
+            if n.arm is not None:
+                n.arm = clean(n.arm)
+            if n.p is not None:
+                n.p = clean(n.p)
+    a.bottom_line.text = clean(a.bottom_line.text)
+    a.bottom_line.certainty_reason = clean(a.bottom_line.certainty_reason)
+    for o in a.outcomes:
+        o.outcome = clean(o.outcome)
+        o.rct_evidence = clean(o.rct_evidence)
+        o.effect_text = clean(o.effect_text)
+        o.why = clean(o.why)
+    for s in a.studies:
+        s.label = clean(s.label)
+        s.design = clean(s.design)
+        s.setting = clean(s.setting)
+        s.comparison = clean(s.comparison)
+        s.key_results = clean(s.key_results)
+        s.appraisal = clean(s.appraisal)
+    for c in a.conflicts:
+        c.text = clean(c.text)
+    a.applicability.case_mix = clean(a.applicability.case_mix)
+    a.applicability.india_cost_context = clean(a.applicability.india_cost_context)
+    a.applicability.training = clean(a.applicability.training)
+    a.would_change = [clean(w) for w in a.would_change]
+    for g in a.guidelines:
+        g.body = clean(g.body)
+        g.statement = clean(g.statement)
+    if a.at_a_glance is not None:
+        g = a.at_a_glance
+        g.verdict = clean(g.verdict)
+        g.main_caveat = clean(g.main_caveat)
+        for k in g.key_numbers:
+            k.label = clean(k.label)
+            k.value_text = clean(k.value_text)
+    if a.clinical_practice is not None:
+        c = a.clinical_practice
+        c.default_choice = clean(c.default_choice)
+        c.who_may_benefit = clean(c.who_may_benefit)
+        c.counselling = clean(c.counselling)
+        c.cost_per_case = clean(c.cost_per_case)
+        c.text = clean(c.text)
+    for f in a.notable_findings:
+        f.text = clean(f.text)
+
+    def filter_ids(ids: list[str]) -> list[str]:
+        nonlocal removed
+        kept: list[str] = []
+        for i in ids:
+            i = rust_trim(i)
+            if not known(i):
+                removed += 1  # an empty id counts too (Rust: `!known("")`)
+            elif i not in kept:
+                kept.append(i)
+        return kept
+
+    for o in a.outcomes:
+        o.pmids = filter_ids(o.pmids)
+    for c in a.conflicts:
+        c.pmids = filter_ids(c.pmids)
+    for f in a.notable_findings:
+        f.pmids = filter_ids(f.pmids)
+    # A key number of an unknown study keeps its text; only the id goes.
+    if a.at_a_glance is not None:
+        for k in a.at_a_glance.key_numbers:
+            p = rust_trim(k.pmid)
+            if known(p):
+                k.pmid = p
+            else:
+                if p:
+                    removed += 1
+                k.pmid = ""
+    # A guideline citing an unknown study keeps its text; only the id goes, and the page flags
+    # it. An id that is empty after trimming becomes None, neither counted nor flagged.
+    for g in a.guidelines:
+        if g.pmid is not None:
+            p = rust_trim(g.pmid)
+            g.pmid = None
+            if known(p):
+                g.pmid = p
+            elif p:
+                removed += 1
+                g.pmid_removed = True
+    dropped_numbers = 0
+    for o in a.outcomes:
+        before = len(o.numbers)
+        o.numbers = [n for n in o.numbers if known(rust_trim(n.pmid))]
+        dropped_numbers += before - len(o.numbers)
+        for n in o.numbers:
+            n.pmid = rust_trim(n.pmid)
+    before = len(a.studies)
+    a.studies = [s for s in a.studies if known(rust_trim(s.pmid))]
+    for s in a.studies:
+        s.pmid = rust_trim(s.pmid)
+    integrity.removed_citations = removed
+    integrity.dropped_numbers = dropped_numbers
+    integrity.dropped_studies = before - len(a.studies)
+
+
+def plural(n: int, one: str, many: str) -> str:
+    """"1 number" / "2 numbers" (`t.rs:198-200`)."""
+    return f"{n} {one if n == 1 else many}"
+
+
+def citation_check_line(integrity: IntegrityV3) -> str:
+    """The citation check's step line (kind `check`), word for word `t.rs:649-669`."""
+    if (integrity.removed_citations == 0 and integrity.dropped_numbers == 0
+            and integrity.dropped_studies == 0):
+        return "Citation check: every citation is one of the selected studies"
+    return "Citation check: removed {}, dropped {} and {}".format(
+        plural(integrity.removed_citations, "unknown citation", "unknown citations"),
+        plural(integrity.dropped_numbers, "number", "numbers"),
+        plural(integrity.dropped_studies, "trial row", "trial rows"),
+    )
