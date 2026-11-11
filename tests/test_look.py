@@ -206,3 +206,24 @@ def test_no_script_tags(pages):
 def test_run_page_still_refreshes_itself(pages):
     assert '<meta http-equiv="refresh" content="5">' in pages["run"].text
     assert "http-equiv" not in pages["run_done"].text
+
+
+def test_controls_and_labels_use_the_sans_font():
+    """Controls, labels and inputs are Hanken Grotesk wherever they sit, also inside a <p>
+    (which is Source Serif 4): one rule names them all and comes after the `p` rule."""
+    rules = _rules()
+    serif_at = next(i for i, (sel, body) in enumerate(rules)
+                    if sel == "p" and "Source Serif" in body)
+    named = {"label", "button", "input", "textarea"}
+    found = set()
+    for i, (sel, body) in enumerate(rules):
+        parts = {" ".join(x.split()) for x in sel.split(",")}
+        m = re.search(r"font-family:\s*([^;]+)", body)
+        if i > serif_at and m and m.group(1).strip().startswith('"Hanken Grotesk"'):
+            found |= parts & named
+    assert found == named, named - found
+    # a later `font:` shorthand on a control would reset the family to the serif it inherits
+    for sel, body in rules[serif_at:]:
+        parts = {" ".join(x.split()).split("[")[0].split(":")[0] for x in sel.split(",")}
+        if parts & named:
+            assert not re.search(r"(^|[;\s])font:", body), sel

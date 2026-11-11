@@ -103,6 +103,10 @@ article { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card > h2 + .item { border-top: 0; padding-top: 0; }
 
 /* inputs */
+/* controls and labels are sans wherever they sit, also inside a <p> (serif) */
+label, button, input, textarea, select {
+  font-family: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
 label { font-weight: 600; }
 textarea, input[type="text"] {
   display: block;
@@ -110,7 +114,8 @@ textarea, input[type="text"] {
   border: 1px solid #8C8C8C;
   border-radius: 8px;
   padding: 12px;
-  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
   background: #FFFFFF;
   color: #333333;
 }
@@ -126,7 +131,7 @@ button {
   border-radius: 8px;
   background: #4D4D4D;
   color: #FFFFFF;
-  font: inherit;
+  line-height: inherit;
   font-weight: 600;
   font-size: 16px;
   cursor: pointer;
