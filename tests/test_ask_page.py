@@ -91,7 +91,7 @@ class AskEnv:
 
 @contextmanager
 def ask_env(db_url, upstream=None, script=(), key=FAKE_KEY, starter=None, parts=None,
-            **settings_extra):
+            one_piece=(), **settings_extra):
     """A dev app: literature over `upstream`, Gemini over a RunGemini serving `script` to the
     researcher and `parts` to the writer (by default every part answers at once), an
     InlineStarter (the run happens inside the POST) unless another starter is given."""
@@ -99,7 +99,7 @@ def ask_env(db_url, upstream=None, script=(), key=FAKE_KEY, starter=None, parts=
         from lit_fakes import FakeUpstream, europepmc_routes, pubmed_routes
 
         upstream = FakeUpstream(pubmed_routes() | europepmc_routes())
-    gemini = RunGemini(list(script), parts)
+    gemini = RunGemini(list(script), parts, one_piece)
     starter = starter if starter is not None else InlineStarter()
     extra = {"gemini_rpm": 1000} | settings_extra  # no pacing waits in tests
     if key is not None:

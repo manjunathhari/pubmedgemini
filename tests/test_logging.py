@@ -1,5 +1,7 @@
 import logging
+from contextlib import contextmanager
 
+import httpx
 import pytest
 
 
@@ -338,6 +340,23 @@ def leak_parts() -> dict:
 # kinds. A line that does not match one of these (free text of any kind) fails the tests.
 K = r"[a-z_]+"
 N = r"-?\d+"
+# F3a: the writer's parts (writer/parts.py), the cap, and the runner after the writer.
+WRITER_LINE_PATTERNS = [
+    (r"writer part=(?:trials|outcomes|context|summary|one_piece) attempt=(?:first|retry) "
+     rf"result=(?:ok|cut_off|unreadable|refused|error|skipped) kind={K} output_tokens=\d+"),
+    r"writer kind=merged labels_defaulted=\d+",
+    rf"writer kind=parts_failed failed=\d+ first={K}",
+    r"writer kind=no_time_for_one_piece left_s=\d+",
+    r"writer kind=callback_failed error=\w+",
+    rf"gemini kind=run_call_cap step={K} attempts=\d+ cap=\d+",
+    (rf"run kind=answer run_id={UUID} written=(?:true|false) references=\d+ "
+     r"dropped_unseen=\d+ dropped_unfetched=\d+ removed_citations=\d+ dropped_numbers=\d+ "
+     r"dropped_studies=\d+"),
+    r"run kind=no_time_for_writer left_s=\d+",
+    r"run kind=answer_not_stored error=\w+",
+    rf"run kind=finish_not_applied run_id={UUID}",
+]
+
 APP_LINE_PATTERNS = [
     *ASK_LINE_PATTERNS.values(),
     r"literature ncbi_api_key=(?:true|false)",
@@ -377,20 +396,7 @@ APP_LINE_PATTERNS = [
     r"researcher s3 kind=empty_list seen=\d+ reported=\d+ considered=\d+ rounds=\d+",
     r"researcher s3 outcome=usable reported=\d+ considered=\d+",
     r"researcher s3 outcome=(?:empty|not_made) seen=\d+ rounds=\d+",
-    # F3a: the writer's parts (writer/parts.py), the cap, and the runner after the writer.
-    (r"writer part=(?:trials|outcomes|context|summary|one_piece) attempt=(?:first|retry) "
-     rf"result=(?:ok|cut_off|unreadable|refused|error|skipped) kind={K} output_tokens=\d+"),
-    r"writer kind=merged labels_defaulted=\d+",
-    rf"writer kind=parts_failed failed=\d+ first={K}",
-    r"writer kind=no_time_for_one_piece left_s=\d+",
-    r"writer kind=callback_failed error=\w+",
-    rf"gemini kind=run_call_cap step={K} attempts=\d+ cap=\d+",
-    (rf"run kind=answer run_id={UUID} written=(?:true|false) references=\d+ "
-     r"dropped_unseen=\d+ dropped_unfetched=\d+ removed_citations=\d+ dropped_numbers=\d+ "
-     r"dropped_studies=\d+"),
-    r"run kind=no_time_for_writer left_s=\d+",
-    r"run kind=answer_not_stored error=\w+",
-    rf"run kind=finish_not_applied run_id={UUID}",
+    *WRITER_LINE_PATTERNS,
 ]
 
 # What must never reach a log line: the question (zq7 and its words), the model's note (yq8),
@@ -671,3 +677,270 @@ def test_unexpected_error_in_a_run_under_uvicorn_is_one_fixed_line(db_url):
     assert sum(m.endswith(" status=done error_kind=none") for m in msgs) == 0
     for leak in (*LEAKS, "Traceback", "Exception in", "unexpected failure", "contents"):
         assert leak not in err, leak
+
+
+# ---------- the writer's texts: every one marked, none may reach a log (F3a Task 9) ----------
+
+# One marker per kind of writer text. None is a hex string, so none can sit inside a run id.
+PART_TAGS = {"trials": "pt1", "outcomes": "po2", "context": "pc3", "summary": "ps4"}
+PIECE_TAG = "pw5"      # the one-piece reply's text
+BLOCK_NOTE = "bm6"     # the message inside a reply Gemini blocked
+ABSTRACT_TAG = "qa7"   # put into the abstract of a selected study
+REFUSED_TAG = "zd8"    # in an answer the database refuses (with a NUL, which JSONB cannot hold)
+WRITER_LEAKS = (*PART_TAGS.values(), PIECE_TAG, BLOCK_NOTE, ABSTRACT_TAG, REFUSED_TAG)
+ABSTRACT_SENTENCE = b"There was no difference between the two methods."
+
+
+def marked_upstream():
+    """The F1 fixtures with the marker in one abstract of a selected study."""
+    from lit_fakes import (
+        EUTILS_HOST,
+        EUTILS_PATH,
+        FakeUpstream,
+        europepmc_routes,
+        fixture,
+        pubmed_routes,
+    )
+
+    efetch = fixture("efetch.xml")
+    assert ABSTRACT_SENTENCE in efetch
+    routes = pubmed_routes() | europepmc_routes()
+    routes[(EUTILS_HOST, EUTILS_PATH + "efetch.fcgi")] = httpx.Response(
+        200, content=efetch.replace(ABSTRACT_SENTENCE, ABSTRACT_TAG.encode() + b" abstract text"),
+        headers={"content-type": "text/xml"})
+    return FakeUpstream(routes)
+
+
+def marked_parts() -> dict:
+    """Each part answers with its own marker in its text."""
+    from writer_fakes import part_reply, whole_answer
+
+    from pubmedgemini.writer.prompts import Section
+
+    return {s.name: [part_reply(s, whole_answer(PART_TAGS[s.name]))] * 2 for s in Section.ALL}
+
+
+def blocked_reply() -> dict:
+    return {"promptFeedback": {"blockReason": "SAFETY", "blockReasonMessage": BLOCK_NOTE}}
+
+
+def piece_after_a_blocked_part() -> tuple[dict, list]:
+    """The trials part is blocked twice (the message carries a marker): the one piece is
+    written, and its text carries another."""
+    from writer_fakes import piece_reply, whole_answer
+
+    parts = marked_parts()
+    parts["trials"] = [blocked_reply(), blocked_reply()]
+    return parts, [piece_reply(whole_answer(PIECE_TAG))]
+
+
+def refused_by_the_database() -> dict:
+    """The summary part's text holds a NUL: the whole answer is valid to read and to check, and
+    the database refuses it (JSONB has no NUL), with an error text that holds the body."""
+    from writer_fakes import part_reply, whole_answer
+
+    from pubmedgemini.writer.prompts import Section
+
+    parts = marked_parts()
+    parts["summary"] = [part_reply(Section.SUMMARY, whole_answer(f"{REFUSED_TAG}\u0000"))]
+    return parts
+
+
+def scenario(mode: str) -> tuple[list, dict, list]:
+    """(researcher script, parts, one piece) of a whole run for `tests/ask_app.py`."""
+    if mode == "fallback":
+        parts, piece = piece_after_a_blocked_part()
+        return leak_script(), parts, piece
+    if mode == "db_refused":
+        return leak_script(), refused_by_the_database(), []
+    return leak_script(), marked_parts(), []
+
+
+def assert_no_private_text(caplog, extra=()) -> None:
+    """No captured line, formatted record, exception text or traceback holds a marker."""
+    for leak in (*LEAKS, *WRITER_LEAKS, *extra):
+        assert leak not in caplog.text, leak
+    for r in caplog.records:
+        assert r.exc_info is None and r.exc_text is None, (r.name, r.getMessage())
+        for leak in (*LEAKS, *WRITER_LEAKS, *extra):
+            assert leak not in r.getMessage() and leak not in str(r.args), leak
+
+
+def test_nothing_private_is_logged_in_a_full_written_run(db_url, caplog, app_debug):
+    import re
+
+    caplog.set_level(logging.DEBUG)  # root: every logger that propagates
+    with ask_env_marked(db_url, marked_parts()) as env:
+        app_debug()
+        r = env.ask(LEAK_QUESTION)
+        page = env.run_page(r.headers["location"]).text
+        status = env.one("SELECT status FROM runs")
+        stored = env.one("SELECT body::text FROM answers")
+        writer_sent = env.gemini.writer.bodies()
+    # The markers were really in the app: the writer got the question and the abstract, the
+    # stored answer holds the text of every part, and the page shows it.
+    assert status == "done" and len(writer_sent) == 4
+    for b in writer_sent:
+        text = b["contents"][0]["parts"][0]["text"]
+        assert "zq7" in text and ABSTRACT_TAG in text
+    for tag in PART_TAGS.values():
+        assert tag in stored, tag
+    assert "Answer ready" in page and PART_TAGS["outcomes"] in page
+    assert_no_private_text(caplog)
+    msgs = _app_messages(caplog)
+    assert_app_lines_fixed(msgs)
+    # The pattern the plan names, and each part's first call.
+    assert any(re.fullmatch(r"writer part=outcomes attempt=first result=ok kind=none "
+                            r"output_tokens=\d+", m) for m in msgs)
+    for name in PART_TAGS:
+        assert any(m.startswith(f"writer part={name} attempt=first result=ok ") for m in msgs)
+    assert "writer kind=merged labels_defaulted=0" in msgs
+
+
+def test_failed_parts_log_kinds_only(db_url, caplog, app_debug):
+    """A blocked part (with a marked message), the one piece (marked text), and an answer the
+    database refuses (marked body): fixed kinds and class names only, no exception text."""
+    import re
+
+    caplog.set_level(logging.DEBUG)
+    parts, piece = piece_after_a_blocked_part()
+    with ask_env_marked(db_url, parts, piece) as env:
+        app_debug()
+        env.ask(LEAK_QUESTION)
+        stored = env.one("SELECT body::text FROM answers")
+        status = env.one("SELECT status FROM runs")
+    assert status == "done" and PIECE_TAG in stored
+    msgs = _app_messages(caplog)
+    assert "writer part=trials attempt=first result=refused kind=block output_tokens=0" in msgs
+    assert "writer part=trials attempt=retry result=refused kind=block output_tokens=0" in msgs
+    assert "writer kind=parts_failed failed=1 first=trials" in msgs
+    assert any(m.startswith("writer part=one_piece attempt=first result=ok ") for m in msgs)
+    assert not any(m.startswith("writer kind=merged") for m in msgs)
+    assert_no_private_text(caplog, extra=(BLOCK_NOTE,))
+    assert_app_lines_fixed(msgs)
+
+    caplog.clear()
+    with ask_env_marked(db_url, refused_by_the_database()) as env:
+        app_debug()
+        r = env.ask(LEAK_QUESTION)
+        page = env.run_page(r.headers["location"]).text
+        row = env.rows("SELECT status, error_kind FROM runs ORDER BY created_at DESC")[0]
+        answers = env.one("SELECT count(*) FROM answers WHERE run_id = (SELECT id FROM runs "
+                          "ORDER BY created_at DESC LIMIT 1)")
+    assert tuple(row) == ("failed", "internal") and answers == 0  # nothing half-stored
+    assert "Something went wrong. Please try again in a minute." in page
+    assert REFUSED_TAG not in page
+    msgs = _app_messages(caplog)
+    assert any(re.fullmatch(r"run kind=answer_not_stored error=\w+", m) for m in msgs)
+    assert_no_private_text(caplog)
+    assert_app_lines_fixed(msgs)
+
+
+def _writer_scenarios():
+    """(name, parts, one piece, researcher script) for the allowlist test: every way a part
+    can end that the writer logs a line for."""
+    from gemini_fakes import error
+    from writer_fakes import part_reply, piece_reply, whole_answer
+
+    from pubmedgemini.writer.prompts import Section
+
+    def ok(name, tag="w"):
+        return part_reply({s.name: s for s in Section.ALL}[name], whole_answer(tag))
+
+    cut = reply_text('{"studies": [{"pmid": "', finish="MAX_TOKENS")
+    bad = reply_text(f"Sorry, {PART_TAGS['trials']} is not JSON")
+    one = [piece_reply(whole_answer(PIECE_TAG))]
+    yield "all parts at once", marked_parts(), [], leak_script()
+    yield ("retries: cut off, unreadable, blocked, then read",
+           {"trials": [bad, ok("trials")], "outcomes": [cut, ok("outcomes")],
+            "context": [blocked_reply(), ok("context")], "summary": [ok("summary")]},
+           [], leak_script())
+    yield ("a part fails twice: one piece",
+           {"trials": [bad, bad], "outcomes": [ok("outcomes")], "context": [ok("context")],
+            "summary": [ok("summary")]}, one, leak_script())
+    yield ("one piece fails too",
+           {"trials": [bad, bad], "outcomes": [ok("outcomes")], "context": [ok("context")],
+            "summary": [ok("summary")]}, [bad, bad], leak_script())
+    yield ("billing refused in a part",
+           {"trials": [ok("trials")], "outcomes": [ok("outcomes")], "context": [ok("context")],
+            "summary": [error(402, "X", message="gm-q7 secret text")]}, [], leak_script())
+
+
+def reply_text(text: str, finish: str = "STOP") -> dict:
+    from gemini_fakes import reply
+
+    return reply([{"text": text}], finish=finish)
+
+
+def test_every_writer_log_line_matches_the_allowlist(db_url, caplog, app_debug):
+    """Every line a written run emits (the writer's own and the runner's) is one of the fixed
+    shapes of WRITER_LINE_PATTERNS or APP_LINE_PATTERNS; a new shape fails here. The check is
+    shown to bite: a line of an unknown shape, or with free text, is refused."""
+    import re
+
+    def allowed(m: str) -> bool:
+        return any(re.fullmatch(p, m) for p in WRITER_LINE_PATTERNS)
+
+    for odd in ("writer part=outcomes attempt=first result=ok kind=none output_tokens=5 text=x",
+                "writer part=outcomes said hello", "writer kind=new_line",
+                "writer part=poem attempt=first result=ok kind=none output_tokens=1",
+                "run kind=answer run_id=1 written=true"):
+        assert not allowed(odd) and not any(re.fullmatch(p, odd) for p in APP_LINE_PATTERNS), odd
+
+    seen_writer = set()
+    for name, parts, one_piece, script in _writer_scenarios():
+        caplog.clear()
+        caplog.set_level(logging.DEBUG)
+        with ask_env_marked(db_url, parts, one_piece, script=script) as env:
+            app_debug()
+            env.ask(LEAK_QUESTION)
+            assert env.one("SELECT count(*) FROM runs") >= 1, name
+        records = [r for r in caplog.records if r.name.startswith("pubmedgemini")]
+        writer = [r.getMessage() for r in records if r.name == "pubmedgemini.writer"]
+        assert writer, name
+        for m in writer:
+            assert allowed(m), (name, m)
+            seen_writer.add(m.split()[1].split("=")[0] + ":" + m.split()[1])
+        for r in records:  # the runner's lines after the writer, and every other app line
+            assert any(re.fullmatch(p, r.getMessage()) for p in APP_LINE_PATTERNS), (
+                name, r.getMessage())
+        assert_no_private_text(caplog)
+    results = {m for m in seen_writer}
+    assert {"part=trials", "part=outcomes", "part=context", "part=summary",
+            "part=one_piece", "kind=merged", "kind=parts_failed"} <= {
+        r.split(":")[1] for r in results}, sorted(results)
+
+
+def test_a_written_run_under_uvicorn_logs_no_writer_text(db_url):
+    """The same full run under the real server: stderr holds fixed lines and none of the
+    writer's markers (the parts', the abstract's)."""
+    page, _home, err = _run_question_under_uvicorn(db_url, "happy")
+    msgs = _assert_stderr_fixed(err)
+    assert PART_TAGS["outcomes"] in page and "Answer ready" in page
+    for leak in (*WRITER_LEAKS, "Traceback"):
+        assert leak not in err, leak
+    assert "writer part=outcomes attempt=first result=ok kind=none output_tokens=321" in msgs
+
+
+def test_the_one_piece_and_a_refused_answer_under_uvicorn_log_no_writer_text(db_url):
+    page, _home, err = _run_question_under_uvicorn(db_url, "fallback")
+    msgs = _assert_stderr_fixed(err)
+    assert PIECE_TAG in page and "writer kind=parts_failed failed=1 first=trials" in msgs
+    for leak in (*WRITER_LEAKS, *LEAKS, "Traceback", "Exception in"):
+        assert leak not in err, leak
+    page, _home, err = _run_question_under_uvicorn(db_url, "db_refused")
+    msgs = _assert_stderr_fixed(err)
+    assert "Something went wrong. Please try again in a minute." in page
+    assert any(m.startswith("run kind=answer_not_stored error=") for m in msgs)
+    for leak in (*WRITER_LEAKS, *LEAKS, "Traceback", "Exception in", "Unicode", "unsupported"):
+        assert leak not in err, leak
+
+
+@contextmanager
+def ask_env_marked(db_url, parts, one_piece=(), script=None):
+    """A whole-run app over the marked abstract, the leak script and the given writer replies."""
+    from test_ask_page import ask_env
+
+    with ask_env(db_url, marked_upstream(), leak_script() if script is None else script,
+                 key="gk-q7", parts=parts, one_piece=one_piece) as env:
+        yield env
