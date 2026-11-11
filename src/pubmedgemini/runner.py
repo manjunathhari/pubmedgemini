@@ -11,6 +11,7 @@ line, the closing line and the outcome:
 |---|---|---|
 | FatalModelError | failed | its kind |
 | HardStop, or the hard stop passed before or after the records fetch | failed | hard_stop |
+| RunCapReached (the run's RUN_ATTEMPTS attempts are used) | failed | run_call_cap |
 | final_failed | partial | researcher_incomplete |
 | empty_selection | partial | empty_selection |
 | nothing selected | done (partial after turn_failed or wrap_up) | none |
@@ -30,7 +31,7 @@ from uuid import UUID
 
 from psycopg_pool import ConnectionPool
 
-from pubmedgemini.gemini.caller import ModelCaller
+from pubmedgemini.gemini.caller import ModelCaller, RunCapReached
 from pubmedgemini.lit.tools import LitTools, ToolFailed
 from pubmedgemini.researcher.loop import (
     FatalModelError,
@@ -179,6 +180,11 @@ def run_one(
             return
         except HardStop:
             _hard_stop(pool, run_id)
+            return
+        except RunCapReached:
+            finish_run(pool, run_id, "failed", "run_call_cap", None, None)
+            log.info("run kind=finished run_id=%s status=failed error_kind=run_call_cap",
+                     run_id)
             return
         line = _stop_line(r)
         if line is not None:

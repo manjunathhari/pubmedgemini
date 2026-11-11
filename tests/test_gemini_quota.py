@@ -8,6 +8,7 @@ from lit_fakes import FakeClock
 from pubmedgemini.gemini.client import Usage
 from pubmedgemini.gemini.quota import (
     CALL_RESERVE,
+    RUN_ATTEMPTS,
     RUN_CALLS,
     GeminiPacer,
     calls_today,
@@ -16,6 +17,7 @@ from pubmedgemini.gemini.quota import (
     record_attempt,
     reset_time_ist,
     runs_left,
+    runs_left_for,
 )
 
 # ---------- the pacer ----------
@@ -129,6 +131,28 @@ def add_calls(pool, model: str, n: int, days_ago: int = 0) -> None:
 
 def test_run_calls_and_reserve():
     assert (RUN_CALLS, CALL_RESERVE) == (11, 3)
+
+
+def test_a_run_may_send_its_calls_plus_the_reserve():  # owner decision, 11 Nov: cap per run
+    assert RUN_ATTEMPTS == RUN_CALLS + CALL_RESERVE == 14
+
+
+@pytest.mark.parametrize("rpd", [1, 13, 14, 15, 24, 25, 100, 500, 1000])
+def test_a_run_admitted_with_one_left_cannot_pass_the_day_limit_at_its_cap(rpd):
+    # Admission is `runs_left >= 1`; a run then sends at most RUN_ATTEMPTS attempts.
+    for used in range(rpd + 30):
+        if runs_left_for(rpd, used) >= 1:
+            assert used + RUN_ATTEMPTS <= rpd, (rpd, used)
+    if rpd >= RUN_ATTEMPTS:  # the last admitted run lands exactly on the limit
+        assert runs_left_for(rpd, rpd - RUN_ATTEMPTS) == 1
+        assert runs_left_for(rpd, rpd - RUN_ATTEMPTS + 1) == 0
+    else:
+        assert runs_left_for(rpd, 0) == 0
+
+
+def test_runs_left_on_a_fresh_day_is_unchanged():  # 45 before and after the cap
+    assert runs_left_for(500, 0) == 45 == (500 - 3) // 11
+    assert [runs_left_for(500, u) for u in (475, 476, 486, 487, 500, 600)] == [2, 1, 1, 0, 0, 0]
 
 
 def test_runs_left_arithmetic(migrated_pool):

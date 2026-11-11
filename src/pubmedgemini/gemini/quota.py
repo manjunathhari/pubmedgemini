@@ -27,6 +27,10 @@ BYTES_PER_TOKEN = 3
 RUN_CALLS = 11
 # Room for transport retries.
 CALL_RESERVE = 3
+# The most attempts one run may send, every attempt counted as the day count counts it (owner
+# decision, 11 Nov 2026: cap calls per run). `ModelCaller` enforces it per run id; `runs_left`
+# admits a run only when the day still has room for all of them.
+RUN_ATTEMPTS = RUN_CALLS + CALL_RESERVE
 
 
 def estimate_tokens(body: dict) -> int:
@@ -152,9 +156,22 @@ def calls_today(pool: ConnectionPool, model: str) -> int:
     return int(row[0])
 
 
+def runs_left_for(rpd: int, used: int) -> int:
+    """Whole runs the rest of the day allows when `used` attempts are counted. The next run
+    needs room for its cap (RUN_ATTEMPTS); each one after it is counted at RUN_CALLS, a run
+    without retries, so the number is "about". At least 1 exactly when
+    `used + RUN_ATTEMPTS <= rpd`: a run admitted then cannot pass `rpd` even at its cap. Runs
+    are admitted one at a time against the live count, so later runs are checked in turn. The
+    same number as `(rpd - used - CALL_RESERVE) // RUN_CALLS` (45 on a fresh day of 500)."""
+    room = rpd - used
+    if room < RUN_ATTEMPTS:
+        return 0
+    return 1 + (room - RUN_ATTEMPTS) // RUN_CALLS
+
+
 def runs_left(pool: ConnectionPool, model: str, rpd: int) -> int:
-    """Whole runs the rest of the day allows: (rpd - calls today - reserve) // RUN_CALLS."""
-    return max(0, (rpd - calls_today(pool, model) - CALL_RESERVE) // RUN_CALLS)
+    """`runs_left_for` with today's count for `model`."""
+    return runs_left_for(rpd, calls_today(pool, model))
 
 
 def reset_time_ist(pool: ConnectionPool) -> str:

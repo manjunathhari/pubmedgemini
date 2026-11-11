@@ -14,9 +14,10 @@ from pubmedgemini.gemini.caller import (
     MAX_ATTEMPTS,
     DeadlineReached,
     ModelCaller,
+    RunCapReached,
 )
 from pubmedgemini.gemini.client import GeminiClient, GeminiError
-from pubmedgemini.gemini.quota import GeminiPacer
+from pubmedgemini.gemini.quota import RUN_ATTEMPTS, GeminiPacer
 
 MODEL = "gemini-3.5-flash-lite"
 RUN = None  # model_calls.run_id is a foreign key; these tests have no run row
@@ -245,3 +246,69 @@ def test_log_lines_hold_counts_and_kinds_only(caller_with, caplog):  # Review Fo
                         msgs[1])
     for leak in ("zq7", "yq8", "gm-q7", FAKE_KEY, "generativelanguage", "https://"):
         assert leak not in caplog.text, leak
+
+
+# ---------- the per-run cap (owner decision, 11 Nov 2026: cap calls per run) ----------
+
+BUSY_TWICE = [error(503, "UNAVAILABLE"), error(503, "UNAVAILABLE"), reply([{"text": "x"}])]
+
+
+def test_the_cap_stops_a_run_at_its_attempts(caller_with, migrated_pool):
+    # 503 twice per call: three attempts a call, so the fifth call reaches 14 on its second.
+    c, g, clock, _ = caller_with(BUSY_TWICE * 5, jitter=0.0)
+    for _ in range(4):
+        c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 200, on_wait=print)
+    with pytest.raises(RunCapReached):
+        c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 200, on_wait=print)
+    assert len(g.sent) == RUN_ATTEMPTS == 14 and len(rows(migrated_pool)) == 14
+    assert len(g.script) == 1  # the third attempt of the fifth call was never sent
+    with pytest.raises(RunCapReached):  # nor anything after it, on any step
+        c.call({}, step="study_list", run_id=RUN, deadline=clock.t + 200, on_wait=print)
+    assert len(g.sent) == 14 and len(rows(migrated_pool)) == 14
+
+
+def test_the_cap_is_not_a_gemini_error_nor_a_deadline():
+    assert not issubclass(RunCapReached, (GeminiError, DeadlineReached))
+
+
+def test_every_sent_attempt_counts_and_unsent_ones_do_not(caller_with):
+    # A pacer refusal sends nothing, so it uses none of the run's attempts.
+    c, g, clock, _ = caller_with([reply([{"text": "x"}])] * 15, rpm=10)
+    with pytest.raises(DeadlineReached):
+        for _ in range(2):
+            c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 2, on_wait=print)
+    for _ in range(13):
+        c.call({}, step="researcher", run_id=RUN, deadline=10**9, on_wait=print)
+    assert len(g.sent) == 14
+    with pytest.raises(RunCapReached):
+        c.call({}, step="researcher", run_id=RUN, deadline=10**9, on_wait=print)
+
+
+def test_each_run_has_its_own_cap(caller_with, migrated_pool):
+    with migrated_pool.connection() as conn:
+        uid = conn.execute("INSERT INTO users (email, role) VALUES ('o@example.com', 'owner') "
+                           "RETURNING id").fetchone()[0]
+        a, b = uuid.uuid4(), uuid.uuid4()
+        for rid in (a, b):
+            conn.execute("INSERT INTO runs (id, user_id, question, model, status) VALUES "
+                         "(%s, %s, 'q', 'm', 'done')", (rid, uid))
+    c, g, _clock, _ = caller_with([reply([{"text": "x"}])] * 15)
+    for _ in range(14):
+        c.call({}, step="researcher", run_id=a, deadline=10**9, on_wait=print)
+    with pytest.raises(RunCapReached):
+        c.call({}, step="researcher", run_id=a, deadline=10**9, on_wait=print)
+    assert c.call({}, step="researcher", run_id=b, deadline=10**9, on_wait=print).text == "x"
+    assert len(g.sent) == 15
+
+
+def test_the_cap_log_line_holds_a_kind_and_counts_only(caller_with, caplog):
+    caplog.set_level(logging.DEBUG)
+    c, _g, _clock, _ = caller_with([reply([{"text": "yq8 text"}])] * 14)
+    for _ in range(14):
+        c.call({"q": "zq7"}, step="researcher", run_id=RUN, deadline=10**9, on_wait=print)
+    caplog.clear()
+    with pytest.raises(RunCapReached):
+        c.call({"q": "zq7"}, step="study_list", run_id=RUN, deadline=10**9, on_wait=print)
+    msgs = [r.getMessage() for r in caplog.records if r.name.startswith("pubmedgemini")]
+    assert msgs == ["gemini kind=run_call_cap step=study_list attempts=14 cap=14"]
+    assert str(RunCapReached()) == "run_call_cap"

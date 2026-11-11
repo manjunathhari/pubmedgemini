@@ -599,8 +599,9 @@ def research(
     progress: Progress,
     clock: Callable[[], float] = time.monotonic,
 ) -> Research:
-    """Run the researcher for one question (see the module doc). Raises HardStop and
-    FatalModelError; everything else ends in a Research."""
+    """Run the researcher for one question (see the module doc). Raises HardStop,
+    FatalModelError and the caller's RunCapReached (no step catches it, so the cap ends the
+    run from any call); everything else ends in a Research."""
     run = _Run(question, tools, caller, run_id, timing, progress, clock)
     progress.line("search", SEARCHING_LINE)
     stop, rounds = run.loop()

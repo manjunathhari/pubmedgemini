@@ -12,9 +12,10 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from gemini_fakes import FAKE_KEY, QUOTA_FAILURE, FakeGemini, call, error
-from test_runs import END, HAPPY_RUN, ID1, ID2, ID3, Q1, list_reply, turn
+from test_runs import BUSY_RUN, END, HAPPY_RUN, ID1, ID2, ID3, Q1, list_reply, turn
 
 from pubmedgemini.config import Settings
+from pubmedgemini.gemini.quota import calls_today
 from pubmedgemini.main import create_app
 from pubmedgemini.runner import InlineStarter
 
@@ -518,6 +519,30 @@ def test_hard_stop_and_internal_messages(env):
     internal = insert_run(env, status="failed", error_kind="internal")
     assert "Something went wrong. Please try again in a minute." in \
         env.run_page(f"/runs/{internal}").text
+
+
+CAP_MESSAGE = ("Gemini stayed busy, so this run used up its share of today&#39;s free calls. "
+               "Please run the question again.")
+
+
+def test_the_run_cap_shows_its_plain_message(db_url, upstream):
+    with ask_env(db_url, upstream, BUSY_RUN) as env:
+        page = env.run_page(env.ask(QUESTION).headers["location"]).text
+        assert env.rows("SELECT status, error_kind FROM runs") == [("failed", "run_call_cap")]
+    assert CAP_MESSAGE in page and "Traceback" not in page
+
+
+def test_a_run_admitted_with_one_left_never_passes_the_day_limit(db_url, upstream):
+    # Owner decision, 11 Nov 2026: cap calls per run. 486 of 500 used leaves one run; Gemini
+    # busy on every call takes it to its cap, which lands exactly on the day limit.
+    with ask_env(db_url, upstream, BUSY_RUN) as env:
+        add_calls(env, 486)
+        assert "Free runs left today: about 1" in env.c.get("/", headers=H).text
+        assert env.ask(QUESTION).status_code == 303
+        assert env.one("SELECT error_kind FROM runs") == "run_call_cap"
+        assert calls_today(env.pool, MODEL) == 500
+        assert "Free runs left today: about 0" in env.c.get("/", headers=H).text
+        assert env.ask(QUESTION).status_code == 429
 
 
 # ---------- run again ----------

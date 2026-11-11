@@ -457,6 +457,72 @@ def test_an_unexpected_error_fails_the_run_with_a_fixed_kind(run_app, monkeypatc
     assert "Traceback" not in caplog.text and "division" not in caplog.text
 
 
+# ---------- the per-run cap (owner decision, 11 Nov 2026: cap calls per run) ----------
+
+BUSY = [error(503, "UNAVAILABLE")] * 2
+SEARCH = turn(call("search_pubmed", Q1))
+# Gemini answers 503 twice per call: 3 attempts a call; the cap of 14 comes on turn 5.
+BUSY_RUN = (BUSY + [SEARCH]) * 4 + BUSY + [SEARCH, LIST_OK]
+# The most calls a run makes: 8 turns, the list call (unreadable), its nudge (empty) and S3.
+ELEVEN = [SEARCH] * 8 + [reply([{"text": "no"}]), EMPTY, LIST_OK]
+
+
+def calls_of(pool, rid):
+    return rows(pool, "SELECT count(*) FROM model_calls WHERE run_id = %s", (rid,))[0][0]
+
+
+def test_a_busy_gemini_reaches_the_cap_and_fails_the_run(run_app, caplog):
+    caplog.set_level(logging.INFO)
+    rid = run_app.start(script=BUSY_RUN)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("failed", "run_call_cap")
+    assert v.stop_reason is None and v.rounds is None and v.finished_at is not None
+    assert calls_of(run_app.pool, rid) == 14 and len(run_app.gemini.sent) == 14
+    assert len(run_app.gemini.script) == 2  # nothing sent after the cap
+    assert end_message(v) is None  # the page words it from the kind
+    assert f"run kind=finished run_id={rid} status=failed error_kind=run_call_cap" in [
+        r.getMessage() for r in caplog.records]
+
+
+def test_a_normal_eleven_call_run_is_unaffected(run_app):
+    rid = run_app.start(script=ELEVEN)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind, v.stop_reason) == ("done", None, "turn_cap")
+    assert [p.pmid for p in v.selected] == [ID2, ID1]
+    assert "Researcher: the study list came back empty; selecting again" in v.lines
+    assert calls_of(run_app.pool, rid) == 11 and run_app.gemini.script == []
+
+
+def test_eleven_calls_with_three_retries_still_finish(run_app):
+    # Exactly the cap: three transport retries spread over the run.
+    script = [BUSY[0]] + ELEVEN[:8] + [BUSY[0], ELEVEN[8], ELEVEN[9], BUSY[0], ELEVEN[10]]
+    rid = run_app.start(script=script)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("done", None)
+    assert calls_of(run_app.pool, rid) == 14
+
+
+def test_the_s3_retry_counts_toward_the_cap(run_app):
+    # 11 attempts in 7 turns, the list call and the nudge: S3's first attempt is the 14th,
+    # its retry would be the 15th.
+    script = (BUSY + [SEARCH]) * 2 + [SEARCH] * 4 + [END, reply([{"text": "no"}]), EMPTY,
+                                                       BUSY[0], LIST_OK]
+    rid = run_app.start(script=script)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("failed", "run_call_cap")
+    assert calls_of(run_app.pool, rid) == 14 and run_app.gemini.script == [LIST_OK]
+
+
+def test_the_nudge_counts_toward_the_cap(run_app):
+    # 11 attempts in 7 turns, two for the list call: the nudge's retry would be the 15th.
+    script = (BUSY + [SEARCH]) * 2 + [SEARCH] * 4 + [END, BUSY[0], reply([{"text": "no"}]),
+                                                       BUSY[0], LIST_OK]
+    rid = run_app.start(script=script)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("failed", "run_call_cap")
+    assert calls_of(run_app.pool, rid) == 14 and run_app.gemini.script == [LIST_OK]
+
+
 # ---------- the writers ----------
 
 def test_clip_is_incisives():  # agent/mod.rs clip

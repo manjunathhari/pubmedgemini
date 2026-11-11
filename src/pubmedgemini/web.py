@@ -69,6 +69,10 @@ KIND_MESSAGES = {
         "The free Gemini limit stayed busy, so the run could not finish. "
         "Please try again in a minute."
     ),
+    "run_call_cap": (
+        "Gemini stayed busy, so this run used up its share of today's free calls. "
+        "Please run the question again."
+    ),
     **{k: GEMINI_UNAVAILABLE for k in ("overloaded", "timeout", "network", "http",
                                        "request_refused", "not_found", "too_large", "parse")},
 }

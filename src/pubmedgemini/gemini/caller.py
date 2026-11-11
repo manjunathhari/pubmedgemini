@@ -7,12 +7,18 @@ waited however long it is, as long as it ends before the caller's deadline; free
 are tens of seconds. A wait that would end at or after the deadline raises DeadlineReached at
 once, so the loop can wrap up instead of failing.
 
+A run sends at most RUN_ATTEMPTS attempts in all (owner decision, 11 Nov 2026: cap calls per
+run), counted here per run id over every step (turns, the list call, its nudge and the S3
+retry) and every retry, as the day count counts them. At the cap nothing more is sent for that
+run: RunCapReached, and the run ends failed `run_call_cap`.
+
 Log lines hold the step, the attempt, the kind, the finish kind, token counts and latency
 only: never the body, the reply, the key or Google's message.
 """
 
 import logging
 import random
+import threading
 import time
 from collections.abc import Callable
 from uuid import UUID
@@ -27,7 +33,13 @@ from pubmedgemini.gemini.client import (
     Reply,
     finish_log_kind,
 )
-from pubmedgemini.gemini.quota import GeminiPacer, estimate_tokens, finish_attempt, record_attempt
+from pubmedgemini.gemini.quota import (
+    RUN_ATTEMPTS,
+    GeminiPacer,
+    estimate_tokens,
+    finish_attempt,
+    record_attempt,
+)
 
 log = logging.getLogger("pubmedgemini.gemini")
 
@@ -48,6 +60,15 @@ class DeadlineReached(Exception):
         super().__init__("deadline_reached")
 
 
+class RunCapReached(Exception):
+    """This run has sent RUN_ATTEMPTS attempts; nothing more is sent for it. Neither a
+    GeminiError nor DeadlineReached, so no step of the loop takes it for a failed or late call:
+    the runner ends the run failed `run_call_cap`."""
+
+    def __init__(self) -> None:
+        super().__init__("run_call_cap")
+
+
 class ModelCaller:
     def __init__(
         self,
@@ -66,6 +87,9 @@ class ModelCaller:
         self._sleep = sleep
         self._clock = clock
         self._jitter = jitter
+        self.run_cap = RUN_ATTEMPTS
+        self._cap_lock = threading.Lock()
+        self._sent: dict[UUID | None, int] = {}  # attempts sent, per run id
 
     def __repr__(self) -> str:
         return "ModelCaller()"
@@ -75,6 +99,25 @@ class ModelCaller:
         unit = min(max(self._jitter(), 0.0), 1.0)
         raw = BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
         return min(raw * (0.8 + 0.4 * unit), BACKOFF_MAX_SECONDS)
+
+    def _at_cap(self, run_id: UUID | None) -> bool:
+        with self._cap_lock:
+            return self._sent.get(run_id, 0) >= self.run_cap
+
+    def _take_attempt(self, run_id: UUID | None) -> bool:
+        """Counts one attempt for `run_id`; False, counting nothing, at the cap."""
+        with self._cap_lock:
+            n = self._sent.get(run_id, 0)
+            if n >= self.run_cap:
+                return False
+            self._sent[run_id] = n + 1
+            return True
+
+    def _cap_reached(self, step: str, run_id: UUID | None) -> RunCapReached:
+        with self._cap_lock:
+            n = self._sent.get(run_id, 0)
+        log.info("gemini kind=run_call_cap step=%s attempts=%d cap=%d", step, n, self.run_cap)
+        return RunCapReached()
 
     def _finish(self, call_id: int, kind: str, reply: Reply | None, latency_ms: int) -> None:
         """Best effort: the `sent` row already counts the attempt."""
@@ -96,8 +139,9 @@ class ModelCaller:
         on_wait: Callable[[int], None],
         attempt_deadline: float | None = None,
     ) -> Reply:
-        """The reply, after at most MAX_ATTEMPTS attempts. Raises DeadlineReached when the
-        pacer or a wait would pass `deadline`, else the last GeminiError.
+        """The reply, after at most MAX_ATTEMPTS attempts. Raises RunCapReached when the next
+        attempt would pass the run's cap, DeadlineReached when the pacer or a wait would pass
+        `deadline`, else the last GeminiError.
 
         `deadline` decides whether an attempt starts; an attempt once sent is bounded by
         `attempt_deadline` (default `deadline`) and the 120 s attempt timeout. Incisive checks
@@ -107,12 +151,16 @@ class ModelCaller:
         attempt = 0
         while True:
             attempt += 1
+            if self._at_cap(run_id):  # before the pacer, so a capped run waits for nothing
+                raise self._cap_reached(step, run_id)
             if not self._pacer.wait(estimate, deadline):
                 raise DeadlineReached()
             now = self._clock()
             if deadline - now <= 0 or limit - now <= 0:
                 raise DeadlineReached()
             left = limit - now
+            if not self._take_attempt(run_id):  # counted with the `sent` row, as the day's
+                raise self._cap_reached(step, run_id)
             call_id = record_attempt(
                 self._pool, model=self.model, run_id=run_id, step=step, attempt=attempt
             )
