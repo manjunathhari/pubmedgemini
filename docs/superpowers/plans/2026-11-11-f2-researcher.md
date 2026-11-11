@@ -356,6 +356,7 @@ def test_lit_client_still_refuses_the_gemini_host():                         # h
   - Per attempt: `pacer.wait` (False → `DeadlineReached`); `record_attempt`; `client.generate(body, timeout=min(120, deadline - now))`; `finish_attempt` with the kind and Google's token counts; one log line `gemini step=<step> attempt=<n> status=<kind> finish=<finish kind> prompt_tokens=<n> output_tokens=<n> thought_tokens=<n> latency_ms=<n>`.
   - Retries: `rate_limited` and `overloaded`, timeouts and network errors are retried up to `MAX_ATTEMPTS` in all. The wait is Google's asked delay when there is one, else Incisive's backoff (0.5 s × 2^(n−1), jittered 0.8 to 1.2, at most 8 s). If the wait would end at or after `deadline`, `DeadlineReached` is raised at once; after the last attempt the `GeminiError` itself is raised. Before a wait of 1 s or more, `on_wait(round(seconds))` writes the spec §8 line `Waiting for the free limit (about N s)` (429 only). `daily_limit`, `key_refused`, `billing_refused`, `request_refused`, `not_found`, `too_large`, `parse` and `http` are never retried.
   - Before a run starts (Task 8), not per call: the route refuses when `runs_left < 1`. A daily-quota 429 in the middle of a run is fatal for that run (Task 7).
+  - Per run (owner decision, 11 Nov 2026, below): `ModelCaller` sends at most `RUN_ATTEMPTS = RUN_CALLS + CALL_RESERVE = 14` attempts for one run id, every step and every retry counted; the 15th raises `RunCapReached` and the run ends failed `run_call_cap`. `runs_left` is at least 1 exactly when `calls today + 14 <= rpd`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -781,7 +782,7 @@ Owner decision: "check each question for patient details before it goes to Googl
   - the privacy line;
   - for `stopped`: `This run was stopped because the app restarted.`;
   - for `stopped`, `failed` and `partial` (owner decision, 11 Nov 2026: failed and partial too): a `Run again` button (a form posting to `/runs/{id}/again`); none for `done`, `queued` or `running`. The POST is unchanged: the cross-site guard, then the same checks as `/ask` (patient details included) on the stored question.
-- Kind messages: `daily_limit` → `Daily free limit reached. Resets at {{ HH:MM }} IST.` (spec §8; also the 429 page before a run); `key_refused` → `Google refused the Gemini key. The owner needs to check it on the server.`; `billing_refused` → `Google refused the Gemini key because its Google project is linked to billing. Make a key in a project with billing turned off.`; `rate_limited` → `The free Gemini limit stayed busy, so the run could not finish. Please try again in a minute.`; `overloaded`, `timeout`, `network`, `http`, `request_refused`, `not_found`, `too_large`, `parse` → `Gemini could not be reached or refused the request. Please try again in a minute.`; `internal` → F1's `INTERNAL_ERROR`. 409: `A question is already running. Please wait for it to finish, then ask again.` with `See the question that is running` linking to it when it is the user's own.
+- Kind messages: `daily_limit` → `Daily free limit reached. Resets at {{ HH:MM }} IST.` (spec §8; also the 429 page before a run); `key_refused` → `Google refused the Gemini key. The owner needs to check it on the server.`; `billing_refused` → `Google refused the Gemini key because its Google project is linked to billing. Make a key in a project with billing turned off.`; `rate_limited` → `The free Gemini limit stayed busy, so the run could not finish. Please try again in a minute.`; `overloaded`, `timeout`, `network`, `http`, `request_refused`, `not_found`, `too_large`, `parse` → `Gemini could not be reached or refused the request. Please try again in a minute.`; `run_call_cap` → `Gemini stayed busy, so this run used up its share of today's free calls. Please run the question again.` (owner decision, 11 Nov 2026); `internal` → F1's `INTERNAL_ERROR`. 409: `A question is already running. Please wait for it to finish, then ask again.` with `See the question that is running` linking to it when it is the user's own.
 - Log lines: `ask kind=started run_id=<uuid>`, `ask kind=rejected reason=<empty|too_long>`, `ask kind=refused reason=<no_key|active|daily_limit>`, `ask kind=refused_cross_site`; request lines stay `request method=… route=/runs/{run_id} status=…` (the route template, never the id: F1 `log_request`: Fact).
 - Test changes, deliberate: `tests/test_web.py` `test_home_shows_signed_in_email` and `tests/test_search_page.py` `test_home_has_one_box_and_no_script` change only the line text above and the count of `name="q"` (still 1) plus one `name="question"`; nothing else in F0's or F1's tests changes.
 
@@ -894,6 +895,15 @@ def test_no_model_text_in_any_table_but_the_reviewed_ones(migrated_pool): ...
 
 ---
 
+## Owner decisions after review (11 Nov 2026)
+
+The owner's answers to the questions left open by the first F2 review round:
+
+1. **Stuck run (M1, the stale-run sweep):** leave as is.
+2. **Call cap (M2):** cap calls per run. A run sends at most `RUN_CALLS + CALL_RESERVE = 14` Gemini attempts, every attempt counted as the day count counts it (turns, the list call, its nudge, the S3 retry and every transport retry). The cap lives in `ModelCaller`, per run id; at the cap nothing more is sent, the run ends failed with `error_kind = run_call_cap`, and the page says "Gemini stayed busy, so this run used up its share of today's free calls. Please run the question again." The log line holds the kind, the step word and counts only. `runs_left` keeps its number ((rpd − used − 3) // 11, 45 on a fresh day of 500, as before) and is now written as "room for the next run's 14, then 11 for each one after", so a run admitted with 1 left cannot pass `GEMINI_RPD` even at its cap.
+3. **Run again:** on failed and partial runs too, as well as stopped ones; not on done, queued or running ones. The POST route, its cross-site guard and the patient-details check are unchanged.
+4. **Test emails (the email domains in F0 test files):** leave.
+
 ## Manual check for sign-off (owner, on the live page, after the deploy and the key)
 
 1. Sign in. The home page shows "Ask a question" above "Key-word search", "Free runs left today: about 45" and the privacy line.
@@ -910,7 +920,7 @@ def test_no_model_text_in_any_table_but_the_reviewed_ones(migrated_pool): ...
    - **count and order:** 6 to 10 selected, the most important first; each "why" is one sensible line;
    - **search trail:** real queries with field tags, not the question pasted in.
    Incisive Quick's own picks for the same four questions are the yardstick at F5, not now.
-5. "Free runs left today" has gone down by about 1 per run (11 calls is the most a run counts).
+5. "Free runs left today" has gone down by about 1 per run (11 calls is the most a run makes without retries; 14 attempts, retries included, is the most it may send).
 6. On the server: `cd /opt/pubmedgemini && docker compose logs app | grep -ci appendicitis`. Expected: `0`.
 
 F2 is done when the four runs finish and the owner judges the picks sensible (spec §9).
