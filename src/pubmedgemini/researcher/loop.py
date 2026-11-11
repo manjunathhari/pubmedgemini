@@ -442,7 +442,7 @@ class _Run:
                 reply = self.caller.call(
                     turn_body(system, contents, declarations, TURN_MAX_TOKENS),
                     step="researcher", run_id=self.run_id, deadline=self.timing.wrap_up_at,
-                    on_wait=self.on_wait,
+                    on_wait=self.on_wait, attempt_deadline=self.timing.hard_stop_at,
                 )
             except DeadlineReached:
                 if done == 0:

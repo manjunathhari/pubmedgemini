@@ -390,6 +390,20 @@ def test_wrap_up_at_210_seconds_goes_to_the_final_call(run_research):
     assert r.validated is not None
 
 
+def test_a_turn_sent_just_before_the_wrap_up_may_finish(run_research):  # review L3
+    # Incisive checks the wrap-up only before a turn starts; the turn in flight is bounded by
+    # the 120 s attempt timeout and the hard stop (`agent_loop.rs`, `runs/worker.rs`).
+    seen = []
+
+    def capture(request):
+        seen.append(request.extensions["timeout"]["read"])
+        return httpx.Response(200, json=end_turn())
+
+    r, _g, _prog = run_research([turn(call("search_pubmed", Q1)), capture, LIST_OK],
+                                on_line=bump_after("(turn 1 of 8)", 205))
+    assert seen == [120.0] and (r.stop, r.rounds) == ("end_turn", 2)
+
+
 def test_a_429_wait_past_the_wrap_up_point_is_a_wrap_up(run_research):
     script = [turn(call("search_pubmed", Q1))] * 3 + [
         error(429, "RESOURCE_EXHAUSTED", [RETRY_INFO("60s")]), LIST_OK]

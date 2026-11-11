@@ -94,18 +94,25 @@ class ModelCaller:
         run_id: UUID | None,
         deadline: float,
         on_wait: Callable[[int], None],
+        attempt_deadline: float | None = None,
     ) -> Reply:
         """The reply, after at most MAX_ATTEMPTS attempts. Raises DeadlineReached when the
-        pacer or a wait would pass `deadline`, else the last GeminiError."""
+        pacer or a wait would pass `deadline`, else the last GeminiError.
+
+        `deadline` decides whether an attempt starts; an attempt once sent is bounded by
+        `attempt_deadline` (default `deadline`) and the 120 s attempt timeout. Incisive checks
+        the wrap-up only before a turn and lets the turn in flight run to the hard stop."""
+        limit = deadline if attempt_deadline is None else attempt_deadline
         estimate = estimate_tokens(body)
         attempt = 0
         while True:
             attempt += 1
             if not self._pacer.wait(estimate, deadline):
                 raise DeadlineReached()
-            left = deadline - self._clock()
-            if left <= 0:
+            now = self._clock()
+            if deadline - now <= 0 or limit - now <= 0:
                 raise DeadlineReached()
+            left = limit - now
             call_id = record_attempt(
                 self._pool, model=self.model, run_id=run_id, step=step, attempt=attempt
             )

@@ -198,6 +198,30 @@ def test_the_attempt_timeout_is_cut_to_the_deadline(caller_with):
     assert seen[0] == pytest.approx(45, abs=0.1) and seen[1] == 120.0
 
 
+def test_an_attempt_in_flight_is_bounded_by_its_own_limit(caller_with):  # review L3
+    # The deadline decides whether an attempt starts; `attempt_deadline` bounds the attempt.
+    seen = []
+
+    def capture(request):
+        seen.append(request.extensions["timeout"]["read"])
+        return httpx.Response(200, json=reply([{"text": "x"}]))
+
+    c, _g, clock, _ = caller_with([capture, capture])
+    c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 5,
+           attempt_deadline=clock.t + 215, on_wait=print)
+    c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 5,
+           attempt_deadline=clock.t + 60, on_wait=print)
+    assert seen[0] == 120.0 and seen[1] == pytest.approx(60, abs=0.1)
+
+
+def test_no_attempt_starts_past_the_deadline_whatever_the_attempt_limit(caller_with):
+    c, g, clock, _ = caller_with([reply([{"text": "x"}])])
+    with pytest.raises(DeadlineReached):
+        c.call({}, step="researcher", run_id=RUN, deadline=clock.t,
+               attempt_deadline=clock.t + 200, on_wait=print)
+    assert g.sent == []
+
+
 def test_googles_token_count_replaces_the_estimate(caller_with):
     c, _g, clock, _ = caller_with([reply([{"text": "x"}], prompt=7)])
     body = {"x": "a" * 3000}
