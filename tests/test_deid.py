@@ -57,8 +57,8 @@ INCISIVE_BLOCK = [
     ("+919845012345", ('phone',)),
     ("whatsapp 09845012345", ('phone',)),
     ("attender 98450-12345", ('phone',)),
-    ("email ramesh.k@gmail.com", ('email',)),
-    ("write to dr_x+cases@hospital.co.in please", ('email',)),
+    ("email ramesh.k@example.com", ('email',)),
+    ("write to dr_x+cases@example.co.in please", ('email',)),
     ("DOB 12/03/1971", ('calendar_date',)),
     ("DOB 5/6/1990", ('calendar_date',)),
     ("seen on 2024-03-12", ('calendar_date',)),
@@ -774,15 +774,15 @@ def test_offsets_point_at_the_match():
     f = scan(t)
     assert len(f) == 1 and f[0].kind == "person_name"
     assert t[f[0].start:f[0].end] == "Mrs. Lakshmi"
-    t = "Ménétrier αβ 080-2502 4444 é, email a@b.in"
+    t = "Ménétrier αβ 080-2502 4444 é, email a@example.org"
     f = scan(t)
     assert all(0 <= x.start < x.end <= len(t) for x in f)
     assert t[f[0].start:f[0].end] == "080-2502 4444"
-    assert t[f[1].start:f[1].end] == "a@b.in"
+    assert t[f[1].start:f[1].end] == "a@example.org"
 
 
 def test_findings_are_sorted_by_start():
-    f = scan("email a@b.in then PAN ABCDE1234F then ph 9845012345")
+    f = scan("email a@example.org then PAN ABCDE1234F then ph 9845012345")
     assert len(f) == 3 and all(a.start <= b.start for a, b in pairwise(f))
 
 
