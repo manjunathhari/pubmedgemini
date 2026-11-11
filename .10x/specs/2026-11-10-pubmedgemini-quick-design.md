@@ -10,7 +10,7 @@ A second, simpler Incisive that costs ₹0 to run.
 
 - It answers a clinical question the way Incisive's Quick run does: a researcher searches PubMed and Europe PMC, a writer writes a structured answer from the abstracts, and code checks the citations and numbers.
 - Every model call goes to Google Gemini's free tier, on the Flash-Lite model.
-- The page is plain writing. No dashboards, charts or cards.
+- The answer page has the same layout and sections as Incisive's answer page, in greys (owner decision, 11 Nov 2026; it replaces the plain-writing ruling of 10 Nov. See §2a and §6).
 - Incisive (Rust, `manjunathhari/incisive`) is not touched. It is the yardstick for quality.
 
 **Success:** on the four benchmark questions (hernia, achalasia, cholecystitis, appendicitis) the owner can read a full answer at ₹0 and judge the gap against Incisive Quick side by side.
@@ -22,14 +22,30 @@ A second, simpler Incisive that costs ₹0 to run.
 | 1 | Model: Gemini free tier only. **Flash-Lite does every step**, including the write-up. No Flash, no fallback between models. |
 | 2 | Scope: **Quick only.** No Full run. |
 | 3 | Pipeline: **the same as Incisive's Quick run** (researcher → study list → writer in four parts → citation check → number check → number completion). |
-| 4 | Page: **plain writing in the browser.** No S1e layout, no mockup stage. |
+| 4 | Page: ~~plain writing in the browser. No S1e layout, no mockup stage.~~ **Replaced on 11 Nov 2026 by §2a no. 1.** |
 | 5 | Language: Python. |
 | 6 | Hosting: the app and the database both run on the owner's **VPS** (2 CPU, 8 GB, Ubuntu 24.04 with Docker and Traefik). No Google Cloud. |
 | 7 | Repo: `manjunathhari/pubmedgemini`. |
 | 8 | Build order: stage by stage (F0–F5, §9), each a small batch the owner signs off. |
 | 9 | Google search: none in this build. |
 
-Assumed and not yet contradicted: the owner is the only user at first.
+The owner was the only user at first. From 11 Nov 2026 the plan is doctors the owner adds himself (§2a no. 5).
+
+## 2a. Decisions made by the owner (11 Nov 2026)
+
+Made in the Project chat of 11 Nov; recorded there in `plans/2026-11-11-pubmedgemini-carry-across.md`. The owner confirmed that nos. 1 and 3 replace his rulings of 10 Nov.
+
+| # | Decision |
+|---|---|
+| 1 | Answer page: **the same layout and sections as the current Incisive answer page** (the bile leak Quick run of 10 Nov), without Incisive's colours. Replaces §2 no. 4. Mockup first, checked by the owner on his phone. |
+| 2 | Look: **greys only.** Text `#333333`, filled boxes `#4D4D4D`, outlines `#8C8C8C`, grey text `#666666`, ground `#F4F4F4`, white cards. Fonts **Hanken Grotesk** (controls, labels, numbers, headings) and **Source Serif 4** (reading text), self-hosted. The owner signed off a mockup of the shell pages on 11 Nov. |
+| 3 | The **Introduction** panel is in (folded, written while the search runs). Replaces "not carried over" in §6. |
+| 4 | Menu: **Ask, Library, Activity.** No Explore, no "Chat with me". |
+| 5 | Users: **doctors the owner adds himself**, by email; Google sign-in; **10 searches a day each** (a setting). |
+| 6 | Model: Gemini free tier by default; a doctor's own key as an option, later (still outside this build, §12). |
+| 7 | Order of work: the look; then F3 with the answer page to the Incisive layout; then the doctors' part (add/remove page, the 10-a-day count, Library, Activity); then F4 and F5. |
+
+Not yet decided, and needed before no. 5 is built: how the owner's add/remove page and the sign-in gate share the list of allowed emails (the gate reads a file on the VPS today). The whole app also has one free allowance (about 45 runs a day) and runs one question at a time; both matter once several doctors use it.
 
 ## 3. Limits of the free tier (what we design around)
 
@@ -45,7 +61,7 @@ Figures from a third-party page dated 19 Oct 2026 that cites Google AI Studio. G
 
 ## 4. Shape of the system
 
-**Code.** One repo. Python 3.12, FastAPI, Jinja2 templates; no JavaScript (the run page refreshes itself with a `<meta http-equiv="refresh">` while a run works). `httpx` for PubMed and Europe PMC, and `httpx` against Gemini's REST API (`generateContent`, v1beta) for Gemini, not the `google-genai` SDK (corrected 11 Nov 2026 to match the code; reason in the F2 plan's differences table). Pydantic models for the answer. `psycopg` 3 with plain SQL. `pytest` for tests.
+**Code.** One repo. Python 3.12, FastAPI, Jinja2 templates; no JavaScript up to F2 (the run page refreshes itself with a `<meta http-equiv="refresh">` while a run works). From F3 the answer page carries a small script of its own, served by the app, for its filters, tabs, folds and study sheet (§2a no. 1). `httpx` for PubMed and Europe PMC, and `httpx` against Gemini's REST API (`generateContent`, v1beta) for Gemini, not the `google-genai` SDK (corrected 11 Nov 2026 to match the code; reason in the F2 plan's differences table). Pydantic models for the answer. `psycopg` 3 with plain SQL. `pytest` for tests.
 
 **On the VPS.** One Docker Compose project with three services:
 
@@ -109,11 +125,25 @@ Rules carried over from Incisive, unchanged:
 
 ## 6. The page
 
-Plain HTML: headings, paragraphs, simple lists and one table style for outcomes. Readable on a phone.
+Up to F2: plain HTML (headings, paragraphs, simple lists). Readable on a phone. From 11 Nov 2026 the look is §2a no. 2 and the answer page is the Incisive layout (below).
 
 - **Ask page:** a question box, the "Free runs left today" line, the privacy line, and a list of past runs.
 - **While a run works:** the step lines as plain text, for example "Researcher: 5 searches so far (turn 2 of 8)" and "Writer: writing the answer from 10 studies".
-- **Answer page.** The owner's ruling (10 Nov, on seeing an Incisive Quick output page): strip the UI, keep the words, and keep the confidence intervals and the counselling without graphics. In order:
+- **Answer page (owner decision, 11 Nov 2026; replaces the plain version below).** The same sections, in the same order, as the Incisive answer page, in greys:
+  1. Question as the title, with status and mode labels.
+  2. Introduction (folded).
+  3. Results card: total time, searches run, studies selected, answer state, citations checked, numbers traced; the progress steps folded beneath.
+  4. At a glance: verdict, three number tiles, main caveat.
+  5. Bottom line, with the certainty label.
+  6. What this means for clinical practice: default choice, who may benefit, counselling, cost.
+  7. "Why this conclusion": every estimate with a 95% CI (bars on a scale), beside outcome by outcome (each outcome folds open).
+  8. "Counselling dashboard": out of 100 patients (grid, Clinician and Patient views), beside compare the arms (bars).
+  9. Details, folded: conflicting evidence, applicability, what would change this answer, the trials (each with study details), other notable findings, references.
+  10. A study sheet that opens from any study or citation.
+  11. Copy as text, search trail, time.
+
+  Where Incisive uses colour to carry meaning (certainty labels, "not traced", the two arms), this page uses words, weight and pattern: filled or outlined labels, solid against hatched bars. The "Original run view (for checking)" block and the chat tab are left out.
+- **Answer page, plain version (the ruling of 10 Nov; kept here as the record and as the content list, since the words and numbers on the page are the same).** Strip the UI, keep the words, and keep the confidence intervals and the counselling without graphics. In order:
   1. **Results line:** total time, searches run, studies selected (RCTs, meta-analyses), citations checked, numbers traced.
   2. **At a glance.**
   3. **Bottom line**, with its certainty and the reasons for it.
@@ -123,7 +153,7 @@ Plain HTML: headings, paragraphs, simple lists and one table style for outcomes.
   7. **Counselling: out of 100 patients**, as plain lines with no dot grid and no Clinician/Patient switch. One line per outcome: "Conversion to open: about 2 of 100 with robotic vs 4 of 100 with laparoscopic (exact 2.1% vs 3.9%). Certainty: Low. [1]", followed by why that certainty and who the numbers apply to.
   8. **Compare the arms**, as a plain list grouped by each study's comparison.
   9. **Details:** Conflicting evidence, Applicability, What would change this answer, The trials (with study details), Other notable findings, Search trail, References.
-- **Not carried over:** the chat button, the introduction panel, the progress panel's styling, filters, tabs, pop-up study cards and "Copy as text".
+- **Not carried over (10 Nov):** the chat button, the introduction panel, the progress panel's styling, filters, tabs, pop-up study cards and "Copy as text". **From 11 Nov only the chat button stays out;** the rest come in with the Incisive layout (§2a nos. 1 and 3).
 - **References:** numbered, each a link to PubMed.
 - **Untraced numbers** carry the words "not traced" beside them.
 - **Layout reference:** the Incisive Quick output the owner supplied on 10 Nov (bile leak, robotic vs laparoscopic cholecystectomy in acute cholecystitis).
@@ -177,7 +207,9 @@ Each stage is a small batch on its own branch and pull request, signed off by th
 | **F0** | Repo skeleton, Postgres, Google sign-in gate, CI, deploy to the VPS | A page loads behind sign-in at the web address |
 | **F1** | The four search tools, no model: type a question, see PubMed and Europe PMC results as plain text | Useful on its own at ₹0 |
 | **F2** | Gemini layer with limits, the researcher loop and the study list | Picks look sensible on the four benchmark questions |
-| **F3** | Writer in four parts and the plain answer page | A full answer is on the page |
+| **Look** | Greys and the two fonts on the existing pages; menu Ask, Library, Activity. No behaviour change (§2a nos. 2 and 4) | The owner checks the pages on his phone |
+| **F3** | Writer in four parts, the Introduction, and the answer page to the Incisive layout, from a mockup (§2a nos. 1 and 3) | A full answer is on the page |
+| **Doctors** | The owner's add/remove page, 10 searches a day each, Library and Activity pages (§2a no. 5). Needs the gate decision first | A doctor the owner added can sign in, ask, and see only their own questions |
 | **F4** | Citation check, number check, number completion, empty-list retry | Matches Incisive's checks |
 | **F5** | Side by side with Incisive Quick on the benchmarks: quality and time | The owner judges the gap |
 
@@ -198,7 +230,7 @@ Each stage is a small batch on its own branch and pull request, signed off by th
 
 ## 12. Not in this build
 
-Full mode, full text of papers, Google search, guideline search on society websites, citation counts (OpenAlex, Semantic Scholar), retraction checks (Crossref), ongoing trials (ClinicalTrials.gov), the doctor's own key, the plugin form, the S1e layout and dashboards. Each can be proposed after F5.
+Full mode, full text of papers, Google search, guideline search on society websites, citation counts (OpenAlex, Semantic Scholar), retraction checks (Crossref), ongoing trials (ClinicalTrials.gov), the doctor's own key, the plugin form. Each can be proposed after F5. (The S1e layout and dashboards were on this list until 11 Nov 2026; they are now in, §2a no. 1.)
 
 ## 13. What the owner supplies at F0
 
