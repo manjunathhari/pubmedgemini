@@ -3,10 +3,12 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 import psycopg
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from pubmedgemini import web
@@ -35,6 +37,8 @@ runs_log = logging.getLogger("pubmedgemini.runs")
 # After a failed start-up attempt, requests get 503 at once for this long instead of each
 # waiting for the pool's connect timeout.
 RETRY_BACKOFF_SECONDS = 5.0
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 def _failure_kind(pool: ConnectionPool, exc: psycopg.Error) -> str:
@@ -183,6 +187,7 @@ def create_app(
 
     app.state.ensure_ready = ensure_ready
     web.register(app)
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
 
 

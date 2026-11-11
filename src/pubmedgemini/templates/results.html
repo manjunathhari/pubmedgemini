@@ -2,15 +2,21 @@
 {% block content %}
 <h1>pubmedgemini</h1>
 <p>Signed in as {{ email }}</p>
+<section class="card">
 {% include "_search_form.html" %}
+</section>
 {% if rejected %}
+<section class="card">
 <p>{{ rejected }}</p>
+</section>
 {% else %}
+<section class="card">
 <p>{{ status_line }}</p>
 <p>{{ counts_line }}</p>
 {% if result.abstracts_failed %}
 <p>Abstracts could not be fetched just now; titles only.</p>
 {% endif %}
+</section>
 {% for paper in result.papers %}
 <article>
 <h2>{{ paper.title }}</h2>
@@ -33,7 +39,9 @@
 {% endfor %}
 </article>
 {% else %}
+<section class="card">
 <p>No papers found.</p>
+</section>
 {% endfor %}
 {% endif %}
 {% endblock %}

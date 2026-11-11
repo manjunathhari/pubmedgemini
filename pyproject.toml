@@ -23,7 +23,7 @@ dev = ["pytest", "ruff", "pyyaml"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-pubmedgemini = ["templates/*.html"]
+pubmedgemini = ["templates/*.html", "static/*.css", "static/fonts/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

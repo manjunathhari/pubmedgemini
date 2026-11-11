@@ -1,0 +1,161 @@
+/* Greys only, two self-hosted fonts. Phone first. Elements are styled by tag and place because
+   the pages keep their plain markup. */
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  src: url(fonts/hanken-grotesk-latin-wght-normal.woff2) format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Serif 4";
+  src: url(fonts/source-serif-4-latin-wght-normal.woff2) format("woff2");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #F4F4F4;
+  color: #333333;
+  font-family: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+/* header */
+.site-header { background: #FFFFFF; border-bottom: 1px solid #BDBDBD; }
+.site-header-inner {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tile {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  background: #4D4D4D;
+  color: #FFFFFF;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+.site-name { font-weight: 700; font-size: 16px; line-height: 1.2; }
+.site-note { font-size: 12px; color: #666666; line-height: 1.2; }
+
+/* page */
+main {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+h1, h2, h3, p, ul { margin: 0; }
+h1 { font-size: 20px; line-height: 1.25; }
+h2 { font-size: 17px; line-height: 1.3; }
+h3 { font-size: 15px; line-height: 1.35; }
+p, .abstract { font-family: "Source Serif 4", Georgia, serif; }
+p + p, form p + p { margin-top: 10px; }
+ul { padding-left: 1.25rem; font-family: "Source Serif 4", Georgia, serif; }
+li + li { margin-top: 6px; }
+
+a { color: #333333; }
+a:hover { color: #666666; }
+a {
+  display: inline-block;
+  min-height: 44px;
+  padding: 10px 0;
+}
+
+/* cards: sections, and each paper on the results page */
+.card, main > article {
+  background: #FFFFFF;
+  border: 1px solid #BDBDBD;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.card > p + p, .card > form p + p, article > p + p { margin-top: 0; }
+article { display: flex; flex-direction: column; gap: 8px; }
+.card article { border-top: 1px solid #DDDDDD; padding-top: 10px; }
+.card > h2 + article { border-top: 0; padding-top: 0; }
+.muted { color: #666666; }
+.item { border-top: 1px solid #DDDDDD; padding-top: 10px; }
+.card > h2 + .item { border-top: 0; padding-top: 0; }
+
+/* inputs */
+label { font-weight: 600; }
+textarea, input[type="text"] {
+  display: block;
+  width: 100%;
+  border: 1px solid #8C8C8C;
+  border-radius: 8px;
+  padding: 12px;
+  font: inherit;
+  background: #FFFFFF;
+  color: #333333;
+}
+textarea { resize: vertical; }
+
+/* buttons: the pages' submit buttons are the primary ones */
+button {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #4D4D4D;
+  color: #FFFFFF;
+  font: inherit;
+  font-weight: 600;
+  font-size: 16px;
+  cursor: pointer;
+}
+button:hover { background: #333333; }
+input[type="text"] + button, input[type="text"] ~ button { margin-top: 10px; }
+.btn-secondary {
+  min-height: 44px;
+  background: #FFFFFF;
+  color: #333333;
+  border: 1px solid #8C8C8C;
+  font-weight: 500;
+  font-size: 14px;
+}
+.btn-secondary:hover { background: #F4F4F4; }
+
+/* small labels */
+.tag, article strong {
+  display: inline-block;
+  border: 1px solid #8C8C8C;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: "Hanken Grotesk", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+}
+.tag-filled {
+  background: #4D4D4D;
+  border-color: #4D4D4D;
+  color: #FFFFFF;
+}
+
+/* focus */
+a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 3px solid #333333;
+  outline-offset: 2px;
+}
