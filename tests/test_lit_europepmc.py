@@ -165,6 +165,30 @@ def test_strip_markup_tags_and_entities():
     assert strip_markup("  many \n\t spaces\u00a0here ") == "many spaces here"
 
 
+def _searched_record(record: dict) -> Paper:
+    """`record` as Europe PMC's only result, through the client's cleaning and to_paper."""
+    up = FakeUpstream(
+        {(EPMC_HOST, EPMC_SEARCH_PATH): httpx.Response(
+            200, json={"hitCount": 1, "resultList": {"result": [record]}})}
+    )
+    return EuropePmc(LitClient(up.transport)).search("mesh", 1).papers[0]
+
+
+def test_numeric_entity_for_nul_never_produces_a_nul():
+    p = _searched_record({"title": "a&#0;b&#x0;c&#X00;d&#000;e", "abstractText": "x&#0;y"})
+    assert (p.title, p.abstract) == ("abcde", "xy")
+    assert "\x00" not in p.title + p.abstract
+
+
+@pytest.mark.parametrize("entity", ["&#xD800;", "&#xdfff;", "&#55296;", "&#57343;"])
+def test_numeric_entity_for_a_surrogate_is_kept_as_written(entity):
+    # As Incisive `decode_entities`: char::from_u32 refuses it, so the "&" stays literal.
+    p = _searched_record({"title": f"a{entity}b", "abstractText": f"x{entity}y"})
+    assert (p.title, p.abstract) == (f"a{entity}b", f"x{entity}y")
+    assert not any(0xD800 <= ord(c) <= 0xDFFF for c in p.title + p.abstract)
+    (p.title + p.abstract).encode("utf-8")  # encodes cleanly
+
+
 # ---------- merge ----------
 
 def test_merge_by_pmid_then_doi():  # Review Focus 5

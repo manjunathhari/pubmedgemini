@@ -180,9 +180,13 @@ _DEC = re.compile(r"\+?[0-9]+")
 
 
 def _char(n: int) -> str | None:
-    """Rust `char::from_u32`: no surrogates, nothing past U+10FFFF."""
+    """Rust `char::from_u32`: no surrogates, nothing past U+10FFFF (the entity is then kept as
+    written). Unlike Incisive, code point 0 decodes to nothing: a NUL cannot be stored in
+    Postgres, and this runs after the reply was cleaned (`text.clean_text`)."""
     if n > 0x10FFFF or 0xD800 <= n <= 0xDFFF:
         return None
+    if n == 0:
+        return ""
     return chr(n)
 
 
