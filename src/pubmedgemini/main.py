@@ -12,6 +12,9 @@ from psycopg_pool import ConnectionPool, PoolTimeout
 from pubmedgemini import web
 from pubmedgemini.config import Settings, load_settings
 from pubmedgemini.db import is_healthy, open_pool
+from pubmedgemini.gemini.caller import ModelCaller
+from pubmedgemini.gemini.client import GeminiClient
+from pubmedgemini.gemini.quota import GeminiPacer
 from pubmedgemini.identity import ensure_owner
 from pubmedgemini.lit.cache import prune as prune_paper_cache
 from pubmedgemini.lit.europepmc import EuropePmc
@@ -20,10 +23,14 @@ from pubmedgemini.lit.pubmed import PubMed
 from pubmedgemini.lit.tools import LitTools
 from pubmedgemini.logging_setup import configure_logging
 from pubmedgemini.migrate import apply_migrations
+from pubmedgemini.runner import RunStarter, ThreadStarter, run_one
+from pubmedgemini.runs import stop_unfinished
 from pubmedgemini.web import NotReady
 
 log = logging.getLogger("pubmedgemini.main")
 lit_log = logging.getLogger("pubmedgemini.lit")
+gemini_log = logging.getLogger("pubmedgemini.gemini")
+runs_log = logging.getLogger("pubmedgemini.runs")
 
 # After a failed start-up attempt, requests get 503 at once for this long instead of each
 # waiting for the pool's connect timeout.
@@ -46,8 +53,12 @@ def create_app(
     clock: Callable[[], float] = time.monotonic,
     lit_transport: httpx.BaseTransport | None = None,
     ncbi_gap_seconds: float | None = None,
+    gemini_transport: httpx.BaseTransport | None = None,
+    gemini_sleep: Callable[[float], None] = time.sleep,
+    run_starter: RunStarter | None = None,
 ) -> FastAPI:
-    """The app. Tests pass a fake `lit_transport` (no network) and an NCBI gap of 0."""
+    """The app. Tests pass fake transports (no network), an NCBI gap of 0, a sleep that does
+    not wait, and an InlineStarter so a run happens inside the request."""
     configure_logging()
     state_lock = threading.Lock()
 
@@ -55,6 +66,8 @@ def create_app(
         apply_migrations(app.state.pool, settings.migrations_dir)
         ensure_owner(app.state.pool, settings.owner_email)
         prune_once(app)
+        # A run still queued or running belonged to the previous process (one process).
+        runs_log.info("runs stopped_at_start=%d", stop_unfinished(app.state.pool))
         app.state.ready = True
 
     def prune_once(app: FastAPI) -> None:
@@ -98,16 +111,45 @@ def create_app(
         lit_log.info("literature ncbi_api_key=%s", "true" if key else "false")
         return client
 
+    def open_gemini(app: FastAPI) -> GeminiClient | None:
+        """With a key: one client, one pacer and one caller for the whole process. Without
+        one, questions are off and the rest of the app works."""
+        key = settings.gemini_api_key
+        gemini_log.info(
+            "gemini api_key=%s model=%s rpm=%d tpm=%d rpd=%d", "true" if key else "false",
+            settings.gemini_model, settings.gemini_rpm, settings.gemini_tpm, settings.gemini_rpd,
+        )
+        if key is None:
+            app.state.gemini_caller = None
+            return None
+        client = GeminiClient(key, settings.gemini_model, gemini_transport)
+        pacer = GeminiPacer(settings.gemini_rpm, settings.gemini_tpm, sleep=gemini_sleep)
+        app.state.gemini_caller = ModelCaller(
+            client, pacer, app.state.pool, settings.gemini_model, sleep=gemini_sleep
+        )
+        return client
+
+    def run_question(run_id) -> None:
+        run_one(run_id, pool=app.state.pool, tools=app.state.lit,
+                caller=app.state.gemini_caller, model=settings.gemini_model)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.pool = open_pool(settings.database_url)
         app.state.ready = False
         lit_client = open_literature(app)
+        gemini_client = open_gemini(app)
+        starter = run_starter if run_starter is not None else ThreadStarter()
+        if getattr(starter, "run", None) is None:
+            starter.run = run_question
+        app.state.run_starter = starter
         try_start_up(app)
         try:
             yield
         finally:
             lit_client.close()
+            if gemini_client is not None:
+                gemini_client.close()
             app.state.pool.close()
 
     app = FastAPI(
