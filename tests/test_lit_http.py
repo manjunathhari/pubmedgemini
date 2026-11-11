@@ -438,6 +438,23 @@ def test_redirect_without_location_is_an_http_error():
     assert (e.value.kind, e.value.status) == ("http", 302)
 
 
+def test_redirect_with_two_locations_is_an_http_error_and_nothing_more_is_sent():
+    headers = [
+        ("location", f"https://{NCBI_HOST}/y"),
+        ("location", f"https://{NCBI_HOST}/z"),
+    ]
+    up = FakeUpstream(
+        {
+            (NCBI_HOST, "/x"): lambda req: httpx.Response(302, headers=headers),
+            (NCBI_HOST, "/y"): httpx.Response(200, json={}),
+            (NCBI_HOST, "/z"): httpx.Response(200, json={}),
+        }
+    )
+    with pytest.raises(LitError) as e:
+        LitClient(up.transport).get_json(NCBI_URL, {})
+    assert (e.value.kind, e.value.status, len(up.sent)) == ("http", 302, 1)
+
+
 def test_a_transient_error_on_the_second_hop_retries_only_that_hop():
     replies = iter([httpx.Response(503), httpx.Response(200, json={"ok": 2})])
     up = FakeUpstream(

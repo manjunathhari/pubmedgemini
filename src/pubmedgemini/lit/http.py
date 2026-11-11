@@ -105,13 +105,14 @@ class _Redirect(Exception):
 
 def _on_response(response: httpx.Response) -> None:
     """Every 3xx stops here, before httpx reads its body or parses its Location (Incisive
-    `attempt`): a redirect status with a Location is a hop, any other 3xx an HTTP error."""
+    `attempt`): a redirect status with exactly one Location is a hop, any other 3xx an HTTP
+    error. httpx would join two Location headers with a comma into one garbled URL."""
     status = response.status_code
     if not 300 <= status <= 399:
         return
-    location = response.headers.get("location")
-    if status in (301, 302, 303, 307, 308) and location is not None:
-        raise _Redirect(location)
+    locations = response.headers.get_list("location")
+    if status in (301, 302, 303, 307, 308) and len(locations) == 1:
+        raise _Redirect(locations[0])
     raise LitError("http", status)
 
 
