@@ -45,7 +45,7 @@ Made in the Project chat of 11 Nov; recorded there in `plans/2026-11-11-pubmedge
 | 6 | Model: Gemini free tier by default; a doctor's own key as an option, later (still outside this build, §12). |
 | 7 | Order of work: the look; then F3 with the answer page to the Incisive layout; then the doctors' part (add/remove page, the 10-a-day count, Library, Activity); then F4 and F5. |
 
-Not yet decided, and needed before no. 5 is built: how the owner's add/remove page and the sign-in gate share the list of allowed emails (the gate reads a file on the VPS today). The whole app also has one free allowance (about 45 runs a day) and runs one question at a time; both matter once several doctors use it.
+Not yet decided, and needed before no. 5 is built: how the owner's add/remove page and the sign-in gate share the list of allowed emails (the gate reads a file on the VPS today). The whole app also has one free allowance (about 45 runs a day; 21 from F3a, §4) and runs one question at a time; both matter once several doctors use it.
 
 ## 3. Limits of the free tier (what we design around)
 
@@ -56,7 +56,7 @@ Figures from a third-party page dated 19 Oct 2026 that cites Google AI Studio. G
 | Gemini Flash-Lite (free) | 10 | 250,000 | 500 |
 
 - The daily count resets at midnight Pacific time.
-- A run makes 9 to 14 calls (§5), so the allowance is about 35 to 55 runs a day.
+- A run makes 13 calls when nothing is retried (8 researcher, 1 study list, 4 writer parts) and at most 26 attempts (§4). The app counts every run after the first at 23, the worst case without transport retries, so the allowance is 21 runs on a fresh day (as built in F3a; 45 until then).
 - **Privacy:** Google may use free-tier prompts and replies, and human reviewers may read them. The page carries a standing line saying so, and asks the user not to type anything that identifies a patient.
 
 ## 4. Shape of the system
@@ -81,6 +81,7 @@ Figures from a third-party page dated 19 Oct 2026 that cites Google AI Studio. G
 **Limits.** Two limiters shared by the whole app:
 - PubMed: 3 requests a second without a key, 10 with a free NCBI key. Every request carries the registered `tool` value, and the `email` value when one is configured (`NCBI_EMAIL`, optional).
 - Gemini: per model, per minute and per day. The day count is kept in Postgres (`model_calls`), so the app refuses to start a run it cannot finish instead of failing halfway. The page shows "Free runs left today: about N".
+- Per run: at most **26 Gemini attempts**, retries included (`RUN_ATTEMPTS` = `RUN_CALLS` 23 + `CALL_RESERVE` 3; was 14 until F3a, owner decision 11 Nov 2026). The 23 is the worst case without transport retries: researcher 8, study list 1, its nudge 1, its empty-list retry 1, writer parts 4, part retries 4, one piece 1 and its retry 1, Introduction 1 (F3b), number completion 1 (F4). A run that reaches 26 ends `failed` with `run_call_cap`. "Free runs left" is `1 + (rpd - used - 26) // 23`: **21 on a fresh day of 500**, and the same number is enforced when a question starts (owner decision Q4, 11 Nov 2026).
 
 **Secrets.** The Gemini key, the NCBI key, the Google sign-in client secret, the gate's cookie secret and the database password live in one `.env` file on the VPS, owned by root with mode 600. They are never in the repo, in images or in logs. This stands in for Incisive's Secret Manager.
 
@@ -98,8 +99,8 @@ The same steps as Incisive Quick (`agent/team.rs`, `agent/researcher.rs`, `agent
 |---|---|---|
 | 1. **Researcher.** A tool-using loop of up to 8 rounds with four tools: `search_pubmed`, `search_europepmc`, `get_abstracts`, `find_related`. Abstracts only | Flash-Lite | 3–8 |
 | 2. **Study list.** One structured call over the transcript: up to 10 `selected` (PMID, design, why), plus `considered_not_selected` and `possible_contradictions` | Flash-Lite | 1 |
-| 3. **Writer.** Four parts at once over the same input: summary (at a glance, bottom line, clinical practice), context (applicability, what would change), trials (trials, conflicting evidence, notable findings), outcomes | Flash-Lite | 4 |
-| 4. **Citation check.** Every citation must be one of the selected studies | Code | 0 |
+| 3. **Writer** (built in F3a). Four parts at once on threads over the same input: summary (at a glance, bottom line, clinical practice), context (applicability, what would change), trials (trials, conflicting evidence, notable findings), outcomes. Incisive's prompts word for word; a part that cannot be read or is cut off gets one retry with Incisive's nudge line; code merges the four, and builds the references | Flash-Lite | 4 (up to 8 with retries; 2 more for the one piece) |
+| 4. **Citation check** (moved into F3a, owner decision D4, 11 Nov 2026). Every citation, number and trial row must point to a study that was selected and fetched; those that do not are **removed** and counted, and one line ("Citation check: ...") is shown. As Incisive (`answer_v3.rs`) | Code | 0 |
 | 5. **Number check.** Each number in the answer is traced to the abstract text; the rest are marked "not traced". Nothing is removed | Code | 0 |
 | 6. **Number completion.** One call to fill untraced numbers from the reference | Flash-Lite | 1 |
 
@@ -109,10 +110,12 @@ Rules carried over from Incisive, unchanged:
 - **Empty study list (S3).** If `selected` and `considered_not_selected` are both empty while the searches returned papers, the call is made once more, with the visible line "Researcher: the study list came back empty; selecting again". A second empty list ends the run with "No studies could be selected from the papers found. Please run the question again."
 - **Search trail.** The searches shown to the user are recorded by code as the tools run, not taken from the model.
 - **References are built by code** from the selected PMIDs. The model never writes an author or year citation.
-- **Flag, never delete.** Checks mark problems. They do not remove content.
+- **Flag, never delete.** Checks mark problems. They do not remove content. **One stated exception (owner decision Q8, 11 Nov 2026):** the citation check removes a citation, number or trial row that points to a study that was not selected or not fetched, as Incisive does. The number check (F4) still only marks.
 - **No check may fail a run.**
-- **Early summary.** The summary part is shown as soon as it has been read and checked, before the other parts finish.
-- **One-piece fallback.** If a writer part fails twice, the answer is written in one call instead.
+- **Early summary.** The summary part is shown as soon as it has been read and checked, before the other parts finish. F3a hands the checked part on through part events; storing and showing it is F3b (D8).
+- **One-piece fallback.** If a writer part fails twice, the answer is written in one call instead (built in F3a). A blocked reply (`blockReason`, `SAFETY`) counts as unreadable and gets the one retry (Q3).
+- **A part hits a limit that cannot be waited out** (the daily limit, a refused key or billing, the run's 26 attempts, the hard stop): the run ends at once, with no one-piece fallback (owner decision Q2, 11 Nov 2026; Incisive tries the one piece). Parts still waiting to retry send nothing more once another has ended the run (a recorded difference from Incisive; cost if wrong: one skipped retry on a run that is ending anyway).
+- **Records that cannot be fetched** fail the run (D5), with a plain message (Q6). The answer and the run's final status are stored together.
 - **Time.** As Incisive Quick: a time limit of 6 minutes (360 s); the research wraps up at 210 s (360 − 150, the writer's allowance) and the run is stopped hard at 420 s (360 + 60), ending "failed" with "This run ran out of time (7 minutes)." (corrected 11 Nov 2026 to match the code). The writer is not started with less than 150 seconds left; the run then ends "partial" with the references.
 
 **Prompts.** The researcher, study-list, writer and number-completion prompts are copied from Incisive. The only edits are the ones Gemini's tool-calling format requires. Any other prompt change is an engine change and is discussed with the owner first.
@@ -160,7 +163,7 @@ Up to F2: plain HTML (headings, paragraphs, simple lists). Readable on a phone. 
 
 ## 7. What is stored
 
-Tables as built (F0 to F2; brought in line with the migrations on 11 Nov 2026):
+Tables as built (F0 to F3a; brought in line with the migrations on 11 Nov 2026 and 12 Nov 2026):
 
 | Table | Holds | Migration |
 |---|---|---|
@@ -174,11 +177,7 @@ Tables as built (F0 to F2; brought in line with the migrations on 11 Nov 2026):
 | `run_seen` | The papers the model saw in this run: PMID, title, journal, year | `0004_runs.sql` |
 | `run_papers` | Which papers a run selected (with the design label and why), only considered (with the reason) or flagged as a possible contradiction (with the note) | `0004_runs.sql` |
 
-Planned for F3, not built yet:
-
-| Table | Holds |
-|---|---|
-| `answers` | The finished answer as JSON, in the shape of Incisive's `AnswerV3` (Quick fields only), including the number-check results |
+| `answers` | The finished answer as JSON, in the shape of Incisive's `AnswerV3` (Quick fields only): the written answer or the plain reason none was written, the references, the search trail, the citation-check counts, the time taken. Written in one transaction with the run's final status and the line "Answer ready". The number-check results join it in F4 | `0005_answers.sql` (also the step kinds `check` and `present`, and the writer's `model_calls` steps) |
 
 - Changed from the section shown in chat: there is no `extractions` table, because Incisive Quick has no separate extraction step. The number-check results live inside the answer, as in Incisive.
 - Table changes are numbered SQL files in `migrations/`, applied in order at start-up.
@@ -208,7 +207,8 @@ Each stage is a small batch on its own branch and pull request, signed off by th
 | **F1** | The four search tools, no model: type a question, see PubMed and Europe PMC results as plain text | Useful on its own at ₹0 |
 | **F2** | Gemini layer with limits, the researcher loop and the study list | Picks look sensible on the four benchmark questions |
 | **Look** | Greys and the two fonts on the existing pages; menu Ask, Library, Activity. No behaviour change (§2a nos. 2 and 4) | The owner checks the pages on his phone |
-| **F3** | Writer in four parts, the Introduction, and the answer page to the Incisive layout, from a mockup (§2a nos. 1 and 3) | A full answer is on the page |
+| **F3a** | Writer in four parts with the one-piece fallback, the citation check (moved here), the stored answer, the cap of 26 and 21 runs, and the answer on the run page in plain sections. **Built** on `f3a-writer`, not merged | A full written answer is on the page |
+| **F3b** | The Introduction, the early summary, the answer page to the Incisive layout from a mockup, the search trail under Details (§2a nos. 1 and 3). Planned | The page matches the mockup the owner signed off |
 | **Doctors** | The owner's add/remove page, 10 searches a day each, Library and Activity pages (§2a no. 5). Needs the gate decision first | A doctor the owner added can sign in, ask, and see only their own questions |
 | **F4** | Citation check, number check, number completion, empty-list retry | Matches Incisive's checks |
 | **F5** | Side by side with Incisive Quick on the benchmarks: quality and time | The owner judges the gap |
