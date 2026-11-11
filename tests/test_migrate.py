@@ -105,3 +105,176 @@ def test_two_pools_applying_at_once_apply_each_file_once(db_url, tmp_path):
     finally:
         for p in pools:
             p.close()
+
+
+# ---------- F2 tables ----------
+
+
+def pool_rows(pool, sql: str, params=()) -> list[tuple]:
+    with pool.connection() as conn:
+        return conn.execute(sql, params).fetchall()
+
+
+def pool_one(pool, sql: str, params=()):
+    return pool_rows(pool, sql, params)[0][0]
+
+
+def pool_exec(pool, sql: str, params=()) -> None:
+    with pool.connection() as conn:
+        conn.execute(sql, params)
+
+
+@pytest.fixture
+def owner_id(migrated_pool) -> int:
+    return pool_one(
+        migrated_pool,
+        "INSERT INTO users (email, role) VALUES ('owner@example.com', 'owner') RETURNING id",
+    )
+
+
+def insert_run(pool, user_id: int, status: str = "queued", question: str = "q"):
+    import uuid
+
+    run_id = uuid.uuid4()
+    pool_exec(
+        pool,
+        "INSERT INTO runs (id, user_id, question, status, model) VALUES (%s, %s, %s, %s, 'm')",
+        (run_id, user_id, question, status),
+    )
+    return run_id
+
+
+def test_real_migrations_create_the_f2_tables(migrated_pool):
+    names = {r[0] for r in pool_rows(
+        migrated_pool, "SELECT tablename FROM pg_tables WHERE schemaname = 'public'")}
+    assert {"model_calls", "runs", "run_steps", "run_searches", "run_seen", "run_papers"} <= names
+
+
+def test_model_calls_has_no_text_column(migrated_pool):
+    cols = dict(pool_rows(
+        migrated_pool,
+        "SELECT column_name, data_type FROM information_schema.columns "
+        "WHERE table_name = 'model_calls'"))
+    assert {k for k, v in cols.items() if v == "text"} == {"model", "step", "status_kind"}
+    assert cols["run_id"] == "uuid"
+
+
+def test_quota_day_is_the_pacific_day(migrated_pool):
+    """07:59 UTC on 11 Nov is still 10 Nov in Los Angeles."""
+    day = pool_one(
+        migrated_pool,
+        "SELECT (timestamptz '2026-11-11 07:59:00+00' AT TIME ZONE 'America/Los_Angeles')::date")
+    assert str(day) == "2026-11-10"
+
+
+def test_model_calls_days_follow_called_at(migrated_pool):
+    pool_exec(
+        migrated_pool,
+        "INSERT INTO model_calls (model, called_at, step, attempt, status_kind) "
+        "VALUES ('m', timestamptz '2026-11-11 07:59:00+00', 'researcher', 1, 'sent')")
+    utc_day, quota_day = pool_rows(migrated_pool, "SELECT utc_day, quota_day FROM model_calls")[0]
+    assert (str(utc_day), str(quota_day)) == ("2026-11-11", "2026-11-10")
+
+
+@pytest.mark.parametrize("sql", [
+    "INSERT INTO model_calls (model, step, attempt, status_kind) VALUES ('M', 'researcher', 1, 'ok')",
+    "INSERT INTO model_calls (model, step, attempt, status_kind) VALUES ('m', 'writer', 1, 'ok')",
+    "INSERT INTO model_calls (model, step, attempt, status_kind) VALUES ('m', 'researcher', 4, 'ok')",
+    "INSERT INTO model_calls (model, step, attempt, status_kind) VALUES ('m', 'researcher', 1, 'Ok')",
+])
+def test_model_calls_checks_refuse_bad_rows(migrated_pool, sql):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pool_exec(migrated_pool, sql)
+
+
+def test_second_active_run_is_refused_by_the_database(migrated_pool, owner_id):
+    insert_run(migrated_pool, owner_id, status="running")
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        insert_run(migrated_pool, owner_id, status="queued")
+    insert_run(migrated_pool, owner_id, status="done")  # finished runs are not limited
+
+
+def test_one_active_run_for_the_whole_app(migrated_pool, owner_id):
+    other = pool_one(
+        migrated_pool,
+        "INSERT INTO users (email, role) VALUES ('other@example.com', 'fellow') RETURNING id")
+    insert_run(migrated_pool, owner_id, status="queued")
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        insert_run(migrated_pool, other, status="running")
+
+
+def _bad_rows(run_id) -> dict[str, tuple[str, tuple]]:
+    paper = ("INSERT INTO run_papers (run_id, role, rank, pmid, design, note) "
+             "VALUES (%s, %s, 1, %s, %s, %s)")
+    search = "INSERT INTO run_searches (run_id, seq, source, query, hits) VALUES (%s, 1, %s, %s, 1)"
+    return {
+        "pmid": (paper, (run_id, "selected", "PMID 1", "RCT", "w")),
+        "pmid_10_digits": (paper, (run_id, "selected", "1234567890", "RCT", "w")),
+        "design": (paper, (run_id, "selected", "1", "cohort", "w")),
+        "design_on_considered": (paper, (run_id, "considered", "1", "RCT", "w")),
+        "no_design_on_selected": (paper, (run_id, "selected", "1", None, "w")),
+        "role": (paper, (run_id, "maybe", "1", None, "w")),
+        "note": (paper, (run_id, "selected", "1", "RCT", "n" * 501)),
+        "line": ("INSERT INTO run_steps (run_id, seq, kind, line) VALUES (%s, 1, 'note', %s)",
+                 (run_id, "x" * 161)),
+        "step_kind": ("INSERT INTO run_steps (run_id, seq, kind, line) VALUES (%s, 1, 'x', 'l')",
+                      (run_id,)),
+        "source": (search, (run_id, "Google", "q")),
+        "query": (search, (run_id, "PubMed", "q" * 301)),
+        "seen_pmid": ("INSERT INTO run_seen (run_id, pmid, title) VALUES (%s, 'x1', 't')",
+                      (run_id,)),
+    }
+
+
+@pytest.mark.parametrize("case", list(_bad_rows(None)))
+def test_checks_refuse_bad_rows(migrated_pool, owner_id, case):
+    run_id = insert_run(migrated_pool, owner_id, status="done")
+    sql, params = _bad_rows(run_id)[case]
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pool_exec(migrated_pool, sql, params)
+
+
+RUN_SQL = (
+    "INSERT INTO runs (id, user_id, question, model, mode, status, error_kind, stop_reason) "
+    "VALUES (gen_random_uuid(), %s, %s, 'm', %s, %s, %s, %s)"
+)
+GOOD_RUN = {"question": "q", "mode": "quick", "status": "done", "error_kind": None,
+            "stop_reason": None}
+
+
+@pytest.mark.parametrize("bad", [
+    {"question": ""}, {"question": "a" * 4001}, {"mode": "full"}, {"status": "interrupted"},
+    {"error_kind": "Bad Kind"}, {"stop_reason": "budget"},
+])
+def test_run_checks_refuse_bad_rows(migrated_pool, owner_id, bad):
+    row = GOOD_RUN | bad
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pool_exec(migrated_pool, RUN_SQL, (owner_id, *row.values()))
+
+
+def test_a_good_run_row_is_accepted(migrated_pool, owner_id):
+    pool_exec(migrated_pool, RUN_SQL, (owner_id, *GOOD_RUN.values()))
+
+
+def test_good_rows_are_accepted_and_cascade_on_delete(migrated_pool, owner_id):
+    run_id = insert_run(migrated_pool, owner_id, status="done", question="a" * 4000)
+    with migrated_pool.connection() as conn:
+        conn.execute("INSERT INTO run_steps (run_id, seq, kind, line) VALUES (%s, 1, 'search', %s)",
+                     (run_id, "x" * 160))
+        conn.execute("INSERT INTO run_searches (run_id, seq, source, query, hits) "
+                     "VALUES (%s, 1, 'PubMed related', %s, 0)", (run_id, "q" * 300))
+        conn.execute("INSERT INTO run_seen (run_id, pmid, title, journal, year) "
+                     "VALUES (%s, '123456789', 't', NULL, NULL)", (run_id,))
+        conn.execute("INSERT INTO run_papers (run_id, role, rank, pmid, design, note) VALUES "
+                     "(%s, 'selected', 1, '1', 'SR_MA', %s), (%s, 'considered', 1, '1', NULL, ''),"
+                     " (%s, 'contradiction', 1, '1', NULL, 'n')",
+                     (run_id, "w" * 500, run_id, run_id))
+        call_id = conn.execute(
+            "INSERT INTO model_calls (model, step, attempt, status_kind, run_id) "
+            "VALUES ('gemini-3.5-flash-lite', 'study_list_retry', 3, 'rate_limited', %s) "
+            "RETURNING id", (run_id,)).fetchone()[0]
+        conn.execute("DELETE FROM runs WHERE id = %s", (run_id,))
+        left = [conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
+                for t in ("run_steps", "run_searches", "run_seen", "run_papers")]
+        kept = conn.execute("SELECT run_id FROM model_calls WHERE id = %s", (call_id,)).fetchone()
+    assert left == [0, 0, 0, 0] and kept == (None,)  # the day count keeps the call
