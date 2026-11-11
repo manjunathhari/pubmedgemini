@@ -28,7 +28,7 @@
 {% if outcome %}
 <p><strong>{{ outcome }}</strong></p>
 {% endif %}
-{% if run.status == "stopped" %}
+{% if run.status in ("stopped", "failed", "partial") %}
 <form method="post" action="/runs/{{ run.id }}/again">
 <p><button type="submit">Run again</button></p>
 </form>

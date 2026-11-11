@@ -568,6 +568,45 @@ def test_finished_run_has_no_run_again_button(env):
     assert "Run again" not in page
 
 
+# Owner decision, 11 Nov 2026: Run again on failed and partial runs too.
+@pytest.mark.parametrize("status,error_kind", [
+    ("stopped", "restarted"), ("failed", "hard_stop"), ("failed", "run_call_cap"),
+    ("failed", "overloaded"), ("partial", "empty_selection"), ("partial", None)])
+def test_run_again_is_offered_on_stopped_failed_and_partial_runs(env, status, error_kind):
+    rid = insert_run(env, question="Stored question about mesh?", status=status,
+                     error_kind=error_kind)
+    page = env.run_page(f"/runs/{rid}").text
+    assert f'<form method="post" action="/runs/{rid}/again">' in page
+    assert '<button type="submit">Run again</button>' in page
+    r = env.c.post(f"/runs/{rid}/again", headers=H, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] != f"/runs/{rid}"
+    new = uuid.UUID(r.headers["location"].removeprefix("/runs/"))
+    assert env.one("SELECT question FROM runs WHERE id = %s", (new,)) == \
+        "Stored question about mesh?"
+
+
+@pytest.mark.parametrize("status", ["done", "running", "queued"])
+def test_run_again_is_not_offered_on_done_running_or_queued_runs(env, status):
+    rid = insert_run(env, status=status, error_kind=None)
+    page = env.run_page(f"/runs/{rid}").text
+    assert "Run again" not in page and "/again" not in page
+
+
+def test_cross_site_run_again_of_a_failed_run_is_refused(env):
+    rid = insert_run(env, status="failed", error_kind="run_call_cap")
+    r = env.c.post(f"/runs/{rid}/again", headers=H | {"sec-fetch-site": "cross-site"})
+    assert r.status_code == 403 and CROSS_SITE in r.text
+    assert env.one("SELECT count(*) FROM runs") == 1 and env.gemini.sent == []
+
+
+def test_run_again_of_a_blocked_partial_question_shows_the_refusal(env):
+    q = "Mrs. Lakshmi asks: is mesh better?"  # stored before a check: simulated
+    rid = insert_run(env, question=q, status="partial", error_kind="empty_selection")
+    r = env.c.post(f"/runs/{rid}/again", headers=H, follow_redirects=False)
+    assert r.status_code == 400 and BLOCKED in r.text and textarea(r.text) == q
+    assert env.one("SELECT count(*) FROM runs") == 1 and env.gemini.sent == []
+
+
 def test_run_again_of_a_blocked_question_shows_the_refusal(env):
     q = "Mrs. Lakshmi asks: is mesh better?"  # stored before a check: simulated
     rid = insert_run(env, question=q)

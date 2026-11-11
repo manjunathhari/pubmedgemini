@@ -60,7 +60,7 @@ Figures from a third-party page dated 19 Oct 2026 that cites Google AI Studio. G
 - The app reads the signed-in email from the header `gate` sets. It is safe to trust because nothing else can reach `app`.
 - A user who passes Google sign-in but is not in the `users` table sees "You haven't been set up yet. Ask the owner to add you."
 
-**Runs.** A run is a background task inside the app process. Each step writes its line and result to Postgres as it finishes; the page polls and reads from there. On start-up the app marks any run still "running" as "stopped", and the page shows a "Run again" button.
+**Runs.** A run is a background task inside the app process. Each step writes its line and result to Postgres as it finishes; the page polls and reads from there. On start-up the app marks any run still "running" as "stopped". The page shows a "Run again" button on a stopped, failed or partial run (owner decision, 11 Nov 2026: failed and partial too); not on a done, queued or running one.
 
 **Limits.** Two limiters shared by the whole app:
 - PubMed: 3 requests a second without a key, 10 with a free NCBI key. Every request carries the registered `tool` value, and the `email` value when one is configured (`NCBI_EMAIL`, optional).
