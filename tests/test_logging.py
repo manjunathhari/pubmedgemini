@@ -241,9 +241,15 @@ def test_each_search_logs_one_fixed_line(db_url, caplog, override, line):
 
 # The fixed-kind `ask` lines and their exact form: names, counts and ids only. Task 10 adds
 # the other `ask kind=` lines here and calls `assert_ask_lines_fixed` after each scenario.
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 ASK_LINE_PATTERNS = {
     "blocked_identifiers": r"ask kind=blocked_identifiers categories=[1-9] [a-z_]+=[0-9]+"
                            r"(?: [a-z_]+=[0-9]+)*",
+    "started": rf"ask kind=started run_id={UUID}",
+    "rejected": r"ask kind=rejected reason=(?:empty|too_long)",
+    "refused": r"ask kind=refused reason=(?:no_key|active|daily_limit)",
+    "refused_cross_site": r"ask kind=refused_cross_site",
+    "start_failed": r"ask kind=start_failed error=[A-Za-z_]+",
 }
 
 
@@ -285,3 +291,350 @@ def test_a_blocked_question_logs_categories_and_counts_only(migrated_pool, caplo
     assert_ask_lines_fixed(caplog)
     for leak in ("zq7", "Lakshmi", "9845012345", "9845012346", "hernia", "Mrs"):
         assert leak not in caplog.text, leak
+
+
+# ---------- a whole question, through the real routes (Task 10) ----------
+
+LEAK_QUESTION = "zq7 does mesh reduce recurrence after inguinal hernia repair?"
+LEAK_ID1, LEAK_ID2, LEAK_ID3 = "36262096", "33763744", "31696731"
+
+
+def leak_script() -> list:
+    """A full run (8 turns at the cap, then the list) whose every model-written text carries a
+    marker: the model's note (yq8), a query (xq9), a refused query (vq3), the why (wq6), a
+    reason (vq5), a contradiction note (uq4), and Google's error message (gm-q7) on a 503
+    that is retried. Tool results carry the fixtures' titles and abstracts."""
+    import json
+
+    from gemini_fakes import call, error, reply
+
+    def turn(*parts):
+        return reply(list(parts))
+
+    q = {"query": "xq9[tiab]", "max_results": 3}
+    first = turn({"text": "yq8 my reasoning"}, call("search_pubmed", q),
+                 call("search_europepmc", {"query": "xq9 hernia", "max_results": 3}),
+                 call("search_pubmed", {"query": "vq3 hernia?", "max_results": 3}))
+    second = turn(call("get_abstracts", {"pmids": [LEAK_ID1, LEAK_ID2]}),
+                  call("find_related", {"pmid": LEAK_ID1, "max_results": 3}))
+    listed = reply([{"text": json.dumps({
+        "searches": [{"query": "tq2 model reported", "source": "PubMed", "hits": 1}],
+        "selected": [{"pmid": LEAK_ID2, "design": "SR_MA", "why": "wq6 because"},
+                     {"pmid": LEAK_ID1, "design": "RCT", "why": "wq6 trial"}],
+        "considered_not_selected": [{"pmid": LEAK_ID3, "reason": "vq5 older"}],
+        "possible_contradictions": [{"pmid": LEAK_ID3, "note": "uq4 contra"}]})}])
+    return ([first, error(503, "UNAVAILABLE", message="gm-q7 secret text"), second]
+            + [turn(call("search_pubmed", q))] * 6 + [listed])
+
+
+# Every line the app's own loggers may write: fixed words, names, counts, ids and fixed
+# kinds. A line that does not match one of these (free text of any kind) fails the tests.
+K = r"[a-z_]+"
+N = r"-?\d+"
+APP_LINE_PATTERNS = [
+    *ASK_LINE_PATTERNS.values(),
+    r"literature ncbi_api_key=(?:true|false)",
+    r"gemini api_key=(?:true|false) model=[a-z0-9.-]+ rpm=\d+ tpm=\d+ rpd=\d+",
+    r"paper_cache pruned=\d+",
+    r"paper_cache kind=prune_failed error=\w+ sqlstate=\w+",
+    r"runs stopped_at_start=\d+",
+    r"kind=(?:db_unreachable|migration_failed) error=\w+ sqlstate=\w+",
+    r"kind=db_error",
+    r"kind=internal error=\w+",
+    r"request method=[A-Z]+ route=(?:[/a-z_{}]+|unmatched) status=\d{3}",
+    rf"search kind={K}(?: {K}={K})?(?: {K}=\d+)*",
+    rf"run kind=running run_id={UUID} model=[a-z0-9.-]+",
+    rf"run kind=finished run_id={UUID} status={K} error_kind={K}",
+    r"run kind=(?:internal|search_not_stored|seen_not_stored) error=\w+",
+    rf"run kind=(?:not_found|not_finished) run_id={UUID}",
+    r"run kind=step_not_stored",
+    rf"run kind=records_not_fetched error_kind={K}",
+    (rf"gemini step={K} attempt=[1-3] status={K} finish={K} prompt_tokens=\d+ "
+    r"output_tokens=\d+ thought_tokens=\d+ latency_ms=\d+"),
+    r"gemini kind=count_not_finished",
+    rf"lit tool={K} (?:count=\d+ items=\d+|asked=\d+ cached=\d+ returned=\d+|error_kind={K})",
+    r"lit kind=cache_(?:read|write)_failed",
+    rf"researcher turn=\d+ tool={K} status={K} chars=\d+",
+    rf"researcher turn=\d+ finish={K} calls=\d+ run=\d+ errors=\d+ cut=\d+ withheld=\d+",
+    rf"researcher loop_done stop={K} turns=\d+ tool_calls=\d+ result_chars=\d+",
+    (rf"researcher done stop={K} rounds=\d+ searches=\d+ seen=\d+ reported=\d+ kept=\d+ "
+    r"rcts=\d+ meta_analyses=\d+ dropped_unseen=\d+ duplicates=\d+ over_cap=\d+ considered=\d+"),
+    r"researcher kind=hard_stop_between_turns turns=\d+",
+    r"researcher kind=hard_stop_between_tool_calls turn=\d+",
+    rf"researcher {K} kind=refused finish={K}",
+    rf"researcher study_list unreadable category={K} step={K}",
+    rf"researcher study_list kind=not_completed error={K}",
+    rf"researcher s3 kind=not_made_near_hard_stop left_s={N}",
+    rf"researcher s3 kind=failed error={K}",
+    r"researcher kind=final_failed rounds=\d+",
+    r"researcher s3 kind=empty_list seen=\d+ reported=\d+ considered=\d+ rounds=\d+",
+    r"researcher s3 outcome=usable reported=\d+ considered=\d+",
+    r"researcher s3 outcome=(?:empty|not_made) seen=\d+ rounds=\d+",
+]
+
+# What must never reach a log line: the question (zq7 and its words), the model's note (yq8),
+# its queries (xq9, and the refused vq3), the why (wq6), a reason (vq5), a contradiction note
+# (uq4), the searches the model reported (tq2), Google's error message (gm-q7), the Gemini key
+# (gk-q7), the NCBI key and email (nk-q7, nq7), tool results (fixture titles and abstracts,
+# the source wrapper, tool error texts) and any URL or host.
+LEAKS = ("zq7", "recurrence", "inguinal", "yq8", "xq9", "vq3", "wq6", "vq5", "uq4", "tq2",
+         "gm-q7", "secret text", "gk-q7", "nk-q7", "nq7", "Mesh repair", "<script",
+         "BACKGROUND", "<source", "source id", "query rejected", "Error (input)", "https://",
+         "generativelanguage", "googleapis", "eutils", "ebi.ac.uk")
+
+
+def assert_app_lines_fixed(messages) -> None:
+    import re
+
+    for m in messages:
+        assert any(re.fullmatch(p, m) for p in APP_LINE_PATTERNS), m
+
+
+def _app_messages(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name.startswith("pubmedgemini")]
+
+
+@pytest.fixture
+def app_debug():
+    """create_app pins the app's logger at INFO; tests call this after it to open DEBUG."""
+    app_log = logging.getLogger("pubmedgemini")
+    pinned = app_log.level
+
+    def open_debug():
+        app_log.setLevel(logging.DEBUG)
+
+    yield open_debug
+    app_log.setLevel(pinned)
+
+
+def test_nothing_secret_or_private_is_logged_in_a_full_run(db_url, caplog, app_debug):
+    import re
+
+    from test_ask_page import H, ask_env
+
+    caplog.set_level(logging.DEBUG)  # root: every logger that propagates
+    with ask_env(db_url, None, leak_script(), key="gk-q7", ncbi_api_key="nk-q7",
+                 ncbi_email="nq7@example.org") as env:
+        app_debug()
+        r = env.ask(LEAK_QUESTION)
+        page = env.run_page(r.headers["location"]).text
+        home = env.c.get("/", headers=H).text
+        # the other ways a question is refused, each with its fixed line
+        env.ask("   ")
+        env.ask("zq7 " * 1001)
+        env.ask("zq7 Mrs. Lakshmi ph 9845012345 inguinal?")
+        env.ask("zq7 inguinal?", headers=H | {"sec-fetch-site": "cross-site"})
+        env.run_page("/runs/zq7-inguinal")
+        status = env.one("SELECT status FROM runs")
+        sent = env.gemini.bodies
+    # The marked texts were really in the app: Google got the question, the page shows them.
+    assert status == "done" and "zq7" in sent[0]["contents"][0]["parts"][0]["text"]
+    for shown in ("Study list ready", "wq6 because", "vq5 older", "uq4 contra", "xq9[tiab]"):
+        assert shown in page, shown
+    assert "zq7 does mesh" in home
+    for leak in LEAKS:
+        assert leak not in caplog.text, leak
+    msgs = _app_messages(caplog)
+    assert_app_lines_fixed(msgs)
+    assert_ask_lines_fixed(caplog)
+    assert any(re.fullmatch(r"gemini step=researcher attempt=1 status=ok finish=stop "
+                            r"prompt_tokens=\d+ output_tokens=\d+ thought_tokens=\d+ "
+                            r"latency_ms=\d+", m) for m in msgs)
+    assert any(m.startswith("gemini step=researcher attempt=1 status=overloaded ") for m in msgs)
+    assert any(m.startswith("researcher done stop=turn_cap rounds=8 ") for m in msgs)
+    assert "gemini api_key=true model=gemini-3.5-flash-lite rpm=1000 tpm=250000 rpd=500" in msgs
+    kinds = [m.split()[1] for m in msgs if m.startswith("ask ")]
+    assert kinds == ["kind=started", "kind=rejected", "kind=rejected",
+                     "kind=blocked_identifiers", "kind=refused_cross_site"]
+    assert sum(m.startswith("run kind=finished ") for m in msgs) == 1
+
+
+def test_failed_run_logs_kinds_only(db_url, caplog, app_debug):
+    from gemini_fakes import error
+    from test_ask_page import ask_env
+
+    caplog.set_level(logging.DEBUG)
+    script = [error(402, "X", message="gm-q7 secret text prepayment credits are depleted")]
+    with ask_env(db_url, None, script, key="gk-q7") as env:
+        app_debug()
+        r = env.ask(LEAK_QUESTION)
+        page = env.run_page(r.headers["location"]).text
+    assert "linked to billing" in page
+    msgs = _app_messages(caplog)
+    assert_app_lines_fixed(msgs)
+    assert any(" status=billing_refused " in m for m in msgs)
+    assert any(m.endswith(" status=failed error_kind=billing_refused") for m in msgs)
+    for leak in (*LEAKS, "prepayment", "depleted"):
+        assert leak not in caplog.text, leak
+
+
+def test_question_refusals_log_fixed_lines(db_url, caplog, app_debug):
+    from test_ask_page import FailingStarter, HoldStarter, ask_env
+
+    caplog.set_level(logging.DEBUG)
+    with ask_env(db_url, None, key=None) as env:
+        app_debug()
+        env.ask(LEAK_QUESTION)
+    with ask_env(db_url, None, starter=HoldStarter()) as env:
+        app_debug()
+        env.ask(LEAK_QUESTION)
+        env.ask(LEAK_QUESTION)
+    with ask_env(db_url, None, starter=FailingStarter()) as env:
+        with env.pool.connection() as conn:
+            conn.execute("UPDATE runs SET status = 'done' WHERE status = 'queued'")
+        app_debug()
+        env.ask(LEAK_QUESTION)
+    with ask_env(db_url, None, gemini_rpd=13) as env:  # (13 - 3) // 11 = 0 runs left
+        app_debug()
+        env.ask(LEAK_QUESTION)
+    assert_ask_lines_fixed(caplog)
+    assert_app_lines_fixed(_app_messages(caplog))
+    lines = [m for m in _app_messages(caplog) if m.startswith("ask ")]
+    assert [m.split(" run_id=")[0] for m in lines] == [
+        "ask kind=refused reason=no_key", "ask kind=started", "ask kind=refused reason=active",
+        "ask kind=started", "ask kind=start_failed error=RuntimeError",
+        "ask kind=refused reason=daily_limit"]
+    for leak in LEAKS:
+        assert leak not in caplog.text, leak
+
+
+def test_no_model_text_in_any_table_but_the_reviewed_ones(migrated_pool):
+    """Every text column in the schema, reviewed: model_calls holds none of the model's
+    text; the question lives only in runs.question; the model's notes only in the clipped
+    run_papers.note and the step lines; queries only in run_searches."""
+    with migrated_pool.connection() as conn:
+        cols = {(t, c) for t, c in conn.execute(
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND data_type IN ('text', 'character varying', "
+            "'jsonb', 'json')")}
+    assert {c for t, c in cols if t == "model_calls"} == {"model", "step", "status_kind"}
+    assert cols == {
+        ("model_calls", "model"), ("model_calls", "step"), ("model_calls", "status_kind"),
+        ("users", "email"), ("users", "role"),
+        ("schema_migrations", "name"),
+        ("papers", "pmid"), ("papers", "pmcid"), ("papers", "doi"), ("papers", "title"),
+        ("papers", "journal"), ("papers", "design"), ("papers", "abstract"),
+        ("runs", "question"), ("runs", "mode"), ("runs", "status"), ("runs", "error_kind"),
+        ("runs", "stop_reason"), ("runs", "model"),
+        ("run_steps", "kind"), ("run_steps", "line"),
+        ("run_searches", "source"), ("run_searches", "query"),
+        ("run_seen", "pmid"), ("run_seen", "title"), ("run_seen", "journal"),
+        ("run_papers", "role"), ("run_papers", "pmid"), ("run_papers", "design"),
+        ("run_papers", "note"),
+    }, sorted(cols)
+
+
+# ---------- the same, under a real Uvicorn (as the container runs it) ----------
+
+UVICORN_LINES = [
+    r"INFO:     Started server process \[\d+\]",
+    r"INFO:     Waiting for application startup\.",
+    r"INFO:     Application startup complete\.",
+    r"INFO:     Uvicorn running on http://127\.0\.0\.1:\d+ \(Press CTRL\+C to quit\)",
+    r"INFO:     Shutting down",
+    r"INFO:     Waiting for application shutdown\.",
+    r"INFO:     Application shutdown complete\.",
+    r"INFO:     Finished server process \[\d+\]",
+]
+APP_LINE = (r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} (?:INFO|WARNING|ERROR) "
+            r"pubmedgemini(?:\.[a-z_.]+)? (?P<msg>.*)")
+
+
+def _run_question_under_uvicorn(db_url: str, mode: str) -> tuple[str, str, str]:
+    """Starts `ask_app:build` under Uvicorn, asks LEAK_QUESTION, waits for the run page to
+    stop refreshing, opens the home page, stops the server. Returns (run page, home, stderr)."""
+    import os
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    import httpx
+
+    root = Path(__file__).resolve().parents[1]
+    port = _free_port()
+    env = os.environ | {
+        "APP_ENV": "dev",
+        "DATABASE_URL": db_url,
+        "OWNER_EMAIL": "owner@example.com",
+        "GEMINI_API_KEY": "gk-q7",
+        "GEMINI_RPM": "1000",
+        "NCBI_API_KEY": "nk-q7",
+        "NCBI_EMAIL": "nq7@example.org",
+        "ASK_APP_MODE": mode,
+        "PYTHONPATH": os.pathsep.join([str(root / "src"), str(root / "tests")]),
+    }
+    cmd = [sys.executable, "-m", "uvicorn", "--factory", "ask_app:build",
+           "--host", "127.0.0.1", "--port", str(port), "--no-access-log"]
+    proc = subprocess.Popen(
+        cmd, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    base = f"http://127.0.0.1:{port}"
+    h = {"x-dev-user-email": "owner@example.com"}
+    try:
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                health = httpx.get(f"{base}/healthz", timeout=10)
+                break
+            except httpx.TransportError:
+                if time.monotonic() > deadline or proc.poll() is not None:
+                    raise
+                time.sleep(0.2)
+        assert health.status_code == 200
+        r = httpx.post(f"{base}/ask", data={"question": LEAK_QUESTION}, headers=h, timeout=30)
+        assert r.status_code == 303, r.status_code
+        page_url = base + r.headers["location"]
+        deadline = time.monotonic() + 30
+        while True:
+            page = httpx.get(page_url, headers=h, timeout=10).text
+            if 'http-equiv="refresh"' not in page:
+                break
+            assert time.monotonic() < deadline, "the run did not finish"
+            time.sleep(0.2)
+        home = httpx.get(f"{base}/", headers=h, timeout=10).text
+    finally:
+        proc.terminate()
+        out, err = proc.communicate(timeout=10)
+    return page, home, err + out
+
+
+def _assert_stderr_fixed(err: str) -> list[str]:
+    """Every line is one of Uvicorn's own start/stop lines or an app line of a fixed form;
+    returns the app messages."""
+    import re
+
+    msgs = []
+    for line in err.splitlines():
+        if any(re.fullmatch(p, line) for p in UVICORN_LINES):
+            continue
+        m = re.fullmatch(APP_LINE, line)
+        assert m, line
+        msgs.append(m.group("msg"))
+    assert_app_lines_fixed(msgs)
+    return msgs
+
+
+def test_a_full_run_under_uvicorn_logs_fixed_lines_only(db_url):
+    page, home, err = _run_question_under_uvicorn(db_url, "happy")
+    assert "Study list ready" in page and "wq6 because" in page and "zq7 does mesh" in home
+    msgs = _assert_stderr_fixed(err)
+    for leak in (*LEAKS, "Traceback", "Exception in"):
+        assert leak not in err, leak
+    assert sum(m.startswith("run kind=finished ") and m.endswith(" status=done error_kind=none")
+               for m in msgs) == 1
+    assert sum(m.startswith("ask kind=started run_id=") for m in msgs) == 1
+    assert "request method=POST route=/ask status=303" in msgs
+    assert "request method=GET route=/runs/{run_id} status=200" in msgs
+
+
+def test_unexpected_error_in_a_run_under_uvicorn_is_one_fixed_line(db_url):
+    """The first Gemini request raises an unexpected error whose text holds the request body
+    (so the question): one fixed line, the run failed with the plain message, no traceback."""
+    page, _home, err = _run_question_under_uvicorn(db_url, "crash")
+    assert "Something went wrong. Please try again in a minute." in page
+    msgs = _assert_stderr_fixed(err)
+    assert err.count("run kind=internal error=RuntimeError") == 1, err
+    assert sum(m.endswith(" status=done error_kind=none") for m in msgs) == 0
+    for leak in (*LEAKS, "Traceback", "Exception in", "unexpected failure", "contents"):
+        assert leak not in err, leak
