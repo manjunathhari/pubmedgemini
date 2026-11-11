@@ -351,9 +351,10 @@ class _LinksAndClasses(HTMLParser):
 
 PAGE_TAGS = {"html", "head", "meta", "title", "style", "body", "main", "h1", "h2", "p", "form",
              "label", "input", "button", "article", "a", "strong",
-             "link", "header", "div", "section"}
+             "link", "header", "div", "section", "nav"}
 PAGE_ATTRS = {"lang", "charset", "name", "content", "method", "action", "for", "id", "type",
-              "maxlength", "required", "value", "href", "class", "rel", "aria-hidden"}
+              "maxlength", "required", "value", "href", "class", "rel", "aria-hidden",
+              "aria-label", "aria-current"}
 
 
 def test_nothing_from_upstream_is_rendered_as_html(client_for):

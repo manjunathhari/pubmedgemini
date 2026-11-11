@@ -3,6 +3,7 @@ import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlsplit
@@ -22,6 +23,7 @@ from pubmedgemini.runs import (
     RunView,
     SelectedView,
     create_run,
+    daily_question_counts,
     end_message,
     finish_run,
     get_run,
@@ -79,6 +81,8 @@ KIND_MESSAGES = {
 STATUS_WORDS = {"queued": "Waiting", "running": "Running", "done": "Done", "partial": "Partial",
                 "failed": "Failed", "stopped": "Stopped"}
 LISTED_QUESTION_CHARS = 120
+LIBRARY_LIMIT = 50
+ACTIVITY_DAYS = 14
 # A run id in a URL: the canonical lower-case form only, so one run has one address.
 RUN_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
@@ -142,10 +146,14 @@ def refuse_cross_site_ask(request: Request) -> None:
     _refuse_cross_site(request, "ask")
 
 
-def _message(request: Request, text: str, status_code: int) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request, "message.html", {"message": text}, status_code=status_code
-    )
+def _message(request: Request, text: str, status_code: int,
+             user: User | None = None) -> HTMLResponse:
+    """A message page. With a signed-in, set-up `user` the menu shows (no item current);
+    without one (no sign-in, not set up, start-up or database failures) it does not."""
+    context: dict = {"message": text}
+    if user is not None:
+        context["nav"] = ""
+    return templates.TemplateResponse(request, "message.html", context, status_code=status_code)
 
 
 def require_ready(request: Request) -> None:
@@ -167,16 +175,12 @@ def _home(request: Request, user: User, status_code: int = 200, *, question: str
     state = request.app.state
     settings = state.settings
     enabled = state.gemini_caller is not None
-    context = {"email": user.email, "ask_enabled": enabled, "question": question,
+    context = {"email": user.email, "nav": "ask", "ask_enabled": enabled, "question": question,
                "ask_message": ask_message, "ask_found": ask_found, "ask_link": ask_link}
     if enabled:
         left = runs_left(state.pool, settings.gemini_model, settings.gemini_rpd)
         context["runs_left"] = left
         context["reset_time"] = reset_time_ist(state.pool) if left < 1 else None
-    context["runs"] = [
-        ListedRun(r.id, _shorten(r.question), r.created_ist, STATUS_WORDS.get(r.status, r.status))
-        for r in list_runs(state.pool, user.id)
-    ]
     return templates.TemplateResponse(request, "home.html", context, status_code=status_code)
 
 
@@ -189,6 +193,30 @@ def _shorten(question: str) -> str:
 @router.get("/", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
 def home(request: Request, user: Annotated[User, Depends(current_user)]):
     return _home(request, user)
+
+
+@router.get("/library", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
+def library(request: Request, user: Annotated[User, Depends(current_user)]):
+    """The signed-in user's own questions, newest first (up to LIBRARY_LIMIT)."""
+    runs = [
+        ListedRun(r.id, _shorten(r.question), r.created_ist, STATUS_WORDS.get(r.status, r.status))
+        for r in list_runs(request.app.state.pool, user.id, LIBRARY_LIMIT)
+    ]
+    return templates.TemplateResponse(request, "library.html", {"nav": "library", "runs": runs})
+
+
+def _day_label(d: date) -> str:
+    """"Wed 11 Nov": the day number without a leading zero."""
+    return f"{d:%a} {d.day} {d:%b}"
+
+
+@router.get("/activity", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
+def activity(request: Request, user: Annotated[User, Depends(current_user)]):
+    """The signed-in user's questions per India-time day, the last ACTIVITY_DAYS days."""
+    counts = daily_question_counts(request.app.state.pool, user.id, datetime.now(UTC),
+                                   ACTIVITY_DAYS)
+    days = [(_day_label(d), n) for d, n in counts]
+    return templates.TemplateResponse(request, "activity.html", {"nav": "activity", "days": days})
 
 
 def drop_trailing_question_marks(text: str) -> str:
@@ -263,7 +291,7 @@ def search(
 ):
     """The text arrives in the POST body only; the results come back in this response."""
     text = drop_trailing_question_marks(q).strip()
-    context = {"email": user.email, "query": text}
+    context = {"email": user.email, "nav": "ask", "query": text}
     try:
         result = run_page_search(request.app.state.lit, text)
     except QueryRejected as exc:
@@ -272,7 +300,7 @@ def search(
         return templates.TemplateResponse(request, "results.html", context, status_code=400)
     except BothUnreachable:
         log.info("search kind=unavailable")
-        return _message(request, BOTH_DOWN, 503)
+        return _message(request, BOTH_DOWN, 503, user)
     _log_search(result)
     context |= {
         "result": result,
@@ -298,7 +326,7 @@ def _start_question(request: Request, user: User, question: str):
     settings = state.settings
     if state.gemini_caller is None:
         log.info("ask kind=refused reason=no_key")
-        return _message(request, NO_KEY, 503)
+        return _message(request, NO_KEY, 503, user)
     if not question.strip():
         log.info("ask kind=rejected reason=empty")
         return _home(request, user, 400, ask_message=EMPTY_QUESTION)
@@ -402,9 +430,10 @@ def _outcome_line(request: Request, v: RunView) -> str | None:
 def run_page(request: Request, run_id: str, user: Annotated[User, Depends(current_user)]):
     v = _own_run(request, user, run_id)
     if v is None:
-        return _message(request, RUN_NOT_FOUND, 404)
+        return _message(request, RUN_NOT_FOUND, 404, user)
     active = v.status in ("queued", "running")
     context = {
+        "nav": "library",
         "run": v,
         "active": active,
         "question_paragraphs": [x.strip() for x in v.question.split("\n") if x.strip()],
@@ -424,7 +453,7 @@ def run_again(request: Request, run_id: str, user: Annotated[User, Depends(curre
     """A new run of the stored question: it never goes through the browser again."""
     v = _own_run(request, user, run_id)
     if v is None:
-        return _message(request, RUN_NOT_FOUND, 404)
+        return _message(request, RUN_NOT_FOUND, 404, user)
     return _start_question(request, user, v.question)
 
 

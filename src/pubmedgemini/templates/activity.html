@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Activity</h1>
+<section class="card">
+<h2>My questions, last 14 days</h2>
+<div class="table-scroll">
+<table>
+<thead><tr><th>Day</th><th class="num">Questions</th></tr></thead>
+<tbody>
+{% for day, n in days %}
+<tr><td>{{ day }}</td><td class="num">{{ n }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</section>
+{% endblock %}

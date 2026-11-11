@@ -11,7 +11,15 @@
 <header class="site-header"><div class="site-header-inner">
 <div class="tile" aria-hidden="true">P</div>
 <div><div class="site-name">pubmedgemini</div><div class="site-note">Educational tool only</div></div>
-</div></header>
+</div>
+{% if nav is defined %}
+<nav aria-label="Main">
+<a href="/"{% if nav == "ask" %} class="current" aria-current="page"{% endif %}>Ask</a>
+<a href="/library"{% if nav == "library" %} class="current" aria-current="page"{% endif %}>Library</a>
+<a href="/activity"{% if nav == "activity" %} class="current" aria-current="page"{% endif %}>Activity</a>
+</nav>
+{% endif %}
+</header>
 <main>
 {% block content %}{% endblock %}
 </main>

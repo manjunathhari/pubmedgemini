@@ -158,8 +158,8 @@ def test_home_has_both_boxes_and_no_script(env):
     assert r.text.count('name="question"') == 1 and r.text.count('name="q"') == 1
     assert "<script" not in r.text and "src=" not in r.text
     assert re.findall(r"<link[^>]*>", r.text) == ['<link rel="stylesheet" href="/static/app.css">']
-    assert r.text.index("Ask a question") < r.text.index("Key-word search") \
-        < r.text.index("Your questions")
+    assert r.text.index("Ask a question") < r.text.index("Key-word search")
+    assert "Your questions" not in r.text  # moved to the Library page
     assert '<form method="post" action="/ask">' in r.text
     assert '<label for="question">Ask a question</label>' in r.text
     assert '<textarea id="question" name="question" maxlength="4000" required rows="4">' in r.text
@@ -185,7 +185,7 @@ def test_runs_left_goes_down_and_zero_shows_the_reset_time(env):
 def test_no_key_shows_not_set_up_and_search_still_works(no_key):
     page = no_key.c.get("/", headers=H).text
     assert NO_KEY in page and 'name="question"' not in page and "Free runs left" not in page
-    assert page.count('name="q"') == 1 and "Your questions" in page
+    assert page.count('name="q"') == 1 and "Your questions" not in page
     r = no_key.ask("Is mesh better than suture?")
     assert r.status_code == 503 and NO_KEY in r.text
     assert no_key.one("SELECT count(*) FROM runs") == 0 and no_key.gemini.sent == []
@@ -194,12 +194,12 @@ def test_no_key_shows_not_set_up_and_search_still_works(no_key):
     assert no_key.gemini.sent == []
 
 
-def test_home_lists_past_runs_newest_first(env):
+def test_library_lists_past_runs_newest_first(env):
     long_q = "w" * 130
     first = insert_run(env, question=long_q, status="done", error_kind=None)
     second = insert_run(env, question="<b>second</b> question", status="failed",
                         error_kind="internal")
-    page = env.c.get("/", headers=H).text
+    page = env.c.get("/library", headers=H).text
     assert page.index(f'href="/runs/{second}"') < page.index(f'href="/runs/{first}"')
     assert "w" * 120 + "\u2026" in page and "w" * 121 not in page
     assert "&lt;b&gt;second&lt;/b&gt; question" in page and "<b>second" not in page
@@ -212,13 +212,13 @@ def test_home_lists_past_runs_newest_first(env):
                                          ("failed", "Failed"), ("stopped", "Stopped")])
 def test_status_words(env, status, word):
     insert_run(env, status=status, error_kind=None)
-    assert f"· {word}</p>" in env.c.get("/", headers=H).text
+    assert f"· {word}</p>" in env.c.get("/library", headers=H).text
 
 
 def test_other_users_runs_are_not_listed(env):
     env.add_user("b@example.com")
     rid = insert_run(env, question="b's question", email="b@example.com")
-    page = env.c.get("/", headers=H).text
+    page = env.c.get("/library", headers=H).text
     assert str(rid) not in page and "b&#39;s question" not in page
 
 
