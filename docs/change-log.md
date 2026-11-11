@@ -38,3 +38,12 @@ Nothing is deployed yet. Entries start with the first merge to `main` that chang
 - Three older page tests were updated because this look replaces the owner's 10 Nov "plain pages" ruling: they now accept the stylesheet link, class names and wrapper elements, and check the width in the stylesheet. Their checks on upstream text (nothing from PubMed or Europe PMC is rendered as markup) are unchanged, and now also check that every class value is plain letters, digits, hyphens and spaces.
 - Each page view now also makes a few requests for the stylesheet and fonts, which add `request method=GET route=... status=200` lines to the log. Fixed words only, no paths or text; left as they are.
 - Nothing to do on the VPS.
+
+## Library and Activity pages, and the menu (branch `library-activity`, not merged yet)
+
+- Every page a signed-in, set-up user sees now has a menu under the header: Ask, Library, Activity. The current one is bold with an underline. Pages for someone not set up, and the plain message pages (such as "That question wasn't found"), show the header without the menu. The app's name on the page stays "pubmedgemini".
+- New Library page (`/library`): your past questions, newest first, up to 50, each as before (the question's first words as a link to its page, the date in India time, and the status). "No questions yet." when there are none. A run page and the key-word results page highlight Library and Ask in the menu.
+- New Activity page (`/activity`): a card "My questions, last 14 days" with one row per day (India time), today first, zeros included, and the number of questions you asked that day. A question counts on the India day it was asked, whatever happened to it.
+- The "Your questions" list is gone from the home page; it lives on Library. Nothing else on the home page changed.
+- Each page shows only the signed-in user's own questions and counts. Nothing new is logged. No JavaScript.
+- Nothing to do on the VPS.
