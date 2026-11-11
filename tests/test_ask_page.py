@@ -234,8 +234,8 @@ def test_ask_redirects_to_an_unguessable_run_page(env):
     rid = uuid.UUID(r.headers["location"].removeprefix("/runs/"))
     assert rid.version == 4
     page = env.run_page(r.headers["location"]).text
-    assert ("Searched PubMed and Europe PMC (free sources); studies selected by "
-            "gemini-3.5-flash-lite") in page
+    assert ("Searched PubMed and Europe PMC (free sources); answer written by "
+            "gemini-3.5-flash-lite") in page  # F3a Task 8: the run now writes an answer
     assert "Selected studies" in page and "Considered, not selected" in page
     assert "Search trail" in page and PRIVACY in page
     assert env.starter.started == [rid] and len(env.gemini.sent) == 9
@@ -658,3 +658,155 @@ def test_run_again_without_a_key_is_503(no_key):
     rid = insert_run(no_key)
     r = no_key.c.post(f"/runs/{rid}/again", headers=H)
     assert r.status_code == 503 and NO_KEY in r.text
+
+
+# ---------- the stored answer, plain (F3a Task 8) ----------
+
+def _written(**over):
+    from pubmedgemini.writer.answer import WrittenAnswer
+
+    body = {
+        "bottom_line": {"text": "Mesh helps [33763744].", "certainty": "Moderate",
+                        "certainty_reason": "Two trials."},
+        "outcomes": [{
+            "outcome": "Recurrence", "rct_evidence": "2 RCTs [36262096]",
+            "effect_text": "Fewer recurrences [36262096]",
+            "numbers": [
+                {"label": "RR", "value": 0.76, "unit": None, "arm": "mesh", "ci_low": 0.49,
+                 "ci_high": 1.1, "p": "0.2", "pmid": "36262096"},
+                {"label": "Events", "value": 12.0, "unit": "%", "arm": None, "ci_low": None,
+                 "ci_high": None, "p": None, "pmid": "33763744"}],
+            "certainty": "Low", "why": "Small trials.", "pmids": ["36262096"],
+            "evidence_type": "rct"}],
+        "studies": [{"pmid": "36262096", "label": "Trial A", "design": "RCT", "n": 60,
+                     "setting": "One centre", "comparison": "Mesh vs none",
+                     "key_results": "Less pain", "appraisal": "Unblinded"}],
+        "conflicts": [{"text": "Trials differ [33763744].", "pmids": ["33763744"]}],
+        "applicability": {"case_mix": "Simple hernias", "india_cost_context": "",
+                          "training": "Low"},
+        "would_change": ["A larger trial"],
+        "at_a_glance": {"verdict": "Probably helps.",
+                        "key_numbers": [{"label": "RR", "value_text": "0.76", "pmid": "36262096"}],
+                        "main_caveat": "Small trials"},
+        "clinical_practice": {"default_choice": "Use mesh", "who_may_benefit": "",
+                              "counselling": "Explain risks", "cost_per_case": "Unknown",
+                              "text": "Free text."},
+        "notable_findings": [{"text": "Two withdrawals [36262096].", "pmids": ["36262096"]}],
+    }
+    body.update(over)
+    return WrittenAnswer.model_validate(body)
+
+
+def _refs():
+    from pubmedgemini.writer.answer import ReferenceV3
+
+    return [ReferenceV3(n=1, pmid="36262096", title="A trial of mesh", journal="Hernia",
+                        year=2022, doi=None, retracted=False),
+            ReferenceV3(n=2, pmid="33763744", title="A review", journal=None, year=None,
+                        doi=None, retracted=True)]
+
+
+def store_answer(env, run_id, written=None, empty_reason=None, refs=None, raw=None):
+    from datetime import UTC, datetime
+
+    from psycopg.types.json import Jsonb
+
+    from pubmedgemini.writer.answer import AnswerV3, IntegrityV3
+
+    body = raw if raw is not None else AnswerV3(
+        question="q", created_at=datetime.now(UTC), answer=written, empty_reason=empty_reason,
+        references=_refs() if refs is None else refs, searches=[], integrity=IntegrityV3(),
+        stopped_early=None, elapsed_s=3).to_body()
+    with env.pool.connection() as conn:
+        conn.execute("INSERT INTO answers (run_id, version, body) VALUES (%s, 3, %s)",
+                     (run_id, Jsonb(body)))
+
+
+def answered(env, status="done", **kw):
+    rid = insert_run(env, status=status, error_kind=None)
+    store_answer(env, rid, **kw)
+    return env.run_page(f"/runs/{rid}").text
+
+
+def test_answer_sections_in_order(env):
+    page = answered(env, written=_written())
+    heads = ["At a glance", "Bottom line", "Clinical practice", "Outcomes", "Trials",
+             "Conflicting evidence", "Applicability", "What would change this answer",
+             "Other notable findings", "References"]
+    pos = [page.index(f"<h2>{h}</h2>") for h in heads]
+    assert pos == sorted(pos) and len(set(pos)) == len(pos)
+    assert "<h2>Notes</h2>" not in page and "<h2>Selected studies</h2>" not in page
+    assert "<p>Probably helps.</p>" in page and "<li>RR: 0.76</li>" in page
+    assert "<p>Main caveat: Small trials</p>" in page
+    assert "<p>Mesh helps [33763744].</p>" in page
+    assert "<p>Certainty: Moderate. Two trials.</p>" in page
+    for line in ("Default choice: Use mesh", "Counselling: Explain risks",
+                 "Cost per case: Unknown", "Free text."):
+        assert f"<p>{line}</p>" in page
+    assert "Who may benefit" not in page and "India cost context" not in page
+    assert "<h3>Recurrence</h3>" in page and "Certainty: Low · RCTs" in page
+    assert "<li>RR: 0.76 (0.49 to 1.1), mesh, p 0.2, PMID 36262096</li>" in page
+    assert "<li>Events: 12.0 %, PMID 33763744</li>" in page
+    assert "None" not in page
+    assert "<h3>Trial A</h3>" in page and "Appraisal: Unblinded" in page
+    assert "<li>A larger trial</li>" in page
+    assert ('<li>[1] A trial of mesh. Hernia 2022. '
+            '<a href="https://pubmed.ncbi.nlm.nih.gov/36262096/">PMID 36262096</a></li>') in page
+    assert ('<li>[2] A review. <a href="https://pubmed.ncbi.nlm.nih.gov/33763744/">'
+            'PMID 33763744</a> <strong>Retracted</strong></li>') in page
+    assert f"answer written by {MODEL}" in page and "studies selected by" not in page
+
+
+def test_notes_show_when_present(env):
+    from datetime import UTC, datetime
+
+    from pubmedgemini.writer.answer import AnswerV3, IntegrityV3
+
+    body = AnswerV3(question="q", created_at=datetime.now(UTC), answer=_written(),
+                    empty_reason=None, references=[], searches=[], integrity=IntegrityV3(),
+                    stopped_early=None, elapsed_s=1, notes=["A note."]).to_body()
+    page = answered(env, raw=body)
+    assert "<h2>Notes</h2>" in page and "<li>A note.</li>" in page
+    assert page.index("<h2>Other notable findings</h2>") < page.index("<h2>Notes</h2>")
+
+
+def test_answer_text_is_escaped(env):
+    w = _written(studies=[{"pmid": "36262096", "label": "L", "design": "d", "n": None,
+                           "setting": "s", "comparison": "c", "key_results": "k",
+                           "appraisal": "<script>alert(1)</script>"}])
+    page = answered(env, written=w)
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "<script" not in page
+
+
+def test_page_has_no_script_and_no_new_css(env):
+    page = answered(env, written=_written())
+    plain = env.run_page(f"/runs/{insert_run(env)}").text  # a run with no answer
+    assert "<script" not in page.lower() and "style=" not in page.lower()
+    assert "<style" not in page.lower() and page.count("<link") == plain.count("<link")
+
+
+def test_old_run_without_answer_unchanged(env):
+    rid = insert_run(env, status="partial", error_kind=None)
+    page = env.run_page(f"/runs/{rid}").text
+    for h in ("At a glance", "Bottom line", "References", "Outcomes"):
+        assert f"<h2>{h}</h2>" not in page
+    assert "studies selected by" in page and "answer written by" not in page
+    assert "could not be shown" not in page
+
+
+def test_unwritten_answer_shows_its_reason_and_references(env):
+    page = answered(env, status="partial", empty_reason="Not enough time <b>left</b>.")
+    assert "<p>Not enough time &lt;b&gt;left&lt;/b&gt;.</p>" in page
+    assert "<h2>References</h2>" in page and "<h2>Bottom line</h2>" not in page
+    assert page.index("Not enough time") < page.index("<h2>References</h2>")
+    assert "studies selected by" in page and "answer written by" not in page
+
+
+def test_unreadable_answer_shows_a_plain_line_and_logs_the_kind(env, caplog):
+    body = {"version": 3, "SECRET-MODEL-TEXT": "x"}
+    with caplog.at_level("WARNING"):
+        page = answered(env, raw=body)
+    assert "The answer could not be shown." in page
+    assert "SECRET-MODEL-TEXT" not in page and "SECRET-MODEL-TEXT" not in caplog.text
+    assert "kind=invalid" in caplog.text
+    assert "studies selected by" in page and "<h2>Bottom line</h2>" not in page

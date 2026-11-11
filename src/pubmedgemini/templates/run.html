@@ -41,6 +41,166 @@
 {% endif %}
 </section>
 {% endif %}
+{% if shown.has %}
+{% if shown.unreadable %}
+<p>The answer could not be shown.</p>
+{% else %}
+{% if shown.empty_reason %}
+<section class="card">
+<p>{{ shown.empty_reason }}</p>
+</section>
+{% endif %}
+{% if shown.written %}
+{% if shown.glance %}
+<section class="card">
+<h2>At a glance</h2>
+{% if shown.glance.verdict %}
+<p>{{ shown.glance.verdict }}</p>
+{% endif %}
+{% if shown.glance.numbers %}
+<ul>
+{% for line in shown.glance.numbers %}
+<li>{{ line }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if shown.glance.caveat %}
+<p>Main caveat: {{ shown.glance.caveat }}</p>
+{% endif %}
+</section>
+{% endif %}
+<section class="card">
+<h2>Bottom line</h2>
+{% if shown.bottom.text %}
+<p>{{ shown.bottom.text }}</p>
+{% endif %}
+<p>Certainty: {{ shown.bottom.certainty.value }}.{% if shown.bottom.certainty_reason %} {{ shown.bottom.certainty_reason }}{% endif %}</p>
+</section>
+{% if shown.practice %}
+<section class="card">
+<h2>Clinical practice</h2>
+{% for line in shown.practice %}
+<p>{{ line }}</p>
+{% endfor %}
+</section>
+{% endif %}
+{% if shown.outcomes %}
+<section class="card">
+<h2>Outcomes</h2>
+{% for o, label, number_lines in shown.outcomes %}
+<article>
+<h3>{{ o.outcome }}</h3>
+<p>{{ label }}</p>
+{% if o.effect_text %}
+<p>{{ o.effect_text }}</p>
+{% endif %}
+{% if o.rct_evidence %}
+<p>RCT evidence: {{ o.rct_evidence }}</p>
+{% endif %}
+{% if number_lines %}
+<ul>
+{% for line in number_lines %}
+<li>{{ line }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% if o.why %}
+<p>Why: {{ o.why }}</p>
+{% endif %}
+</article>
+{% endfor %}
+</section>
+{% endif %}
+{% if shown.studies %}
+<section class="card">
+<h2>Trials</h2>
+{% for t in shown.studies %}
+<article>
+<h3>{{ t.label }}</h3>
+{% if t.design %}
+<p>Design: {{ t.design }}</p>
+{% endif %}
+{% if t.n is not none %}
+<p>Participants: {{ t.n }}</p>
+{% endif %}
+{% if t.setting %}
+<p>Setting: {{ t.setting }}</p>
+{% endif %}
+{% if t.comparison %}
+<p>Comparison: {{ t.comparison }}</p>
+{% endif %}
+{% if t.key_results %}
+<p>Key results: {{ t.key_results }}</p>
+{% endif %}
+{% if t.appraisal %}
+<p>Appraisal: {{ t.appraisal }}</p>
+{% endif %}
+{% if t.pmid %}
+<p class="row"><a href="https://pubmed.ncbi.nlm.nih.gov/{{ t.pmid }}/">PMID {{ t.pmid }}</a></p>
+{% endif %}
+</article>
+{% endfor %}
+</section>
+{% endif %}
+{% if shown.conflicts %}
+<section class="card">
+<h2>Conflicting evidence</h2>
+{% for c in shown.conflicts %}
+<p>{{ c.text }}</p>
+{% endfor %}
+</section>
+{% endif %}
+{% if shown.applicability %}
+<section class="card">
+<h2>Applicability</h2>
+{% for line in shown.applicability %}
+<p>{{ line }}</p>
+{% endfor %}
+</section>
+{% endif %}
+{% if shown.would_change %}
+<section class="card">
+<h2>What would change this answer</h2>
+<ul>
+{% for line in shown.would_change %}
+<li>{{ line }}</li>
+{% endfor %}
+</ul>
+</section>
+{% endif %}
+{% if shown.findings %}
+<section class="card">
+<h2>Other notable findings</h2>
+<ul>
+{% for line in shown.findings %}
+<li>{{ line }}</li>
+{% endfor %}
+</ul>
+</section>
+{% endif %}
+{% endif %}
+{% if shown.notes %}
+<section class="card">
+<h2>Notes</h2>
+<ul>
+{% for line in shown.notes %}
+<li>{{ line }}</li>
+{% endfor %}
+</ul>
+</section>
+{% endif %}
+{% if shown.references %}
+<section class="card">
+<h2>References</h2>
+<ul>
+{% for r, line in shown.references %}
+<li>{{ line }} <a href="https://pubmed.ncbi.nlm.nih.gov/{{ r.pmid }}/">PMID {{ r.pmid }}</a>{% if r.retracted %} <strong>Retracted</strong>{% endif %}</li>
+{% endfor %}
+</ul>
+</section>
+{% endif %}
+{% endif %}
+{% endif %}
 {% if run.selected %}
 <section class="card">
 <h2>Selected studies</h2>
@@ -98,7 +258,11 @@
 {% if run.down_line %}
 <p>{{ run.down_line }}</p>
 {% endif %}
+{% if shown.written %}
+<p>Searched PubMed and Europe PMC (free sources); answer written by {{ run.model }}</p>
+{% else %}
 <p>Searched PubMed and Europe PMC (free sources); studies selected by {{ run.model }}</p>
+{% endif %}
 {% endif %}
 <p>Google may use what you type here, and its reviewers may read it (Gemini free tier). Do not type anything that identifies a patient.</p>
 {% endblock %}

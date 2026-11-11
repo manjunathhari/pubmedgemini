@@ -31,6 +31,7 @@ from pubmedgemini.runs import (
     stored_question,
 )
 from pubmedgemini.search import BothUnreachable, PageResult, QueryRejected, run_page_search
+from pubmedgemini.writer.answer import AnswerInvalid, AnswerV3, Number, read_body
 
 log = logging.getLogger("pubmedgemini.web")
 
@@ -432,6 +433,73 @@ def _outcome_line(request: Request, v: RunView) -> str | None:
     return KIND_MESSAGES.get(v.error_kind or "", INTERNAL_ERROR)
 
 
+def _number_line(n: Number) -> str:
+    """One number as the answer holds it: "label: value unit (ci_low to ci_high), arm, p x,
+    PMID n". Nothing is rounded or computed; a part that is absent is left out."""
+    head = f"{n.label}: {n.value}" + (f" {n.unit}" if n.unit else "")
+    if n.ci_low is not None and n.ci_high is not None:
+        head += f" ({n.ci_low} to {n.ci_high})"
+    parts = [head]
+    if n.arm:
+        parts.append(n.arm)
+    if n.p:
+        parts.append(f"p {n.p}")
+    if n.pmid:
+        parts.append(f"PMID {n.pmid}")
+    return ", ".join(parts)
+
+
+def _labelled(*pairs: tuple[str, str]) -> list[str]:
+    return [f"{label}: {text}" for label, text in pairs if text and text.strip()]
+
+
+def _reference_line(r) -> str:
+    where = " ".join(x for x in (r.journal, str(r.year) if r.year is not None else "") if x)
+    return f"[{r.n}] {r.title}." + (f" {where}." if where else "")
+
+
+def _shown_answer(v: RunView) -> dict:
+    """What the page draws of the stored answer, read only through `read_body`. An answer that
+    cannot be read is logged by its kind alone and the page says so; no body reaches the page
+    or the log."""
+    if v.answer is None:
+        return {"has": False}
+    try:
+        a: AnswerV3 = read_body(v.answer)
+    except AnswerInvalid as exc:
+        log.warning("run page answer kind=%s", exc.kind)
+        return {"has": True, "unreadable": True}
+    w = a.answer
+    shown = {"has": True, "unreadable": False, "empty_reason": a.empty_reason,
+             "written": w is not None, "notes": a.notes,
+             "references": [(r, _reference_line(r)) for r in a.references]}
+    if w is not None:
+        g, cp = w.at_a_glance, w.clinical_practice
+        shown["glance"] = None if g is None else {
+            "verdict": g.verdict,
+            "numbers": [f"{k.label}: {k.value_text}" for k in g.key_numbers],
+            "caveat": g.main_caveat,
+        }
+        shown["bottom"] = w.bottom_line
+        shown["practice"] = [] if cp is None else _labelled(
+            ("Default choice", cp.default_choice), ("Who may benefit", cp.who_may_benefit),
+            ("Counselling", cp.counselling), ("Cost per case", cp.cost_per_case)) + (
+            [cp.text] if cp.text.strip() else [])
+        shown["outcomes"] = [
+            (o, " · ".join(x for x in (f"Certainty: {o.certainty.value}",
+                                       o.evidence_type.label()) if x),
+             [_number_line(n) for n in o.numbers]) for o in w.outcomes]
+        shown["studies"] = w.studies
+        shown["conflicts"] = w.conflicts
+        shown["applicability"] = _labelled(
+            ("Case mix", w.applicability.case_mix),
+            ("India cost context", w.applicability.india_cost_context),
+            ("Training", w.applicability.training))
+        shown["would_change"] = w.would_change
+        shown["findings"] = [f.text for f in w.notable_findings]
+    return shown
+
+
 @router.get("/runs/{run_id}", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
 def run_page(request: Request, run_id: str, user: Annotated[User, Depends(current_user)]):
     v = _own_run(request, user, run_id)
@@ -444,6 +512,7 @@ def run_page(request: Request, run_id: str, user: Annotated[User, Depends(curren
         "active": active,
         "question_paragraphs": [x.strip() for x in v.question.split("\n") if x.strip()],
         "outcome": None if active else _outcome_line(request, v),
+        "shown": _shown_answer(v),
         "selected": [_shown_study(s) for s in v.selected],
         "trail": [f"{e.source}: {e.query} ({e.hits:,} found)" for e in v.searches],
     }
