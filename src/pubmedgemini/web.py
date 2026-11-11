@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 import psycopg
 from fastapi import APIRouter, Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from pubmedgemini.db import is_healthy
@@ -187,6 +187,13 @@ def search(
         "counts_line": _counts_line(result),
     }
     return templates.TemplateResponse(request, "results.html", context)
+
+
+@router.get("/search", dependencies=[Depends(require_ready), Depends(current_user)])
+def search_get():
+    """Where the gate lands the browser after a sign-in that expired mid-search: back to the
+    search box, with the sign-in checks of `/`. The typed text is lost (it was in the body)."""
+    return RedirectResponse("/", status_code=303)
 
 
 @router.get("/healthz")

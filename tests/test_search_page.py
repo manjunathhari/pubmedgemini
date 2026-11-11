@@ -85,9 +85,24 @@ def test_search_text_in_the_url_is_ignored(client_search, upstream):
     assert r.status_code == 400 and "query rejected (empty)" in r.text and upstream.sent == []
 
 
-def test_get_search_is_not_a_route(client_search, upstream):
-    assert client_search.get("/search?q=hernia", headers=H).status_code == 405
-    assert upstream.sent == []
+def test_get_search_signed_in_goes_back_to_the_search_box(client_search, upstream):
+    # After an expired sign-in the gate lands the browser on GET /search (finding 8).
+    r = client_search.get("/search?q=hernia", headers=H, follow_redirects=False)
+    assert (r.status_code, r.headers["location"]) == (303, "/")
+    assert upstream.sent == [] and "hernia" not in r.text
+
+
+def test_get_search_not_signed_in_is_the_same_401_as_home(client_prod):
+    home = client_prod.get("/")
+    r = client_prod.get("/search", follow_redirects=False)
+    assert (r.status_code, r.text) == (401, home.text) and home.status_code == 401
+
+
+def test_get_search_unknown_user_is_the_same_403_as_home(client_prod):
+    h = {"x-forwarded-email": "stranger@example.com"}
+    home = client_prod.get("/", headers=h)
+    r = client_prod.get("/search", headers=h, follow_redirects=False)
+    assert (r.status_code, r.text) == (403, home.text) and home.status_code == 403
 
 
 def test_search_needs_sign_in(client_prod):
