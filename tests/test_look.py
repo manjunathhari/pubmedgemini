@@ -17,7 +17,7 @@ H = {"x-dev-user-email": "owner@example.com"}
 
 AGREED = {"#333333", "#4d4d4d", "#8c8c8c", "#666666", "#bdbdbd", "#dddddd", "#f4f4f4", "#ffffff"}
 COLOUR_NAMES = ("red", "blue", "green", "orange", "yellow", "purple", "pink", "teal", "navy")
-HEX = re.compile(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b")
+HEX = re.compile(r"#([0-9a-fA-F]{3,8})\b")
 
 
 def css() -> str:
@@ -30,7 +30,12 @@ def expand(h: str) -> str:
 
 
 def hex_colours() -> set[str]:
-    return {expand(m.group(1)) for m in HEX.finditer(css())}
+    found = set()
+    for m in HEX.finditer(css()):
+        # 4- and 8-digit (alpha) colours and odd lengths are not in the agreed set
+        assert len(m.group(1)) in (3, 6), m.group(0)
+        found.add(expand(m.group(1)))
+    return found
 
 
 def test_css_has_only_greys():
@@ -48,6 +53,23 @@ def test_css_has_only_greys():
 
 def test_css_uses_only_the_agreed_greys():
     assert hex_colours() <= AGREED
+
+
+def test_alpha_hex_is_caught(monkeypatch):
+    monkeypatch.setattr(CSS_PATH.__class__, "read_text", lambda self, **kw: "a{color:#33333380}")
+    with pytest.raises(AssertionError):
+        hex_colours()
+
+
+def test_long_text_wraps_in_cards():
+    assert "overflow-wrap: anywhere" in css()
+    assert "min-width: 0" in css()
+
+
+def test_lists_and_inline_links_styles():
+    text = css()
+    assert not re.search(r"\bul\s*\{[^}]*Source Serif", text)
+    assert not re.search(r"(^|\n)a\s*\{[^}]*min-height", text)
 
 
 def test_fonts_are_self_hosted():
@@ -110,11 +132,12 @@ def test_static_files_are_packaged():
 
 def test_header_on_every_page(pages):
     for name in ("home", "results", "run", "run_done", "message"):
-        text = pages[name].text
-        assert 'class="tile"' in text, name
-        assert ">P<" in text, name
-        assert "Educational tool only" in text, name
-        assert "pubmedgemini" in text, name
+        blocks = re.findall(r"<header\b.*?</header>", pages[name].text, re.DOTALL)
+        assert len(blocks) == 1, name
+        head = blocks[0]
+        assert re.search(r'<div class="tile"[^>]*>P</div>', head), name
+        assert ">pubmedgemini<" in head, name
+        assert ">Educational tool only<" in head, name
 
 
 def test_no_script_tags(pages):
