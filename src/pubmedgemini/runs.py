@@ -20,7 +20,7 @@ import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 import psycopg
@@ -36,6 +36,9 @@ from pubmedgemini.researcher.studylist import Validated
 log = logging.getLogger("pubmedgemini.runs")
 
 MAX_STEP_LINE = 160  # agent/mod.rs MAX_STEP_LINE
+
+# India has no daylight saving: a fixed +05:30 offset is Asia/Kolkata, with no tz database needed.
+IST = timezone(timedelta(hours=5, minutes=30))
 
 NO_EVIDENCE = "No relevant evidence found."
 STOPPED_NO_ANSWER = (
@@ -399,3 +402,26 @@ def list_runs(pool: ConnectionPool, user_id: int, limit: int = 20) -> list[RunRo
             (user_id, limit),
         ).fetchall()
     return [RunRow(i, q, t, s) for i, q, t, s in rows]
+
+
+def daily_question_counts(
+    pool: ConnectionPool, user_id: int, now: datetime, days: int = 14
+) -> list[tuple[date, int]]:
+    """How many questions the user asked on each of the last `days` India-time days, newest
+    first, ending on the India day of `now` (an aware time), zeros included. A question counts
+    on the India day its run row was created, whatever its status. The days are cut in Python
+    from the rows in the window, so the result does not depend on the session's time zone."""
+    today = now.astimezone(IST).date()
+    first = today - timedelta(days=days - 1)
+    start = datetime(first.year, first.month, first.day, tzinfo=IST)
+    end = datetime(today.year, today.month, today.day, tzinfo=IST) + timedelta(days=1)
+    with pool.connection() as conn:
+        rows = conn.execute(
+            "SELECT created_at FROM runs WHERE user_id = %s AND created_at >= %s "
+            "AND created_at < %s",
+            (user_id, start, end),
+        ).fetchall()
+    counts = {today - timedelta(days=i): 0 for i in range(days)}
+    for (created_at,) in rows:
+        counts[created_at.astimezone(IST).date()] += 1
+    return list(counts.items())

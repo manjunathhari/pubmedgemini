@@ -418,7 +418,7 @@ def test_nothing_secret_or_private_is_logged_in_a_full_run(db_url, caplog, app_d
         app_debug()
         r = env.ask(LEAK_QUESTION)
         page = env.run_page(r.headers["location"]).text
-        home = env.c.get("/", headers=H).text
+        home = env.c.get("/library", headers=H).text  # the list of questions is on Library
         # the other ways a question is refused, each with its fixed line
         env.ask("   ")
         env.ask("zq7 " * 1001)
@@ -542,7 +542,7 @@ APP_LINE = (r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} (?:INFO|WARNING|ERROR) "
 
 def _run_question_under_uvicorn(db_url: str, mode: str) -> tuple[str, str, str]:
     """Starts `ask_app:build` under Uvicorn, asks LEAK_QUESTION, waits for the run page to
-    stop refreshing, opens the home page, stops the server. Returns (run page, home, stderr)."""
+    stop refreshing, opens the Library page, stops the server. Returns (run page, home, stderr)."""
     import os
     import subprocess
     import sys
@@ -592,7 +592,7 @@ def _run_question_under_uvicorn(db_url: str, mode: str) -> tuple[str, str, str]:
                 break
             assert time.monotonic() < deadline, "the run did not finish"
             time.sleep(0.2)
-        home = httpx.get(f"{base}/", headers=h, timeout=10).text
+        home = httpx.get(f"{base}/library", headers=h, timeout=10).text
     finally:
         proc.terminate()
         out, err = proc.communicate(timeout=10)

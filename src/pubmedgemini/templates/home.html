@@ -9,12 +9,4 @@
 {% include "_search_form.html" %}
 </section>
 <p class="muted">Written answers arrive in the next stage.</p>
-<section class="card">
-<h2>Your questions</h2>
-{% for r in runs %}
-<div class="item"><p><a href="/runs/{{ r.id }}">{{ r.short }}</a></p><p>{{ r.created_ist }} · {{ r.status_word }}</p></div>
-{% else %}
-<p>No questions yet.</p>
-{% endfor %}
-</section>
 {% endblock %}

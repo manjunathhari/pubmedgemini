@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Library</h1>
+<section class="card">
+{% for r in runs %}
+<div class="item"><p><a href="/runs/{{ r.id }}">{{ r.short }}</a></p><p>{{ r.created_ist }} · {{ r.status_word }}</p></div>
+{% else %}
+<p>No questions yet.</p>
+{% endfor %}
+</section>
+{% endblock %}
