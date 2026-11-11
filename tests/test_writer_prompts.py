@@ -403,7 +403,8 @@ def test_user_message_is_incisives_exactly():
     # w.rs:798-871 writer_user and notes_tail, w.rs:756-796 study_block, typed out.
     u = writer_user(
         "Does X help?",
-        [study("11111111", "Pain 4 vs 5."),
+        [study("11111111", "Pain 4 vs 5.",
+               pub_types=("Randomized Controlled Trial", "Multicenter Study")),
          study("22222222", None, title="B", journal=None, year=None, pub_types=(), doi=None,
                retracted=True, design="SR_MA", why="the meta-analysis")],
         [Contradiction(pmid="22222222", note="smaller effect")],
@@ -419,7 +420,8 @@ def test_user_message_is_incisives_exactly():
         "<source id=\"researcher-why-11111111\">\nthe largest trial\n</source>\n"
         "<source id=\"pmid-11111111\">\n"
         "Title: A trial\nJournal: Br J Surg\nYear: 2025\n"
-        "Publication types: Randomized Controlled Trial\n"
+        # w.rs:774-777: capped(&s.pub_types.join(", "), c.pub_types)
+        "Publication types: Randomized Controlled Trial, Multicenter Study\n"
         "DOI: 10.1/x\nRetracted: no\nAbstract:\nPain 4 vs 5.\n</source>\n\n"
         "Study 2 - PMID 22222222\n"
         "Researcher's design label: SR_MA\n"
