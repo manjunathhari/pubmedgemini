@@ -901,10 +901,12 @@ def test_citation_check_uses_fetched_studies_only(run_app, migrated_pool, upstre
     assert [r.pmid for r in a.references] == [ID2]
     i = a.integrity
     assert i.dropped_unfetched == 1 and i.dropped_numbers == 1 and i.dropped_studies == 1
-    assert i.removed_citations >= 1
+    # ID1 is cited in the bottom line, the outcome's evidence and effect texts and its pmids,
+    # the second trial row's results, the key number and the notable finding (text and pmids).
+    assert i.removed_citations == 8
     # t.rs:656-668, singular "number" and "trial row"
-    assert v.lines[-2] == (f"Citation check: removed {i.removed_citations} unknown citations, "
-                           "dropped 1 number and 1 trial row")
+    assert v.lines[-2] == ("Citation check: removed 8 unknown citations, dropped 1 number and 1 "
+                           "trial row")
     assert ID1 not in json.dumps(a.answer.model_dump()) and ID2 in a.answer.bottom_line.text
     assert [s.pmid for s in a.answer.studies] == [ID2]
 
