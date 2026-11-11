@@ -419,6 +419,38 @@ def test_error_body_read_errors_carry_no_cause_or_context():
     _no_chain(e.value)
 
 
+# The same for the parse and request paths: a JSONDecodeError holds the whole reply text
+# (`.doc`), a TypeError or ValueError from encoding can name the body; neither may ride along.
+
+@pytest.mark.parametrize("raw", [
+    b'{"candidates": [{"content": {"parts": [{"text": "zq7 reply text',  # cut off
+    b"<html>zq7 reply text</html>",  # not JSON
+    b"[" * 100_000,  # too deep: RecursionError
+    b'["zq7 reply text"]',  # JSON, not an object
+])
+def test_parse_errors_carry_no_cause_or_context(raw):
+    with pytest.raises(GeminiError) as e:
+        client(FakeGemini([httpx.Response(200, content=raw)])).generate({}, 60)
+    assert e.value.kind == "parse"
+    _no_chain(e.value)
+    assert "zq7" not in repr(e.value) and "zq7" not in str(e.value)
+
+
+def _circular():
+    d = {"zq7": "question text"}
+    d["self"] = d
+    return d
+
+
+@pytest.mark.parametrize("body", [{"zq7": object()}, _circular()])
+def test_request_refused_carries_no_cause_or_context(body):
+    g = FakeGemini([])
+    with pytest.raises(GeminiError) as e:
+        client(g).generate(body, 60)
+    assert e.value.kind == "request_refused" and g.sent == []
+    _no_chain(e.value)
+
+
 def test_total_deadline_is_checked_while_reading():
     clock = FakeClock()
 

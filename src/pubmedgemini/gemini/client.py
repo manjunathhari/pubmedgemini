@@ -13,7 +13,8 @@ worked against the live API on 10 Nov 2026. The outbound discipline is F1's `lit
   every chunk; a reply body is capped at MAX_REPLY_BYTES, an error body is read only up to
   MAX_ERROR_BYTES.
 * Every failure is a GeminiError holding a fixed kind and the status: never a URL, a body or
-  Google's error `message`, and raised `from None`. `classify` reads only `error.status`,
+  Google's error `message`, and raised `from None` outside any `except` block, so it has no
+  `__cause__` and no `__context__`. `classify` reads only `error.status`,
   `error.details[].@type`, `.reason`, `.retryDelay` and `QuotaFailure.violations[].quotaId`.
 
 Nothing here logs; the caller logs counts and kinds.
@@ -390,9 +391,14 @@ class GeminiClient:
         if not limit > 0:
             raise GeminiError("timeout")
         deadline = self._clock() + limit
+        content: bytes | None = None
         try:
             content = json.dumps(body, ensure_ascii=False).encode("utf-8")
         except (TypeError, ValueError):
+            pass
+        if content is None:
+            # Raised outside the handler: no __context__, so the encoding error (which can
+            # name part of the body) is not reachable from the GeminiError.
             raise GeminiError("request_refused") from None
         request = self._http.build_request(
             "POST",
@@ -435,11 +441,14 @@ class GeminiClient:
             raw = self._read(response, deadline, MAX_REPLY_BYTES, cut=False)
         finally:
             response.close()
+        obj: object = None
         try:
             obj = json.loads(raw)
         except (ValueError, RecursionError):
-            raise GeminiError("parse") from None
+            pass
         if not isinstance(obj, dict):
+            # Outside the handler: no __context__, so a JSONDecodeError (its `.doc` is the
+            # whole reply) is not reachable from the GeminiError.
             raise GeminiError("parse") from None
         return parse_reply(clean_json(obj))
 

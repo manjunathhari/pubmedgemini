@@ -438,6 +438,7 @@ class _Run:
                 return "turn_cap", done
             if done > 0 and now >= self.timing.wrap_up_at:
                 return "wrap_up", done
+            fatal: str | None = None
             try:
                 reply = self.caller.call(
                     turn_body(system, contents, declarations, TURN_MAX_TOKENS),
@@ -445,13 +446,15 @@ class _Run:
                     on_wait=self.on_wait, attempt_deadline=self.timing.hard_stop_at,
                 )
             except DeadlineReached:
-                if done == 0:
-                    raise FatalModelError("rate_limited") from None
-                return "wrap_up", done
+                if done > 0:
+                    return "wrap_up", done
+                fatal = "rate_limited"
             except GeminiError as e:
-                if done == 0 or e.kind in FATAL_KINDS:
-                    raise FatalModelError(e.kind) from None
-                return "turn_failed", done
+                if done > 0 and e.kind not in FATAL_KINDS:
+                    return "turn_failed", done
+                fatal = e.kind
+            if fatal is not None:
+                raise FatalModelError(fatal) from None  # outside the handler: no context
             turn = done + 1
             self.transcript.assistant(reply.text, TURN_MAX_TOKENS * NOTE_BYTES_PER_TOKEN)
             if reply.content is not None:
@@ -516,20 +519,23 @@ class _Run:
     def final_list(self, user: str) -> dict | None:
         """Incisive `start_structured_from`: one retry with SCHEMA_NUDGE on an unreadable
         reply. None: not completed (logged by kind)."""
+        fatal: str | None = None
         try:
             lst = self.call_list(user, "study_list")
             if lst is None:
                 lst = self.call_list(user + SCHEMA_NUDGE, "study_list_nudge")
         except GeminiError as e:
-            if e.kind in FATAL_KINDS:
-                raise FatalModelError(e.kind) from None
-            log.info("researcher study_list kind=not_completed error=%s", e.kind)
-            return None
+            if e.kind not in FATAL_KINDS:
+                log.info("researcher study_list kind=not_completed error=%s", e.kind)
+                return None
+            fatal = e.kind
         except DeadlineReached:
             log.info("researcher study_list kind=not_completed error=deadline_reached")
             return None
         except _Refused:
             return None
+        if fatal is not None:
+            raise FatalModelError(fatal) from None  # outside the handler: no context
         return lst
 
     def retry_empty(self, user: str) -> dict | None:

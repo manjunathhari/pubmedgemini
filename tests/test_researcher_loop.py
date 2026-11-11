@@ -545,6 +545,26 @@ def test_daily_quota_mid_run_is_fatal(run_research):
     assert e.value.kind == "daily_limit"
 
 
+# Raised outside the handler (as review L4): the GeminiError or DeadlineReached a
+# FatalModelError stands for is not reachable from it.
+
+def _no_chain(err):
+    assert err.__cause__ is None and err.__suppress_context__ and err.__context__ is None
+
+
+@pytest.mark.parametrize("script,kind", [
+    ([error(503, "UNAVAILABLE")] * 3, "overloaded"),  # turn 1 fails
+    ([error(429, "RESOURCE_EXHAUSTED", [RETRY_INFO("300s")])], "rate_limited"),  # deadline
+    ([turn(call("search_pubmed", Q1)), error(402, "X")], "billing_refused"),  # fatal later
+    (SEARCH_THEN_END + [error(401, "X")], "key_refused"),  # the list call
+])
+def test_fatal_model_errors_carry_no_cause_or_context(run_research, script, kind):
+    with pytest.raises(FatalModelError) as e:
+        run_research(script)
+    assert e.value.kind == kind
+    _no_chain(e.value)
+
+
 # ---------- results: caps, wrapping, the transcript ----------
 
 def big_abstracts(n_chars):
