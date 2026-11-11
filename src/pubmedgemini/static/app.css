@@ -66,7 +66,7 @@ h1, h2, h3, p, ul { margin: 0; }
 h1 { font-size: 20px; line-height: 1.25; }
 h2 { font-size: 17px; line-height: 1.3; }
 h3 { font-size: 15px; line-height: 1.35; }
-p, .abstract { font-family: "Source Serif 4", Georgia, serif; }
+p { font-family: "Source Serif 4", Georgia, serif; }
 p + p, form p + p { margin-top: 10px; }
 ul { padding-left: 1.25rem; font-family: "Source Serif 4", Georgia, serif; }
 li + li { margin-top: 6px; }
@@ -128,15 +128,6 @@ button {
 }
 button:hover { background: #333333; }
 input[type="text"] + button, input[type="text"] ~ button { margin-top: 10px; }
-.btn-secondary {
-  min-height: 44px;
-  background: #FFFFFF;
-  color: #333333;
-  border: 1px solid #8C8C8C;
-  font-weight: 500;
-  font-size: 14px;
-}
-.btn-secondary:hover { background: #F4F4F4; }
 
 /* small labels */
 .tag, article strong {
@@ -147,11 +138,6 @@ input[type="text"] + button, input[type="text"] ~ button { margin-top: 10px; }
   font-family: "Hanken Grotesk", system-ui, sans-serif;
   font-size: 12px;
   font-weight: 500;
-}
-.tag-filled {
-  background: #4D4D4D;
-  border-color: #4D4D4D;
-  color: #FFFFFF;
 }
 
 /* focus */

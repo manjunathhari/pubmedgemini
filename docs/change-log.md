@@ -29,3 +29,12 @@ Nothing is deployed yet. Entries start with the first merge to `main` that chang
 
 - The researcher's instructions get one added block, approved by the owner on 11 Nov 2026 (not from Incisive): before it stops, the researcher checks that it has run a broad trial search, the same search for the last five years, a five-year search for reviews and meta-analyses, at least one Europe PMC search, a search for each key trial's longer follow-up, and similar articles for the two most important trials; it re-runs a search that finds fewer than 40 papers with fewer terms, and selects a guideline only when the question asks about practice recommendations. The five years count back from the current year (2021 to 2026 this year).
 - Nothing else changes: the same 8 rounds, the same 14-request cap, the same tools and the same study-list step. Nothing to do on the VPS.
+
+## Look: greys and two fonts (branch `look-greys-fonts`, not merged yet)
+
+- Every page gets the new look the owner signed off on 11 Nov 2026: greys only, Hanken Grotesk for the interface and Source Serif 4 for text, both served by the app itself (no outside font service). Sections sit in white cards on a light grey ground; the page works at phone width.
+- A header on every page: a small "P" tile, "pubmedgemini" and "Educational tool only". This is the only new wording; no other words, links or behaviour changed.
+- The page's own styles moved from the page into a stylesheet at `/static/app.css`; the fonts are under `/static/fonts/`. They sit behind the sign-in gate like every other path.
+- Three older page tests were updated because this look replaces the owner's 10 Nov "plain pages" ruling: they now accept the stylesheet link, class names and wrapper elements, and check the width in the stylesheet. Their checks on upstream text (nothing from PubMed or Europe PMC is rendered as markup) are unchanged, and now also check that every class value is plain letters, digits, hyphens and spaces.
+- Each page view now also makes a few requests for the stylesheet and fonts, which add `request method=GET route=... status=200` lines to the log. Fixed words only, no paths or text; left as they are.
+- Nothing to do on the VPS.
