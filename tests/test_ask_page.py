@@ -164,7 +164,7 @@ def test_home_has_both_boxes_and_no_script(env):
     assert '<label for="question">Ask a question</label>' in r.text
     assert '<textarea id="question" name="question" maxlength="4000" required rows="4">' in r.text
     assert '<button type="submit">Ask</button>' in r.text
-    assert "Free runs left today: about 45" in r.text and PRIVACY in r.text
+    assert "Free runs left today: about 21" in r.text and PRIVACY in r.text
     assert "<h2>Key-word search</h2>" in r.text
     assert "Searches PubMed and Europe PMC with exactly what you type. No model." in r.text
     assert '<label for="q">Search PubMed and Europe PMC</label>' in r.text  # F1's form
@@ -174,7 +174,7 @@ def test_home_has_both_boxes_and_no_script(env):
 
 
 def test_runs_left_goes_down_and_zero_shows_the_reset_time(env):
-    add_calls(env, 486)
+    add_calls(env, 474)
     assert "Free runs left today: about 1" in env.c.get("/", headers=H).text
     add_calls(env, 1)
     page = env.c.get("/", headers=H).text
@@ -372,7 +372,7 @@ def test_cross_site_run_again_is_refused(env):
 
 
 def test_daily_limit_refuses_before_any_call(env):
-    add_calls(env, 487)
+    add_calls(env, 475)
     r = env.ask(QUESTION)
     assert r.status_code == 429
     assert re.search(r"Daily free limit reached\. Resets at \d\d:\d\d IST\.", r.text)
@@ -380,8 +380,8 @@ def test_daily_limit_refuses_before_any_call(env):
     assert env.one("SELECT count(*) FROM runs") == 0 and env.gemini.sent == []
 
 
-def test_daily_limit_leaves_one_run_at_486(env):
-    add_calls(env, 486)
+def test_daily_limit_leaves_one_run_at_474(env):
+    add_calls(env, 474)
     assert env.ask(QUESTION).status_code == 303
 
 
@@ -534,10 +534,10 @@ def test_the_run_cap_shows_its_plain_message(db_url, upstream):
 
 
 def test_a_run_admitted_with_one_left_never_passes_the_day_limit(db_url, upstream):
-    # Owner decision, 11 Nov 2026: cap calls per run. 486 of 500 used leaves one run; Gemini
+    # Owner decision, 11 Nov 2026: cap calls per run. 474 of 500 used leaves one run; Gemini
     # busy on every call takes it to its cap, which lands exactly on the day limit.
     with ask_env(db_url, upstream, BUSY_RUN) as env:
-        add_calls(env, 486)
+        add_calls(env, 474)
         assert "Free runs left today: about 1" in env.c.get("/", headers=H).text
         assert env.ask(QUESTION).status_code == 303
         assert env.one("SELECT error_kind FROM runs") == "run_call_cap"

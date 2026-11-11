@@ -18,7 +18,7 @@ from pydantic import SecretStr
 from pubmedgemini.config import Settings
 from pubmedgemini.gemini.caller import ModelCaller
 from pubmedgemini.gemini.client import GeminiClient
-from pubmedgemini.gemini.quota import GeminiPacer
+from pubmedgemini.gemini.quota import RUN_ATTEMPTS, GeminiPacer
 from pubmedgemini.identity import ensure_owner
 from pubmedgemini.lit.tools import ToolFailed
 from pubmedgemini.main import create_app
@@ -463,8 +463,9 @@ def test_an_unexpected_error_fails_the_run_with_a_fixed_kind(run_app, monkeypatc
 
 BUSY = [error(503, "UNAVAILABLE")] * 2
 SEARCH = turn(call("search_pubmed", Q1))
-# Gemini answers 503 twice per call: 3 attempts a call; the cap of 14 comes on turn 5.
-BUSY_RUN = (BUSY + [SEARCH]) * 4 + BUSY + [SEARCH, LIST_OK]
+# Gemini answers 503 twice per call: 3 attempts a call, so the 8 turns use 24 attempts and the
+# study-list call hits the cap of 26 on its second.
+BUSY_RUN = (BUSY + [SEARCH]) * 8 + BUSY + [LIST_OK]
 # The most calls a run makes: 8 turns, the list call (unreadable), its nudge (empty) and S3.
 ELEVEN = [SEARCH] * 8 + [reply([{"text": "no"}]), EMPTY, LIST_OK]
 
@@ -479,15 +480,16 @@ def test_a_busy_gemini_reaches_the_cap_and_fails_the_run(run_app, caplog):
     v = run_app.view(rid)
     assert (v.status, v.error_kind) == ("failed", "run_call_cap")
     assert v.stop_reason is None and v.rounds is None and v.finished_at is not None
-    assert calls_of(run_app.pool, rid) == 14 and len(run_app.gemini.sent) == 14
-    assert len(run_app.gemini.script) == 2  # nothing sent after the cap
+    assert calls_of(run_app.pool, rid) == RUN_ATTEMPTS == 26
+    assert len(run_app.gemini.sent) == RUN_ATTEMPTS
+    assert len(run_app.gemini.script) == 1  # nothing sent after the cap
     assert end_message(v) is None  # the page words it from the kind
     assert f"run kind=finished run_id={rid} status=failed error_kind=run_call_cap" in [
         r.getMessage() for r in caplog.records]
 
 
 def test_the_runs_attempt_count_is_forgotten_when_the_run_ends(run_app, monkeypatch):
-    # The count is kept while the run goes (the cap holds: 14 attempts, none after) and is
+    # The count is kept while the run goes (the cap holds: 26 attempts, none after) and is
     # gone at its end, whether the run is done, capped or failed inside.
     import pubmedgemini.runner as runner_mod
 
@@ -500,8 +502,8 @@ def test_the_runs_attempt_count_is_forgotten_when_the_run_ends(run_app, monkeypa
 
     monkeypatch.setattr(ModelCaller, "forget", spy)
     capped = run_app.start(script=BUSY_RUN)
-    assert held == [{capped: 14}] and run_app.model_caller._sent == {}
-    assert calls_of(run_app.pool, capped) == 14
+    assert held == [{capped: RUN_ATTEMPTS}] and run_app.model_caller._sent == {}
+    assert calls_of(run_app.pool, capped) == RUN_ATTEMPTS
 
     held.clear()
     done = run_app.start(script=ELEVEN)
@@ -522,33 +524,37 @@ def test_a_normal_eleven_call_run_is_unaffected(run_app):
 
 
 def test_eleven_calls_with_three_retries_still_finish(run_app):
-    # Exactly the cap: three transport retries spread over the run.
-    script = [BUSY[0]] + ELEVEN[:8] + [BUSY[0], ELEVEN[8], ELEVEN[9], BUSY[0], ELEVEN[10]]
+    # Exactly the cap: 15 transport retries spread over the run (two before each of the first
+    # seven calls, one before the eighth).
+    script = []
+    for n, item in zip([2] * 7 + [1] + [0] * 3, ELEVEN, strict=True):
+        script += [BUSY[0]] * n + [item]
     rid = run_app.start(script=script)
     v = run_app.view(rid)
     assert (v.status, v.error_kind) == ("done", None)
-    assert calls_of(run_app.pool, rid) == 14
+    assert calls_of(run_app.pool, rid) == RUN_ATTEMPTS
 
 
 def test_the_s3_retry_counts_toward_the_cap(run_app):
-    # 11 attempts in 7 turns, the list call and the nudge: S3's first attempt is the 14th,
-    # its retry would be the 15th.
-    script = (BUSY + [SEARCH]) * 2 + [SEARCH] * 4 + [END, reply([{"text": "no"}]), EMPTY,
-                                                       BUSY[0], LIST_OK]
+    # 25 attempts in 7 turns (21), the list call (2) and the nudge (2): S3's first attempt is
+    # the 26th, its retry would be the 27th.
+    script = (BUSY + [SEARCH]) * 6 + BUSY + [END] + [BUSY[0], reply([{"text": "no"}]),
+                                                      BUSY[0], EMPTY, BUSY[0], LIST_OK]
     rid = run_app.start(script=script)
     v = run_app.view(rid)
     assert (v.status, v.error_kind) == ("failed", "run_call_cap")
-    assert calls_of(run_app.pool, rid) == 14 and run_app.gemini.script == [LIST_OK]
+    assert calls_of(run_app.pool, rid) == RUN_ATTEMPTS and run_app.gemini.script == [LIST_OK]
 
 
 def test_the_nudge_counts_toward_the_cap(run_app):
-    # 11 attempts in 7 turns, two for the list call: the nudge's retry would be the 15th.
-    script = (BUSY + [SEARCH]) * 2 + [SEARCH] * 4 + [END, BUSY[0], reply([{"text": "no"}]),
-                                                       BUSY[0], LIST_OK]
+    # 21 attempts in 7 turns, three for the list call: the nudge's first attempt is the 25th
+    # and its second the 26th; its third would be the 27th.
+    script = (BUSY + [SEARCH]) * 6 + BUSY + [END] + BUSY + [reply([{"text": "no"}])] + BUSY + [
+        LIST_OK]
     rid = run_app.start(script=script)
     v = run_app.view(rid)
     assert (v.status, v.error_kind) == ("failed", "run_call_cap")
-    assert calls_of(run_app.pool, rid) == 14 and run_app.gemini.script == [LIST_OK]
+    assert calls_of(run_app.pool, rid) == RUN_ATTEMPTS and run_app.gemini.script == [LIST_OK]
 
 
 # ---------- the writers ----------

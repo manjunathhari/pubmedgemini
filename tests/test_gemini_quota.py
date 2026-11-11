@@ -130,14 +130,14 @@ def add_calls(pool, model: str, n: int, days_ago: int = 0) -> None:
 
 
 def test_run_calls_and_reserve():
-    assert (RUN_CALLS, CALL_RESERVE) == (11, 3)
+    assert (RUN_CALLS, CALL_RESERVE) == (23, 3)
 
 
 def test_a_run_may_send_its_calls_plus_the_reserve():  # owner decision, 11 Nov: cap per run
-    assert RUN_ATTEMPTS == RUN_CALLS + CALL_RESERVE == 14
+    assert RUN_ATTEMPTS == RUN_CALLS + CALL_RESERVE == 26
 
 
-@pytest.mark.parametrize("rpd", [1, 13, 14, 15, 24, 25, 100, 500, 1000])
+@pytest.mark.parametrize("rpd", [1, 13, 14, 15, 24, 25, 26, 27, 48, 49, 100, 500, 1000])
 def test_a_run_admitted_with_one_left_cannot_pass_the_day_limit_at_its_cap(rpd):
     # Admission is `runs_left >= 1`; a run then sends at most RUN_ATTEMPTS attempts.
     for used in range(rpd + 30):
@@ -150,20 +150,20 @@ def test_a_run_admitted_with_one_left_cannot_pass_the_day_limit_at_its_cap(rpd):
         assert runs_left_for(rpd, 0) == 0
 
 
-def test_runs_left_on_a_fresh_day_is_unchanged():  # 45 before and after the cap
-    assert runs_left_for(500, 0) == 45 == (500 - 3) // 11
-    assert [runs_left_for(500, u) for u in (475, 476, 486, 487, 500, 600)] == [2, 1, 1, 0, 0, 0]
+def test_runs_left_is_21_on_a_fresh_day():  # was 45 with RUN_CALLS 11 and a cap of 14
+    assert runs_left_for(500, 0) == 21 == 1 + (500 - 26) // 23
+    assert [runs_left_for(500, u) for u in (451, 452, 474, 475, 500, 600)] == [2, 1, 1, 0, 0, 0]
 
 
 def test_runs_left_arithmetic(migrated_pool):
-    assert runs_left(migrated_pool, "m", 500) == 45  # (500 - 3) // 11
-    add_calls(migrated_pool, "m", 486)
+    assert runs_left(migrated_pool, "m", 500) == 21  # 1 + (500 - 26) // 23
+    add_calls(migrated_pool, "m", 474)
     assert runs_left(migrated_pool, "m", 500) == 1
     add_calls(migrated_pool, "m", 1)
     assert runs_left(migrated_pool, "m", 500) == 0
     add_calls(migrated_pool, "other-model", 50)
     assert runs_left(migrated_pool, "m", 500) == 0  # per model
-    assert runs_left(migrated_pool, "other-model", 500) == 40
+    assert runs_left(migrated_pool, "other-model", 500) == 19
     add_calls(migrated_pool, "m", 100)
     assert runs_left(migrated_pool, "m", 500) == 0  # never negative
 

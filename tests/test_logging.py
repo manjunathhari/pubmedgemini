@@ -484,7 +484,7 @@ def test_question_refusals_log_fixed_lines(db_url, caplog, app_debug):
             conn.execute("UPDATE runs SET status = 'done' WHERE status = 'queued'")
         app_debug()
         env.ask(LEAK_QUESTION)
-    with ask_env(db_url, None, gemini_rpd=13) as env:  # (13 - 3) // 11 = 0 runs left
+    with ask_env(db_url, None, gemini_rpd=13) as env:  # 13 < RUN_ATTEMPTS (26): 0 runs left
         app_debug()
         env.ask(LEAK_QUESTION)
     assert_ask_lines_fixed(caplog)
