@@ -10,7 +10,7 @@ line, the closing line and the outcome:
 | Researcher result | Status | error_kind |
 |---|---|---|
 | FatalModelError | failed | its kind |
-| HardStop | failed | hard_stop |
+| HardStop, or the hard stop passed before or after the records fetch | failed | hard_stop |
 | final_failed | partial | researcher_incomplete |
 | empty_selection | partial | empty_selection |
 | nothing selected | done (partial after turn_failed or wrap_up) | none |
@@ -146,6 +146,11 @@ def _outcome(r: Research) -> tuple[str, str | None]:
     return ("partial" if r.stop == "turn_failed" else "done"), None
 
 
+def _hard_stop(pool: ConnectionPool, run_id: UUID) -> None:
+    finish_run(pool, run_id, "failed", "hard_stop", None, None)
+    log.info("run kind=finished run_id=%s status=failed error_kind=hard_stop", run_id)
+
+
 def run_one(
     run_id: UUID,
     *,
@@ -164,25 +169,33 @@ def run_one(
         set_running(pool, run_id)
         log.info("run kind=running run_id=%s model=%s", run_id, model)
         progress = DbProgress(pool, run_id)
+        timing = Timing.quick(clock())
         try:
             r = research(question, tools=tools, caller=caller, run_id=run_id,
-                         timing=Timing.quick(clock()), progress=progress, clock=clock)
+                         timing=timing, progress=progress, clock=clock)
         except FatalModelError as e:
             finish_run(pool, run_id, "failed", e.kind, None, None)
             log.info("run kind=finished run_id=%s status=failed error_kind=%s", run_id, e.kind)
             return
         except HardStop:
-            finish_run(pool, run_id, "failed", "hard_stop", None, None)
-            log.info("run kind=finished run_id=%s status=failed error_kind=hard_stop", run_id)
+            _hard_stop(pool, run_id)
             return
         line = _stop_line(r)
         if line is not None:
             progress.line("note", line)
         if r.validated is not None and r.validated.selected:
+            # A literature call cannot be cut once started (plan: Hard stop), so the hard
+            # stop is checked before and after it.
+            if clock() >= timing.hard_stop_at:
+                _hard_stop(pool, run_id)
+                return
             try:
                 tools.fetch_papers([s.pmid for s in r.validated.selected])
             except ToolFailed as e:
                 log.warning("run kind=records_not_fetched error_kind=%s", e.error_kind)
+            if clock() >= timing.hard_stop_at:
+                _hard_stop(pool, run_id)
+                return
         if r.validated is not None:
             save_list(pool, run_id, r.validated)
         for source in r.down:

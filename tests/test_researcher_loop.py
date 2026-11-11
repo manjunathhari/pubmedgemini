@@ -428,6 +428,70 @@ def test_hard_stop_between_tool_calls_raises(run_research):
     assert stub.calls == ["search_pubmed"]
 
 
+# The hard stop after the tool turns (review M3): a list call (its nudge, its S3 retry) or a
+# turn cut at 420 s ends the run as Incisive's dropped future does, `failed` / `hard_stop`.
+
+class ClockHolder:
+    """Grabs the run's clock and timing from the first step line, so a scripted Gemini step
+    can move the clock while its request is in flight."""
+
+    def __init__(self):
+        self.clock = self.timing = None
+
+    def on_line(self, text, clock, timing):
+        self.clock, self.timing = clock, timing
+
+    def at_hard_stop(self, then):
+        """A Gemini step that moves the clock to the hard stop, then answers `then` (a 200
+        body) or, with None, times out."""
+        def step(request):
+            self.clock.t = max(self.clock.t, self.timing.hard_stop_at)
+            if then is None:
+                raise httpx.ReadTimeout("cut")
+            return httpx.Response(200, json=then)
+        return step
+
+
+def test_list_call_cut_at_the_hard_stop_is_a_hard_stop(run_research):
+    h = ClockHolder()
+    with pytest.raises(HardStop):
+        run_research(SEARCH_THEN_END + [h.at_hard_stop(None)], on_line=h.on_line)
+
+
+def test_list_reply_after_the_hard_stop_is_a_hard_stop(run_research):
+    h = ClockHolder()
+    with pytest.raises(HardStop):
+        run_research(SEARCH_THEN_END + [h.at_hard_stop(LIST_OK)], on_line=h.on_line)
+
+
+def test_nudge_cut_at_the_hard_stop_is_a_hard_stop(run_research):
+    h = ClockHolder()
+    with pytest.raises(HardStop):
+        run_research(SEARCH_THEN_END + [reply([{"text": "not json"}]), h.at_hard_stop(None)],
+                     on_line=h.on_line)
+
+
+def test_s3_retry_cut_at_the_hard_stop_is_a_hard_stop(run_research):
+    h = ClockHolder()
+    with pytest.raises(HardStop):
+        run_research(SEARCH_THEN_END + [EMPTY_LIST, h.at_hard_stop(None)], on_line=h.on_line)
+
+
+def test_turn_cut_at_the_hard_stop_is_a_hard_stop_not_a_list_call(run_research):
+    h = ClockHolder()
+    with pytest.raises(HardStop):
+        run_research([turn(call("search_pubmed", Q1)), h.at_hard_stop(None), LIST_OK],
+                     on_line=h.on_line)
+
+
+def test_list_call_short_of_the_hard_stop_is_still_not_completed(run_research):
+    # The plan's difference stands: a 429 wait that would pass the hard stop, asked before
+    # it, leaves the list not completed (partial), not a hard stop.
+    script = SEARCH_THEN_END + [error(429, "RESOURCE_EXHAUSTED", [RETRY_INFO("500s")])]
+    r, _g, _prog = run_research(script)
+    assert r.final_failed
+
+
 # ---------- failed calls ----------
 
 def test_first_turn_error_is_fatal(run_research):

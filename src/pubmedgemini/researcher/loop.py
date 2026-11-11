@@ -12,7 +12,8 @@ A port of Incisive (commit 12630f7, `crates/incisive-app/src/`) without money:
 | caps and notes | `agent/agent_loop.rs` `RESULT_CHARS`, `TOTAL_RESULT_CHARS`, `MIN_RESULT_CHARS`, `MAX_TOOLS_PER_TURN`, `TOO_MANY_TOOLS_NOTE`, `WITHHELD_NOTE`, `TRANSCRIPT_INPUT_BYTES`, `TRANSCRIPT_ERROR_BYTES`, `NOTE_BYTES_PER_TOKEN` |
 | `Timing.quick` | `runs/mod.rs` `DepthSettings::QUICK` (360 s, writer allowance 150 s); `runs/budget.rs` `hard_stop_after` (+60 s) |
 
-Between turns, in this order: past the hard stop, `HardStop`; 8 turns done, the final call;
+Between turns, in this order: past the hard stop, `HardStop` (checked again after the loop
+and around every study-list call); 8 turns done, the final call;
 after turn 1, past the wrap-up point, the final call. A failed turn 1 ends the run; a failed
 later turn goes to the final call with what was found. The final call has no tools and no
 conversation: the task, a plain-text transcript and the submit line, read strictly, with one
@@ -162,7 +163,8 @@ class Progress(Protocol):
 
 
 class HardStop(Exception):
-    """The run passed its hard stop (420 s) between turns or tool calls."""
+    """The run passed its hard stop (420 s): between turns or tool calls, after the loop, or
+    before, during or after a study-list call (its nudge and S3 retry included)."""
 
     def __init__(self) -> None:
         super().__init__("hard_stop")
@@ -481,13 +483,27 @@ class _Run:
             self.turn_line(turn)
             done = turn
 
+    def check_hard_stop(self, where: str) -> None:
+        """Incisive drops the whole run at the hard stop (`runs/worker.rs`, `Failed("hard_stop")`):
+        past it, whatever a list call did, the run ends as a hard stop."""
+        if self.clock() >= self.timing.hard_stop_at:
+            log.info("researcher kind=hard_stop_%s", where)
+            raise HardStop()
+
     def call_list(self, user: str, step: str) -> dict | None:
         """One study-list call: the list, or None when the reply was refused or unreadable.
-        Raises GeminiError and DeadlineReached."""
+        Raises HardStop when the hard stop is reached before or during the call, else
+        GeminiError and DeadlineReached."""
+        self.check_hard_stop("before_list_call")
         body = structured_body(with_source_rule(FINAL_SYSTEM), user, study_list_schema(),
                                FINAL_MAX_TOKENS)
-        reply = self.caller.call(body, step=step, run_id=self.run_id,
-                                 deadline=self.timing.hard_stop_at, on_wait=self.on_wait)
+        try:
+            reply = self.caller.call(body, step=step, run_id=self.run_id,
+                                     deadline=self.timing.hard_stop_at, on_wait=self.on_wait)
+        except (GeminiError, DeadlineReached):
+            self.check_hard_stop("in_list_call")
+            raise
+        self.check_hard_stop("in_list_call")
         if _refused(reply):
             log.info("researcher %s kind=refused finish=%s", step, finish_log_kind(reply.finish))
             raise _Refused()
@@ -588,6 +604,7 @@ def research(
     run = _Run(question, tools, caller, run_id, timing, progress, clock)
     progress.line("search", SEARCHING_LINE)
     stop, rounds = run.loop()
+    run.check_hard_stop("after_loop")
     log.info("researcher loop_done stop=%s turns=%d tool_calls=%d result_chars=%d", stop,
              rounds, run.transcript.calls, run.result_chars)
     user = run.transcript.render(task(question), FINAL_INSTRUCTION)

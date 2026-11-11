@@ -97,7 +97,7 @@ class RunApp:
                            jitter=lambda: 0.5)
 
     def runner(self, script, tools=None):
-        clock = FakeClock()
+        clock = self.clock = FakeClock()
         caller = self.caller(script, clock)
         lit = tools or self.tools
         return lambda rid: run_one(rid, pool=self.pool, tools=lit, caller=caller, model=MODEL,
@@ -361,6 +361,55 @@ def test_hard_stop_fails_the_run(run_app, monkeypatch):
     assert (v.status, v.error_kind) == ("failed", "hard_stop")
     assert end_message(v) == HARD_STOP_MESSAGE == (
         "This run ran out of time (7 minutes). Please run the question again.")
+
+
+def test_list_call_cut_at_the_hard_stop_fails_the_run(run_app):  # review M3
+    def cut(request):
+        run_app.clock.t += 420
+        raise httpx.ReadTimeout("cut")
+
+    v = run_app.view(run_app.start(script=[turn(call("search_pubmed", Q1)), END, cut]))
+    assert (v.status, v.error_kind) == ("failed", "hard_stop")
+    assert end_message(v) == HARD_STOP_MESSAGE and v.selected == []
+
+
+def test_fetch_past_the_hard_stop_fails_the_run(run_app, migrated_pool, upstream):  # M3
+    from conftest import make_tools
+
+    tools = make_tools(migrated_pool, upstream)
+    real = tools.fetch_papers
+
+    def slow(pmids):
+        out = real(pmids)
+        run_app.clock.t += 420
+        return out
+
+    tools.fetch_papers = slow
+    v = run_app.view(run_app.start(tools=tools))
+    assert (v.status, v.error_kind) == ("failed", "hard_stop")
+    assert end_message(v) == HARD_STOP_MESSAGE and "Study list ready" not in v.lines
+
+
+def test_no_fetch_once_past_the_hard_stop(run_app, migrated_pool, upstream, monkeypatch):
+    # research returns a list just as the clock passes 420 s: no fetch, no list, hard_stop.
+    from conftest import make_tools
+
+    import pubmedgemini.runner as runner_mod
+    from pubmedgemini.researcher.loop import Research
+
+    tools = make_tools(migrated_pool, upstream)
+    fetched = []
+    tools.fetch_papers = lambda pmids: fetched.append(pmids) or {}
+
+    def late(question, *, timing, clock, **k):
+        run_app.clock.t = timing.hard_stop_at
+        v = Validated((Selected(ID1, "RCT", "A trial."),), (), (), 0, 0, 0)
+        return Research(v, (), frozenset({ID1}), "end_turn", 1, False, False, ())
+
+    monkeypatch.setattr(runner_mod, "research", late)
+    v = run_app.view(run_app.start(script=[], tools=tools))
+    assert (v.status, v.error_kind) == ("failed", "hard_stop") and fetched == []
+    assert v.selected == []
 
 
 def test_fetch_failure_keeps_the_list(run_app, migrated_pool, upstream):
