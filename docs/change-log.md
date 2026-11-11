@@ -41,7 +41,7 @@ Nothing is deployed yet. Entries start with the first merge to `main` that chang
 
 ## Library and Activity pages, and the menu (branch `library-activity`, not merged yet)
 
-- Every page a signed-in, set-up user sees now has a menu under the header: Ask, Library, Activity. The current one is bold with an underline. Pages for someone not set up, and the plain message pages (such as "That question wasn't found"), show the header without the menu. The app's name on the page stays "pubmedgemini".
+- Every page a signed-in, set-up user sees now has a menu under the header: Ask, Library, Activity. The current one is bold with an underline. A plain message page for a signed-in user (such as "That question wasn't found") shows the menu with no item marked; pages for someone not set up or not signed in show the header without the menu. The app's name on the page stays "pubmedgemini".
 - New Library page (`/library`): your past questions, newest first, up to 50, each as before (the question's first words as a link to its page, the date in India time, and the status). "No questions yet." when there are none. A run page and the key-word results page highlight Library and Ask in the menu.
 - New Activity page (`/activity`): a card "My questions, last 14 days" with one row per day (India time), today first, zeros included, and the number of questions you asked that day. A question counts on the India day it was asked, whatever happened to it.
 - The "Your questions" list is gone from the home page; it lives on Library. Nothing else on the home page changed.

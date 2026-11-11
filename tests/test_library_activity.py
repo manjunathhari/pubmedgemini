@@ -74,6 +74,20 @@ def test_no_menu_when_not_set_up(env):
         assert "haven&#39;t been set up yet" in r.text
         assert "<nav" not in r.text
         assert "<header" in r.text
+    # a message page reached with no known user (no sign-in) has none either
+    r = env.c.get("/library")
+    assert r.status_code == 401 and "<nav" not in r.text and "<header" in r.text
+
+
+def test_menu_on_message_page_for_signed_in_user(env):
+    for path in (f"/runs/{uuid.uuid4()}", "/runs/not-a-uuid"):
+        r = env.c.get(path, headers=H)
+        assert r.status_code == 404 and "That question wasn&#39;t found" in r.text
+        assert [(h, t) for h, _, t in nav_links(r.text)] == [
+            ("/", "Ask"), ("/library", "Library"), ("/activity", "Activity")]
+        assert current_of(r.text) == [] and 'class="current"' not in r.text
+    again = env.c.post(f"/runs/{uuid.uuid4()}/again", headers=H)
+    assert again.status_code == 404 and len(nav_links(again.text)) == 3
 
 
 # ---------- Library ----------
@@ -189,6 +203,19 @@ def test_daily_question_counts_uses_india_day(migrated_pool):
     assert daily_question_counts(migrated_pool, uid, late)[0][0] == date(2026, 11, 11)
 
 
+def test_daily_question_counts_cuts_at_india_midnight_to_the_second(migrated_pool):
+    uid = add_user(migrated_pool, "a@example.com")
+    add_run(migrated_pool, uid, datetime(2026, 11, 10, 18, 29, 59, tzinfo=UTC))  # 23:59:59, 10 Nov
+    add_run(migrated_pool, uid, datetime(2026, 11, 10, 18, 30, 0, tzinfo=UTC))  # 00:00:00, 11 Nov
+    got = dict(daily_question_counts(migrated_pool, uid, NOW))
+    assert got[date(2026, 11, 10)] == 1 and got[date(2026, 11, 11)] == 1
+    # and the same cut for "now" itself
+    at = datetime(2026, 11, 10, 18, 29, 59, tzinfo=UTC)
+    assert daily_question_counts(migrated_pool, uid, at)[0][0] == date(2026, 11, 10)
+    assert daily_question_counts(migrated_pool, uid, at + timedelta(seconds=1))[0][0] == date(
+        2026, 11, 11)
+
+
 def test_daily_question_counts_only_my_runs(migrated_pool):
     mine = add_user(migrated_pool, "a@example.com")
     other = add_user(migrated_pool, OTHER)
@@ -207,18 +234,22 @@ def rows_of(html):
 
 
 def test_activity_shows_14_rows_and_todays_count(env):
+    before = datetime.now(UTC) + timedelta(hours=5, minutes=30)
     insert_run(env, question="one")
     insert_run(env, question="two")
     r = env.c.get("/activity", headers=H)
     assert r.status_code == 200 and "<h1>Activity</h1>" in r.text
     assert "My questions, last 14 days" in r.text
+    after = datetime.now(UTC) + timedelta(hours=5, minutes=30)
     rows = rows_of(r.text)
     assert len(rows) == 14 and r.text.count("<tr>") == 15  # one header row
     assert re.fullmatch(r"[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}", rows[0][0])
-    # the page's "today" is the India day; insert_run stamps "now"
-    today = datetime.now(UTC) + timedelta(hours=5, minutes=30)
-    assert rows[0] == (f"{today:%a} {today.day} {today:%b}", "2")
-    assert all(n == "0" for _, n in rows[1:])
+    # The page's "today" is the India day. The real clock is used, so a test that straddles
+    # India midnight (18:30 UTC) may see either adjacent day first; the exact cut is tested on
+    # `daily_question_counts` with fixed times.
+    labels = {f"{d:%a} {d.day} {d:%b}" for d in (before, after)}
+    assert rows[0][0] in labels
+    assert sum(int(n) for _, n in rows) == 2 and all(int(n) <= 2 for _, n in rows)
     assert 'class="table-scroll"' in r.text
 
 

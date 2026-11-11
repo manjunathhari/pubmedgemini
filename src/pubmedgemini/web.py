@@ -146,10 +146,14 @@ def refuse_cross_site_ask(request: Request) -> None:
     _refuse_cross_site(request, "ask")
 
 
-def _message(request: Request, text: str, status_code: int) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request, "message.html", {"message": text}, status_code=status_code
-    )
+def _message(request: Request, text: str, status_code: int,
+             user: User | None = None) -> HTMLResponse:
+    """A message page. With a signed-in, set-up `user` the menu shows (no item current);
+    without one (no sign-in, not set up, start-up or database failures) it does not."""
+    context: dict = {"message": text}
+    if user is not None:
+        context["nav"] = ""
+    return templates.TemplateResponse(request, "message.html", context, status_code=status_code)
 
 
 def require_ready(request: Request) -> None:
@@ -296,7 +300,7 @@ def search(
         return templates.TemplateResponse(request, "results.html", context, status_code=400)
     except BothUnreachable:
         log.info("search kind=unavailable")
-        return _message(request, BOTH_DOWN, 503)
+        return _message(request, BOTH_DOWN, 503, user)
     _log_search(result)
     context |= {
         "result": result,
@@ -322,7 +326,7 @@ def _start_question(request: Request, user: User, question: str):
     settings = state.settings
     if state.gemini_caller is None:
         log.info("ask kind=refused reason=no_key")
-        return _message(request, NO_KEY, 503)
+        return _message(request, NO_KEY, 503, user)
     if not question.strip():
         log.info("ask kind=rejected reason=empty")
         return _home(request, user, 400, ask_message=EMPTY_QUESTION)
@@ -426,7 +430,7 @@ def _outcome_line(request: Request, v: RunView) -> str | None:
 def run_page(request: Request, run_id: str, user: Annotated[User, Depends(current_user)]):
     v = _own_run(request, user, run_id)
     if v is None:
-        return _message(request, RUN_NOT_FOUND, 404)
+        return _message(request, RUN_NOT_FOUND, 404, user)
     active = v.status in ("queued", "running")
     context = {
         "nav": "library",
@@ -449,7 +453,7 @@ def run_again(request: Request, run_id: str, user: Annotated[User, Depends(curre
     """A new run of the stored question: it never goes through the browser again."""
     v = _own_run(request, user, run_id)
     if v is None:
-        return _message(request, RUN_NOT_FOUND, 404)
+        return _message(request, RUN_NOT_FOUND, 404, user)
     return _start_question(request, user, v.question)
 
 
