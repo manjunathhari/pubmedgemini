@@ -517,12 +517,34 @@ def test_db_progress_writes_at_once(run_app):
 def test_set_running_and_finish_run(run_app):
     rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
     set_running(run_app.pool, rid)
-    finish_run(run_app.pool, rid, "partial", "empty_selection", "turn_cap", 8)
+    assert finish_run(run_app.pool, rid, "partial", "empty_selection", "turn_cap", 8) is True
     v = run_app.view(rid)
     assert (v.status, v.error_kind, v.stop_reason, v.rounds) == ("partial", "empty_selection",
                                                                  "turn_cap", 8)
-    with pytest.raises(psycopg.errors.CheckViolation):
-        finish_run(run_app.pool, rid, "weird", None, None, None)
+    rid2 = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    set_running(run_app.pool, rid2)
+    with pytest.raises(psycopg.errors.CheckViolation):  # on a running row (review L5)
+        finish_run(run_app.pool, rid2, "weird", None, None, None)
+
+
+def test_finish_run_never_overwrites_a_stopped_run(run_app, caplog):  # review L5
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    set_running(run_app.pool, rid)
+    assert stop_unfinished(run_app.pool) == 1  # a restart marked it stopped
+    caplog.set_level(logging.DEBUG)
+    assert finish_run(run_app.pool, rid, "done", None, "turn_cap", 8) is False
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind, v.stop_reason, v.rounds) == ("stopped", "restarted", None,
+                                                                 None)
+    msgs = [r.getMessage() for r in caplog.records if r.name.startswith("pubmedgemini")]
+    assert msgs == [f"run kind=finish_not_applied run_id={rid}"]
+
+
+def test_finish_run_twice_keeps_the_first(run_app):  # review L5
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    assert finish_run(run_app.pool, rid, "failed", "hard_stop", None, None) is True  # queued
+    assert finish_run(run_app.pool, rid, "done", None, "turn_cap", 8) is False
+    assert (run_app.view(rid).status, run_app.view(rid).error_kind) == ("failed", "hard_stop")
 
 
 # ---------- the background thread ----------

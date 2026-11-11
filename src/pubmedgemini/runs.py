@@ -319,13 +319,20 @@ def save_list(pool: ConnectionPool, run_id: UUID, validated: Validated) -> None:
 
 
 def finish_run(pool: ConnectionPool, run_id: UUID, status: str, error_kind: str | None,
-               stop_reason: str | None, rounds: int | None) -> None:
+               stop_reason: str | None, rounds: int | None) -> bool:
+    """The run's outcome, written only while it is still `queued` or `running`, so a late
+    write never overwrites `stopped` (a restart) or an earlier outcome. False, logged by a
+    fixed kind, when no row was changed."""
     with pool.connection() as conn:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE runs SET status = %s, error_kind = %s, stop_reason = %s, rounds = %s, "
-            "finished_at = now() WHERE id = %s",
+            "finished_at = now() WHERE id = %s AND status IN ('queued', 'running')",
             (status, error_kind, stop_reason, rounds, run_id),
         )
+        applied = cur.rowcount == 1
+    if not applied:
+        log.info("run kind=finish_not_applied run_id=%s", run_id)
+    return applied
 
 
 def stop_unfinished(pool: ConnectionPool) -> int:
