@@ -370,6 +370,17 @@ APP_LINE_PATTERNS = [
     r"researcher s3 kind=empty_list seen=\d+ reported=\d+ considered=\d+ rounds=\d+",
     r"researcher s3 outcome=usable reported=\d+ considered=\d+",
     r"researcher s3 outcome=(?:empty|not_made) seen=\d+ rounds=\d+",
+    # F3: the writer and the stored answer
+    (r"writer part=(?:trials|outcomes|context|summary|one_piece) attempt=(?:first|retry) "
+     r"outcome=(?:ok|truncated|unreadable|call_failed|no_time) "
+     r"category=(?:syntax|shape|truncated|none) output_tokens=\d+"),
+    r"writer parts_failed parts=(?:trials|outcomes|context|summary)(?:,[a-z]+)*",
+    (r"writer done merged=(?:true|false) outcomes=\d+ numbers=\d+ studies=\d+ "
+     r"labels_defaulted=\d+"),
+    rf"answer stored run_id={UUID} bytes=\d+ written=(?:parts|one_piece|none)",
+    rf"answer kind=not_stored run_id={UUID}",
+    rf"answer kind=unreadable run_id={UUID}",
+    rf"run kind=writer_no_time run_id={UUID} left_s={N}",
 ]
 
 # What must never reach a log line: the question (zq7 and its words), the model's note (yq8),
@@ -429,7 +440,7 @@ def test_nothing_secret_or_private_is_logged_in_a_full_run(db_url, caplog, app_d
         sent = env.gemini.bodies
     # The marked texts were really in the app: Google got the question, the page shows them.
     assert status == "done" and "zq7" in sent[0]["contents"][0]["parts"][0]["text"]
-    for shown in ("Study list ready", "wq6 because", "vq5 older", "uq4 contra", "xq9[tiab]"):
+    for shown in ("Answer ready", "wq6 because", "vq5 older", "uq4 contra", "xq9[tiab]"):
         assert shown in page, shown
     assert "zq7 does mesh" in home
     for leak in LEAKS:
@@ -484,7 +495,7 @@ def test_question_refusals_log_fixed_lines(db_url, caplog, app_debug):
             conn.execute("UPDATE runs SET status = 'done' WHERE status = 'queued'")
         app_debug()
         env.ask(LEAK_QUESTION)
-    with ask_env(db_url, None, gemini_rpd=13) as env:  # (13 - 3) // 11 = 0 runs left
+    with ask_env(db_url, None, gemini_rpd=23) as env:  # under a run's cap of 24: none left
         app_debug()
         env.ask(LEAK_QUESTION)
     assert_ask_lines_fixed(caplog)
@@ -619,7 +630,7 @@ def _assert_stderr_fixed(err: str) -> list[str]:
 
 def test_a_full_run_under_uvicorn_logs_fixed_lines_only(db_url):
     page, home, err = _run_question_under_uvicorn(db_url, "happy")
-    assert "Study list ready" in page and "wq6 because" in page and "zq7 does mesh" in home
+    assert "Answer ready" in page and "wq6 because" in page and "zq7 does mesh" in home
     msgs = _assert_stderr_fixed(err)
     for leak in (*LEAKS, "Traceback", "Exception in"):
         assert leak not in err, leak

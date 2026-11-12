@@ -132,6 +132,31 @@ def whole_ok() -> dict:
     return json_reply(fixture("whole.json"))
 
 
+# The fixtures' made-up PMIDs as the test runs' selected studies: the meta-analysis
+# (90000001) as the run's SR_MA, the Swedish trial (90000004) as its RCT. The rest stay
+# PMIDs that are not in the run's study list.
+RUN_PMIDS = {"90000001": "33763744", "90000004": "36262096"}
+
+
+def remap(value: Any, pmids: dict[str, str] | None = None) -> Any:
+    """`value` with the fixtures' PMIDs replaced (RUN_PMIDS by default)."""
+    s = json.dumps(value, ensure_ascii=False)
+    for a, b in (RUN_PMIDS if pmids is None else pmids).items():
+        s = s.replace(a, b)
+    return json.loads(s)
+
+
+def run_parts(pmids: dict[str, str] | None = None) -> dict:
+    """`parts_ok` for a test run: each part's reply with the run's PMIDs."""
+    return {w.upper(): [json_reply(remap(fixture_part(w), pmids))] for w in PART_FILES} | {
+        ONE_PIECE: []}
+
+
+def run_writer(script: dict | None = None) -> "PartsGemini":
+    """The writer of a test run (FakeGemini's `writer`): `run_parts` unless given."""
+    return PartsGemini(run_parts() if script is None else script)
+
+
 def cut_off(word: str = "outcomes") -> dict:
     """A reply cut off by its output limit (a readable part, but MAX_TOKENS: never read)."""
     return json_reply(fixture_part(word) if word != ONE_PIECE else fixture("whole.json"),

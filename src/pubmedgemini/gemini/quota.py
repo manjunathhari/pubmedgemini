@@ -21,10 +21,17 @@ WINDOW_SECONDS = 60.0
 # Incisive estimates a prompt at 3 bytes a token (`agent/team.rs` module doc).
 BYTES_PER_TOKEN = 3
 
-# The most calls one F2 run makes without transport retries: 8 turns, the study-list call,
-# its one JSON nudge retry and the one S3 retry (Incisive `researcher.rs`, `llm.rs`
-# `start_structured_from`). F3 raises it for the writer and number completion.
-RUN_CALLS = 11
+# The most calls the researcher makes without transport retries: 8 turns, the study-list
+# call, its one JSON nudge retry and the one S3 retry (Incisive `researcher.rs`, `llm.rs`
+# `start_structured_from`).
+RESEARCHER_CALLS = 11
+# The most calls the writer makes (F3 plan D1 option A, owner decision of 12 Nov 2026:
+# Incisive exactly): four parts, one retry each, the one-piece fallback and its retry
+# (Incisive `writer_v3.rs` `section_reply`, `write_quick_parallel_with`, `write_counted`).
+WRITER_CALLS = 10
+# The most calls one run makes without transport retries. F4 adds number completion (one
+# call, no retry).
+RUN_CALLS = RESEARCHER_CALLS + WRITER_CALLS
 # Room for transport retries.
 CALL_RESERVE = 3
 # The most attempts one run may send, every attempt counted as the day count counts it (owner
@@ -162,7 +169,7 @@ def runs_left_for(rpd: int, used: int) -> int:
     without retries, so the number is "about". At least 1 exactly when
     `used + RUN_ATTEMPTS <= rpd`: a run admitted then cannot pass `rpd` even at its cap. Runs
     are admitted one at a time against the live count, so later runs are checked in turn. The
-    same number as `(rpd - used - CALL_RESERVE) // RUN_CALLS` (45 on a fresh day of 500)."""
+    same number as `(rpd - used - CALL_RESERVE) // RUN_CALLS` (23 on a fresh day of 500)."""
     room = rpd - used
     if room < RUN_ATTEMPTS:
         return 0

@@ -103,10 +103,14 @@ class FakeGemini:
     Every `role: model` turn sent back must equal a candidate content this fake served
     (thought signatures intact); anything else fails the test with an AssertionError."""
 
-    def __init__(self, script: Sequence[Step]) -> None:
+    def __init__(self, script: Sequence[Step], writer: Any = None) -> None:
         self.script = list(script)
         self.sent: list[httpx.Request] = []
         self.served: list[dict] = []
+        # F3: the writer's requests (four threads, any order) go to `writer`, a
+        # writer_fakes.PartsGemini serving each part from its own script; `sent` and
+        # `script` stay the researcher's. Without one, a writer request fails the test.
+        self.writer = writer
         self.transport = httpx.MockTransport(self._handle)
 
     @property
@@ -115,6 +119,8 @@ class FakeGemini:
         return [json.loads(r.content) for r in self.sent if r.url.host == GEMINI_HOST]
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
+        if self.writer is not None and is_writer_request(request):
+            return self.writer._handle(request)
         self.sent.append(request)
         if request.url.host != GEMINI_HOST:
             return httpx.Response(404)
@@ -147,6 +153,19 @@ class FakeGemini:
                 and not any(_same_turn(turn, s) for s in self.served)
             ):
                 raise AssertionError("FakeGemini: a model turn sent back was changed")
+
+
+WRITER_START = "You are the WRITER"
+
+
+def is_writer_request(request: httpx.Request) -> bool:
+    """A request of the writer (its system prompt), not of the researcher."""
+    try:
+        body = json.loads(request.content)
+        text = body["systemInstruction"]["parts"][0]["text"]
+    except (ValueError, KeyError, IndexError, TypeError):
+        return False
+    return isinstance(text, str) and text.startswith(WRITER_START)
 
 
 def _same_turn(sent: dict, served: dict) -> bool:

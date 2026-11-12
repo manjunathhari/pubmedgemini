@@ -12,6 +12,7 @@ import httpx
 from gemini_fakes import FakeGemini
 from lit_fakes import FakeUpstream, europepmc_routes, pubmed_routes
 from test_logging import leak_script
+from writer_fakes import run_writer
 
 from pubmedgemini.config import load_settings
 from pubmedgemini.main import create_app
@@ -24,7 +25,7 @@ def _explode(request: httpx.Request) -> httpx.Response:
 def build():
     mode = os.environ.get("ASK_APP_MODE", "happy")
     script = leak_script() if mode == "happy" else [_explode]
-    gemini = FakeGemini(script)
+    gemini = FakeGemini(script, writer=run_writer() if mode == "happy" else None)
     upstream = FakeUpstream(pubmed_routes() | europepmc_routes())
     return create_app(load_settings(), lit_transport=upstream.transport, ncbi_gap_seconds=0,
                       gemini_transport=gemini.transport, gemini_sleep=lambda _s: None)

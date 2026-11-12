@@ -10,6 +10,7 @@ from pubmedgemini.gemini.quota import (
     CALL_RESERVE,
     RUN_ATTEMPTS,
     RUN_CALLS,
+    WRITER_CALLS,
     GeminiPacer,
     calls_today,
     estimate_tokens,
@@ -130,14 +131,16 @@ def add_calls(pool, model: str, n: int, days_ago: int = 0) -> None:
 
 
 def test_run_calls_and_reserve():
-    assert (RUN_CALLS, CALL_RESERVE) == (11, 3)
+    # F3 plan D1 option A (owner, 12 Nov 2026): the researcher's 11 and the writer's 10
+    # (4 parts, 4 retries, the one-piece writer and its retry).
+    assert (WRITER_CALLS, RUN_CALLS, CALL_RESERVE) == (10, 21, 3)
 
 
 def test_a_run_may_send_its_calls_plus_the_reserve():  # owner decision, 11 Nov: cap per run
-    assert RUN_ATTEMPTS == RUN_CALLS + CALL_RESERVE == 14
+    assert RUN_ATTEMPTS == RUN_CALLS + CALL_RESERVE == 24
 
 
-@pytest.mark.parametrize("rpd", [1, 13, 14, 15, 24, 25, 100, 500, 1000])
+@pytest.mark.parametrize("rpd", [1, 13, 14, 15, 23, 24, 25, 44, 45, 46, 100, 500, 1000])
 def test_a_run_admitted_with_one_left_cannot_pass_the_day_limit_at_its_cap(rpd):
     # Admission is `runs_left >= 1`; a run then sends at most RUN_ATTEMPTS attempts.
     for used in range(rpd + 30):
@@ -150,20 +153,28 @@ def test_a_run_admitted_with_one_left_cannot_pass_the_day_limit_at_its_cap(rpd):
         assert runs_left_for(rpd, 0) == 0
 
 
-def test_runs_left_on_a_fresh_day_is_unchanged():  # 45 before and after the cap
-    assert runs_left_for(500, 0) == 45 == (500 - 3) // 11
-    assert [runs_left_for(500, u) for u in (475, 476, 486, 487, 500, 600)] == [2, 1, 1, 0, 0, 0]
+def test_runs_left_on_a_fresh_day():  # 23 under option A
+    assert runs_left_for(500, 0) == 23 == (500 - 3) // 21
+    assert [runs_left_for(500, u) for u in (455, 456, 476, 477, 500, 600)] == [2, 1, 1, 0, 0, 0]
+
+
+def test_runs_left_under_option_a(migrated_pool):
+    assert runs_left(migrated_pool, "m", 500) == 23
+    add_calls(migrated_pool, "m", 476)
+    assert runs_left(migrated_pool, "m", 500) == 1
+    add_calls(migrated_pool, "m", 1)
+    assert runs_left(migrated_pool, "m", 500) == 0
 
 
 def test_runs_left_arithmetic(migrated_pool):
-    assert runs_left(migrated_pool, "m", 500) == 45  # (500 - 3) // 11
-    add_calls(migrated_pool, "m", 486)
+    assert runs_left(migrated_pool, "m", 500) == 23  # (500 - 3) // 21
+    add_calls(migrated_pool, "m", 476)
     assert runs_left(migrated_pool, "m", 500) == 1
     add_calls(migrated_pool, "m", 1)
     assert runs_left(migrated_pool, "m", 500) == 0
     add_calls(migrated_pool, "other-model", 50)
     assert runs_left(migrated_pool, "m", 500) == 0  # per model
-    assert runs_left(migrated_pool, "other-model", 500) == 40
+    assert runs_left(migrated_pool, "other-model", 500) == 21
     add_calls(migrated_pool, "m", 100)
     assert runs_left(migrated_pool, "m", 500) == 0  # never negative
 

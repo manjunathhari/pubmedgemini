@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 from gemini_fakes import FAKE_KEY, QUOTA_FAILURE, FakeGemini, call, error
 from test_runs import BUSY_RUN, END, HAPPY_RUN, ID1, ID2, ID3, Q1, list_reply, turn
+from writer_fakes import run_writer
 
 from pubmedgemini.config import Settings
 from pubmedgemini.gemini.quota import calls_today
@@ -88,14 +89,16 @@ class AskEnv:
 
 
 @contextmanager
-def ask_env(db_url, upstream=None, script=(), key=FAKE_KEY, starter=None, **settings_extra):
-    """A dev app: literature over `upstream`, Gemini over a FakeGemini serving `script`, an
+def ask_env(db_url, upstream=None, script=(), key=FAKE_KEY, starter=None, writer=None,
+            **settings_extra):
+    """A dev app: literature over `upstream`, Gemini over a FakeGemini serving `script` (the
+    researcher) and `writer` (a writer_fakes.PartsGemini; `run_writer()` when not given), an
     InlineStarter (the run happens inside the POST) unless another starter is given."""
     if upstream is None:
         from lit_fakes import FakeUpstream, europepmc_routes, pubmed_routes
 
         upstream = FakeUpstream(pubmed_routes() | europepmc_routes())
-    gemini = FakeGemini(list(script))
+    gemini = FakeGemini(list(script), writer=run_writer() if writer is None else writer)
     starter = starter if starter is not None else InlineStarter()
     extra = {"gemini_rpm": 1000} | settings_extra  # no pacing waits in tests
     if key is not None:
@@ -163,7 +166,7 @@ def test_home_has_both_boxes_and_no_script(env):
     assert '<label for="question">Ask a question</label>' in r.text
     assert '<textarea id="question" name="question" maxlength="4000" required rows="4">' in r.text
     assert '<button type="submit">Ask</button>' in r.text
-    assert "Free runs left today: about 45" in r.text and PRIVACY in r.text
+    assert "Free runs left today: about 23" in r.text and PRIVACY in r.text  # F3 option A
     assert "<h2>Key-word search</h2>" in r.text
     assert "Searches PubMed and Europe PMC with exactly what you type. No model." in r.text
     assert '<label for="q">Search PubMed and Europe PMC</label>' in r.text  # F1's form
@@ -173,7 +176,7 @@ def test_home_has_both_boxes_and_no_script(env):
 
 
 def test_runs_left_goes_down_and_zero_shows_the_reset_time(env):
-    add_calls(env, 486)
+    add_calls(env, 476)
     assert "Free runs left today: about 1" in env.c.get("/", headers=H).text
     add_calls(env, 1)
     page = env.c.get("/", headers=H).text
@@ -371,7 +374,7 @@ def test_cross_site_run_again_is_refused(env):
 
 
 def test_daily_limit_refuses_before_any_call(env):
-    add_calls(env, 487)
+    add_calls(env, 477)
     r = env.ask(QUESTION)
     assert r.status_code == 429
     assert re.search(r"Daily free limit reached\. Resets at \d\d:\d\d IST\.", r.text)
@@ -379,8 +382,8 @@ def test_daily_limit_refuses_before_any_call(env):
     assert env.one("SELECT count(*) FROM runs") == 0 and env.gemini.sent == []
 
 
-def test_daily_limit_leaves_one_run_at_486(env):
-    add_calls(env, 486)
+def test_daily_limit_leaves_one_run_at_476(env):
+    add_calls(env, 476)
     assert env.ask(QUESTION).status_code == 303
 
 
@@ -435,7 +438,7 @@ def test_running_page_refreshes_itself_and_finished_does_not(held):
     held.starter.run(held.starter.started[0])  # the app's run function, set at start-up
     done = held.run_page(r.headers["location"]).text
     assert "http-equiv" not in done and "Working." not in done
-    assert "Study list ready" in done
+    assert "Answer ready" in done
 
 
 def test_finished_page_shows_the_study_list(env):
@@ -533,10 +536,11 @@ def test_the_run_cap_shows_its_plain_message(db_url, upstream):
 
 
 def test_a_run_admitted_with_one_left_never_passes_the_day_limit(db_url, upstream):
-    # Owner decision, 11 Nov 2026: cap calls per run. 486 of 500 used leaves one run; Gemini
-    # busy on every call takes it to its cap, which lands exactly on the day limit.
+    # Owner decision, 11 Nov 2026: cap calls per run. 476 of 500 used leaves one run (F3
+    # option A: a cap of 24); Gemini busy on every call takes it to its cap, which lands
+    # exactly on the day limit.
     with ask_env(db_url, upstream, BUSY_RUN) as env:
-        add_calls(env, 486)
+        add_calls(env, 476)
         assert "Free runs left today: about 1" in env.c.get("/", headers=H).text
         assert env.ask(QUESTION).status_code == 303
         assert env.one("SELECT error_kind FROM runs") == "run_call_cap"

@@ -7,7 +7,12 @@ page shows each line as it happens.
 
 From Incisive (commit 12630f7, `crates/incisive-app/src/`): `clip` and `MAX_STEP_LINE`
 (`agent/mod.rs`), a failed step write logged and ignored (`add_line`), the end messages
-(`agent/answer.rs` `NO_EVIDENCE`, `STOPPED_NO_ANSWER`, `EMPTY_SELECTION`).
+(`agent/answer.rs` `NO_EVIDENCE`, `STOPPED_NO_ANSWER`, `EMPTY_SELECTION`; `agent/team.rs`
+`UNFETCHED`, `WRITER_TRUNCATED`, `WRITER_UNREADABLE`, `WRITER_NO_TIME`).
+
+The written answer (F3) is one JSON document in `answers.body` (Incisive `run_answers.body`,
+`AnswerV3`), stored only while its run is still running, so a run a restart stopped keeps
+none. A run finished before F3 has no row and reads exactly as before.
 
 The patient-details check (`deid.check_question`, ported from Incisive) runs in
 `create_run`, the one place a question becomes a run: a blocked question raises
@@ -16,6 +21,7 @@ The patient-details check (`deid.check_question`, ported from Incisive) runs in
 Logs hold run ids, counts and fixed kinds only; never the question or any text of a run.
 """
 
+import json
 import logging
 import uuid
 from collections.abc import Sequence
@@ -24,6 +30,7 @@ from datetime import datetime
 from uuid import UUID
 
 import psycopg
+from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 from pubmedgemini.deid import BlockedIdentifiers, check_question
@@ -32,6 +39,7 @@ from pubmedgemini.lit.paper import Paper
 from pubmedgemini.lit.text import clean_text
 from pubmedgemini.researcher.loop import SearchEntry, SeenPaper
 from pubmedgemini.researcher.studylist import Validated
+from pubmedgemini.writer.answer import AnswerBody, body_from_json, body_to_json
 
 log = logging.getLogger("pubmedgemini.runs")
 
@@ -46,7 +54,23 @@ EMPTY_SELECTION = (
     "No studies could be selected from the papers found. Please run the question again."
 )
 HARD_STOP_MESSAGE = "This run ran out of time (7 minutes). Please run the question again."
-STUDY_LIST_READY = "Study list ready"
+UNFETCHED = (
+    "The selected studies' records could not be fetched, so no answer could be written."
+)
+WRITER_TRUNCATED = (
+    "The answer was longer than the writer's output limit and could not be finished. The "
+    "studies found are listed below; please ask again."
+)
+WRITER_UNREADABLE = (
+    "The writer's answer could not be read. The studies found are listed below; please ask "
+    "again."
+)
+WRITER_NO_TIME = (
+    "Not enough of the time limit was left to write the answer. The studies found are listed "
+    "below; please ask again."
+)
+# F2 runs closed with "Study list ready"; F3 runs close as Incisive's do (team.rs `finish`).
+ANSWER_READY = "Answer ready"
 DOWN_LINES = {
     "europepmc": "Europe PMC could not be reached; searched PubMed only",
     "pubmed": "PubMed could not be reached; searched Europe PMC only",
@@ -153,6 +177,8 @@ class RunView:
     selected: list[SelectedView]
     considered: list[ConsideredView]
     contradictions: list[ContradictionView]
+    has_answer: bool = False  # an `answers` row exists (F3 runs that reached the end)
+    empty_reason: str | None = None  # the stored answer's end message, when it has one
 
     @property
     def lines(self) -> list[str]:
@@ -177,11 +203,15 @@ class RunRow:
 
 def end_message(v: RunView) -> str | None:
     """The end message for a finished run (plan Task 8 outcome table), or None: a list was
-    selected, the run is not finished, or it failed with a model kind (the page words those)."""
+    selected, the run is not finished, or it failed with a model kind (the page words those).
+    An F3 run's stored answer gives it (`empty_reason`, Incisive's); a run without an answer
+    row (every F2 run) is worded as F2 words it."""
     if v.status == "failed":
         return HARD_STOP_MESSAGE if v.error_kind == "hard_stop" else None
     if v.status not in ("done", "partial"):
         return None
+    if v.empty_reason is not None:
+        return v.empty_reason
     if v.error_kind == "researcher_incomplete":
         return STOPPED_NO_ANSWER
     if v.error_kind == "empty_selection":
@@ -335,6 +365,23 @@ def finish_run(pool: ConnectionPool, run_id: UUID, status: str, error_kind: str 
     return applied
 
 
+def save_answer(pool: ConnectionPool, run_id: UUID, body: AnswerBody,
+                written: str | None) -> int | None:
+    """Stores the run's answer (one row per run; a second write replaces the first), only
+    while the run is still running. Returns the document's size in UTF-8 bytes for the log,
+    or None when nothing was stored (the run was stopped by a restart meanwhile)."""
+    doc = body_to_json(body)
+    size = len(json.dumps(doc, ensure_ascii=False).encode("utf-8", "surrogatepass"))
+    with pool.connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO answers (run_id, body, written) SELECT %s, %s, %s WHERE EXISTS "
+            "(SELECT 1 FROM runs WHERE id = %s AND status = 'running') ON CONFLICT (run_id) "
+            "DO UPDATE SET body = EXCLUDED.body, written = EXCLUDED.written",
+            (run_id, Jsonb(doc), written, run_id),
+        )
+        return size if cur.rowcount == 1 else None
+
+
 def stop_unfinished(pool: ConnectionPool) -> int:
     """At start-up: every queued or running run belonged to the previous process."""
     with pool.connection() as conn:
@@ -374,6 +421,8 @@ def get_run(pool: ConnectionPool, run_id: UUID, user_id: int) -> RunView | None:
         papers = conn.execute(
             "SELECT role, pmid, design, note FROM run_papers WHERE run_id = %s "
             "ORDER BY role, rank", (run_id,)).fetchall()
+        answer = conn.execute("SELECT body FROM answers WHERE run_id = %s",
+                              (run_id,)).fetchone()
     chosen = [p for p in papers if p[0] == "selected"]
     records = get_for_display(pool, [p[1] for p in chosen]) if chosen else {}
     selected = []
@@ -385,8 +434,20 @@ def get_run(pool: ConnectionPool, run_id: UUID, user_id: int) -> RunView | None:
                   for role, pmid, _, note in papers if role == "considered"]
     contradictions = [ContradictionView(pmid, note, seen.get(pmid))
                       for role, pmid, _, note in papers if role == "contradiction"]
+    body = body_from_json(answer[0]) if answer is not None else None
     return RunView(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], steps,
-                   searches, selected, considered, contradictions)
+                   searches, selected, considered, contradictions, answer is not None,
+                   body.empty_reason if body is not None else None)
+
+
+def get_answer(pool: ConnectionPool, run_id: UUID, user_id: int) -> AnswerBody | None:
+    """The run's stored answer; None for another user's run, a run without one, or a stored
+    document that cannot be read (never raises for it)."""
+    with pool.connection() as conn:
+        row = conn.execute(
+            "SELECT a.body FROM answers a JOIN runs r ON r.id = a.run_id "
+            "WHERE a.run_id = %s AND r.user_id = %s", (run_id, user_id)).fetchone()
+    return body_from_json(row[0]) if row is not None else None
 
 
 def list_runs(pool: ConnectionPool, user_id: int, limit: int = 20) -> list[RunRow]:

@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from gemini_fakes import FAKE_KEY, FakeGemini, call, error, reply
 from lit_fakes import FakeClock
 from pydantic import SecretStr
+from writer_fakes import ONE_PIECE, PartsGemini, cut_off, run_parts, text_reply
 
 from pubmedgemini.config import Settings
 from pubmedgemini.gemini.caller import ModelCaller
@@ -31,6 +32,10 @@ from pubmedgemini.runs import (
     MAX_STEP_LINE,
     NO_EVIDENCE,
     STOPPED_NO_ANSWER,
+    UNFETCHED,
+    WRITER_NO_TIME,
+    WRITER_TRUNCATED,
+    WRITER_UNREADABLE,
     ActiveRunExists,
     active_run,
     add_search,
@@ -40,6 +45,7 @@ from pubmedgemini.runs import (
     create_run,
     end_message,
     finish_run,
+    get_answer,
     get_run,
     list_runs,
     save_list,
@@ -88,26 +94,33 @@ class RunApp:
                                          (OWNER,)).fetchone()[0]
         self.tools = make_tools(pool, upstream)
         self.gemini = None
+        self.writer = None
 
-    def caller(self, script, clock):
-        self.gemini = FakeGemini(script)
+    def caller(self, script, clock, writer=None):
+        self.writer = PartsGemini(run_parts() if writer is None else writer)
+        self.gemini = FakeGemini(script, writer=self.writer)
         client = GeminiClient(SecretStr(FAKE_KEY), MODEL, self.gemini.transport, clock=clock.now)
         pacer = GeminiPacer(1000, 250_000, clock.now, clock.sleep)
         self.model_caller = ModelCaller(client, pacer, self.pool, MODEL, sleep=clock.sleep,
                                         clock=clock.now, jitter=lambda: 0.5)
         return self.model_caller
 
-    def runner(self, script, tools=None):
+    def runner(self, script, tools=None, writer=None):
         clock = self.clock = FakeClock()
-        caller = self.caller(script, clock)
+        caller = self.caller(script, clock, writer)
         lit = tools or self.tools
         return lambda rid: run_one(rid, pool=self.pool, tools=lit, caller=caller, model=MODEL,
                                    clock=clock.now)
 
-    def start(self, question=QUESTION, script=HAPPY_RUN, tools=None):
+    def start(self, question=QUESTION, script=HAPPY_RUN, tools=None, writer=None):
+        """A run of `script` (the researcher's replies, in order); the writer's parts are
+        served by `writer` (a PartsGemini script; `run_parts()` when not given)."""
         rid = create_run(self.pool, self.owner_id, question, MODEL)
-        InlineStarter(self.runner(script, tools)).start(rid)
+        InlineStarter(self.runner(script, tools, writer)).start(rid)
         return rid
+
+    def answer(self, rid):
+        return get_answer(self.pool, rid, self.owner_id)
 
     def view(self, rid):
         return get_run(self.pool, rid, self.owner_id)
@@ -131,10 +144,11 @@ def test_a_full_run_writes_lines_trail_and_list(run_app):
     assert v.status == "done" and v.stop_reason == "turn_cap" and v.rounds == 8
     assert v.error_kind is None and v.model == MODEL and v.question == QUESTION
     assert v.lines[0] == "Researcher: searching PubMed and Europe PMC"
-    assert v.lines[-3:] == ["Researcher: selected 2 studies (1 RCT, 1 meta-analysis)",
+    assert v.lines[-4:] == ["Researcher: selected 2 studies (1 RCT, 1 meta-analysis)",
                             "Search stopped at the round cap after 8 rounds",
-                            "Study list ready"]  # Incisive's order
-    assert [s.kind for s in v.steps][-3:] == ["search", "note", "present"]
+                            "Writer: writing the answer from 2 studies (2 with an abstract)",
+                            "Answer ready"]  # Incisive's order
+    assert [s.kind for s in v.steps][-4:] == ["search", "note", "write", "present"]
     assert [p.pmid for p in v.selected] == [ID2, ID1] and v.selected[0].design == "SR_MA"
     assert v.selected[0].why == "The newest meta-analysis."
     assert v.searches[0] == SearchEntry("hernia[tiab]", "PubMed", 5160)
@@ -145,13 +159,13 @@ def test_a_full_run_writes_lines_trail_and_list(run_app):
     assert v.selected[0].paper.abstract and v.selected[1].paper.abstract
     assert v.selected[0].title == v.selected[0].paper.title
     assert v.started_at is not None and v.finished_at is not None
-    assert end_message(v) is None and v.down_line is None
+    assert end_message(v) is None and v.down_line is None and v.has_answer
 
 
 def test_every_model_call_of_the_run_is_counted_against_it(run_app):
     rid = run_app.start()
     n = rows(run_app.pool, "SELECT count(*) FROM model_calls WHERE run_id = %s", (rid,))[0][0]
-    assert n == 9
+    assert n == 13  # 8 turns, the list call and the writer's four parts
 
 
 def test_lines_are_stored_as_the_run_goes(run_app):
@@ -333,20 +347,21 @@ def test_turn1_failure_writes_no_closing_line(run_app):
 
 def test_empty_selection_keeps_the_trail_and_closes(run_app):
     v = run_app.view(run_app.start(script=EMPTY_TWICE))
-    assert v.searches and v.selected == [] and v.lines[-1] == "Study list ready"
+    assert v.searches and v.selected == [] and v.lines[-1] == "Answer ready"
     assert "Researcher: the study list came back empty; selecting again" in v.lines
 
 
 def test_final_failed_has_no_stop_line(run_app):
     v = run_app.view(run_app.start(script=UNREADABLE_TWICE))
     assert v.lines[-2:] == ["Researcher: the study list could not be completed",
-                            "Study list ready"]
+                            "Answer ready"]
     assert v.stop_reason == "other"
 
 
 def test_wrap_up_line_and_turn_failed_line(run_app):
     v = run_app.view(run_app.start(script=TURN_FAILED_WITH_PICKS))
-    assert "Research stopped early (a failed model call)" in v.lines
+    assert ("Research stopped early (a failed model call); writing the answer from what was "
+            "found") in v.lines  # Incisive's words (F3)
     assert v.stop_reason == "turn_failed" and v.rounds == 1
 
 
@@ -388,7 +403,8 @@ def test_fetch_past_the_hard_stop_fails_the_run(run_app, migrated_pool, upstream
     tools.fetch_papers = slow
     v = run_app.view(run_app.start(tools=tools))
     assert (v.status, v.error_kind) == ("failed", "hard_stop")
-    assert end_message(v) == HARD_STOP_MESSAGE and "Study list ready" not in v.lines
+    assert end_message(v) == HARD_STOP_MESSAGE and "Answer ready" not in v.lines
+    assert run_app.answer(v.id) is None
 
 
 def test_no_fetch_once_past_the_hard_stop(run_app, migrated_pool, upstream, monkeypatch):
@@ -413,7 +429,9 @@ def test_no_fetch_once_past_the_hard_stop(run_app, migrated_pool, upstream, monk
     assert v.selected == []
 
 
-def test_fetch_failure_keeps_the_list(run_app, migrated_pool, upstream):
+def test_fetch_failure_fails_the_run_and_keeps_the_list(run_app, migrated_pool, upstream):
+    # F3 (plan X11, D9): the writer needs the abstracts, so the run fails `lit` as Incisive;
+    # the list is still stored, so the run page shows what was selected.
     from conftest import make_tools
 
     tools = make_tools(migrated_pool, upstream)
@@ -423,10 +441,13 @@ def test_fetch_failure_keeps_the_list(run_app, migrated_pool, upstream):
                          "tool", "network")
 
     tools.fetch_papers = fail
-    v = run_app.view(run_app.start(tools=tools))
-    assert v.status == "done" and [p.pmid for p in v.selected] == [ID2, ID1]
+    rid = run_app.start(tools=tools)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("failed", "lit")
+    assert [p.pmid for p in v.selected] == [ID2, ID1]
     assert all(p.paper is None for p in v.selected)
     assert v.selected[0].title  # from run_seen
+    assert run_app.answer(rid) is None and not v.has_answer and run_app.writer.sent == []
 
 
 def test_source_down_line(run_app, migrated_pool):
@@ -439,8 +460,9 @@ def test_source_down_line(run_app, migrated_pool):
     v = run_app.view(run_app.start(script=[turn(call("search_pubmed", Q1),
                                                 call("search_europepmc", Q2)), END, LIST_OK],
                                    tools=tools))
-    assert v.lines[-2:] == ["Europe PMC could not be reached; searched PubMed only",
-                            "Study list ready"]
+    assert v.lines[-3:] == ["Europe PMC could not be reached; searched PubMed only",
+                            "Writer: writing the answer from 2 studies (2 with an abstract)",
+                            "Answer ready"]
     assert v.down_line == "Europe PMC could not be reached; searched PubMed only"
 
 
@@ -462,9 +484,11 @@ def test_an_unexpected_error_fails_the_run_with_a_fixed_kind(run_app, monkeypatc
 
 BUSY = [error(503, "UNAVAILABLE")] * 2
 SEARCH = turn(call("search_pubmed", Q1))
-# Gemini answers 503 twice per call: 3 attempts a call; the cap of 14 comes on turn 5.
-BUSY_RUN = (BUSY + [SEARCH]) * 4 + BUSY + [SEARCH, LIST_OK]
-# The most calls a run makes: 8 turns, the list call (unreadable), its nudge (empty) and S3.
+# Gemini answers 503 twice per call: 3 attempts a call; 8 turns use all 24 attempts
+# (F3 option A: RUN_CALLS 21 + 3), so the list call is the 25th and is never sent.
+BUSY_RUN = (BUSY + [SEARCH]) * 8 + [LIST_OK]
+# The most calls the researcher makes: 8 turns, the list call (unreadable), its nudge (empty)
+# and S3; the writer's four parts follow (15 in all).
 ELEVEN = [SEARCH] * 8 + [reply([{"text": "no"}]), EMPTY, LIST_OK]
 
 
@@ -478,15 +502,16 @@ def test_a_busy_gemini_reaches_the_cap_and_fails_the_run(run_app, caplog):
     v = run_app.view(rid)
     assert (v.status, v.error_kind) == ("failed", "run_call_cap")
     assert v.stop_reason is None and v.rounds is None and v.finished_at is not None
-    assert calls_of(run_app.pool, rid) == 14 and len(run_app.gemini.sent) == 14
-    assert len(run_app.gemini.script) == 2  # nothing sent after the cap
+    assert calls_of(run_app.pool, rid) == 24 and len(run_app.gemini.sent) == 24
+    assert run_app.gemini.script == [LIST_OK]  # nothing sent after the cap
+    assert run_app.writer.sent == [] and run_app.answer(rid) is None
     assert end_message(v) is None  # the page words it from the kind
     assert f"run kind=finished run_id={rid} status=failed error_kind=run_call_cap" in [
         r.getMessage() for r in caplog.records]
 
 
 def test_the_runs_attempt_count_is_forgotten_when_the_run_ends(run_app, monkeypatch):
-    # The count is kept while the run goes (the cap holds: 14 attempts, none after) and is
+    # The count is kept while the run goes (the cap holds: 24 attempts, none after) and is
     # gone at its end, whether the run is done, capped or failed inside.
     import pubmedgemini.runner as runner_mod
 
@@ -499,55 +524,68 @@ def test_the_runs_attempt_count_is_forgotten_when_the_run_ends(run_app, monkeypa
 
     monkeypatch.setattr(ModelCaller, "forget", spy)
     capped = run_app.start(script=BUSY_RUN)
-    assert held == [{capped: 14}] and run_app.model_caller._sent == {}
-    assert calls_of(run_app.pool, capped) == 14
+    assert held == [{capped: 24}] and run_app.model_caller._sent == {}
+    assert calls_of(run_app.pool, capped) == 24
 
     held.clear()
     done = run_app.start(script=ELEVEN)
-    assert held == [{done: 11}] and run_app.model_caller._sent == {}
+    assert held == [{done: 15}] and run_app.model_caller._sent == {}
 
     monkeypatch.setattr(runner_mod, "research", lambda *a, **k: 1 / 0)
     run_app.start(script=[])
     assert run_app.model_caller._sent == {}
 
 
-def test_a_normal_eleven_call_run_is_unaffected(run_app):
+def test_a_normal_full_run_is_unaffected(run_app):
     rid = run_app.start(script=ELEVEN)
     v = run_app.view(rid)
     assert (v.status, v.error_kind, v.stop_reason) == ("done", None, "turn_cap")
     assert [p.pmid for p in v.selected] == [ID2, ID1]
     assert "Researcher: the study list came back empty; selecting again" in v.lines
-    assert calls_of(run_app.pool, rid) == 11 and run_app.gemini.script == []
+    assert calls_of(run_app.pool, rid) == 15 and run_app.gemini.script == []
 
 
-def test_eleven_calls_with_three_retries_still_finish(run_app):
-    # Exactly the cap: three transport retries spread over the run.
-    script = [BUSY[0]] + ELEVEN[:8] + [BUSY[0], ELEVEN[8], ELEVEN[9], BUSY[0], ELEVEN[10]]
+def test_fifteen_calls_with_nine_retries_still_finish(run_app):
+    # Exactly the cap of 24: nine transport retries spread over the researcher's calls,
+    # then the writer's four parts.
+    script = (BUSY + ELEVEN[:1]) * 3 + ELEVEN[3:8] + [BUSY[0], ELEVEN[8], BUSY[0], ELEVEN[9],
+                                                      BUSY[0], ELEVEN[10]]
     rid = run_app.start(script=script)
     v = run_app.view(rid)
-    assert (v.status, v.error_kind) == ("done", None)
-    assert calls_of(run_app.pool, rid) == 14
+    assert (v.status, v.error_kind) == ("done", None) and v.has_answer
+    assert calls_of(run_app.pool, rid) == 24
 
 
 def test_the_s3_retry_counts_toward_the_cap(run_app):
-    # 11 attempts in 7 turns, the list call and the nudge: S3's first attempt is the 14th,
-    # its retry would be the 15th.
-    script = (BUSY + [SEARCH]) * 2 + [SEARCH] * 4 + [END, reply([{"text": "no"}]), EMPTY,
-                                                       BUSY[0], LIST_OK]
+    # 21 attempts in 8 turns, the list call and the nudge: S3's first attempt is the 24th,
+    # its retry would be the 25th.
+    script = (BUSY + [SEARCH]) * 6 + [BUSY[0], SEARCH, END, reply([{"text": "no"}]), EMPTY,
+                                      BUSY[0], LIST_OK]
     rid = run_app.start(script=script)
     v = run_app.view(rid)
     assert (v.status, v.error_kind) == ("failed", "run_call_cap")
-    assert calls_of(run_app.pool, rid) == 14 and run_app.gemini.script == [LIST_OK]
+    assert calls_of(run_app.pool, rid) == 24 and run_app.gemini.script == [LIST_OK]
 
 
 def test_the_nudge_counts_toward_the_cap(run_app):
-    # 11 attempts in 7 turns, two for the list call: the nudge's retry would be the 15th.
-    script = (BUSY + [SEARCH]) * 2 + [SEARCH] * 4 + [END, BUSY[0], reply([{"text": "no"}]),
-                                                       BUSY[0], LIST_OK]
+    # 21 attempts in 8 turns, two for the list call: the nudge's retry would be the 25th.
+    script = (BUSY + [SEARCH]) * 6 + [BUSY[0], SEARCH, END, BUSY[0], reply([{"text": "no"}]),
+                                      BUSY[0], LIST_OK]
     rid = run_app.start(script=script)
     v = run_app.view(rid)
     assert (v.status, v.error_kind) == ("failed", "run_call_cap")
-    assert calls_of(run_app.pool, rid) == 14 and run_app.gemini.script == [LIST_OK]
+    assert calls_of(run_app.pool, rid) == 24 and run_app.gemini.script == [LIST_OK]
+
+
+def test_the_cap_reached_in_the_writer_fails_the_run(run_app):
+    # 21 researcher attempts (8 turns, six of them retried twice, and the list call): three
+    # parts are sent, the fourth would be the 25th attempt.
+    script = (BUSY + [SEARCH]) * 6 + [SEARCH] * 2 + [LIST_OK]
+    rid = run_app.start(script=script)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("failed", "run_call_cap")
+    assert calls_of(run_app.pool, rid) == 24 and run_app.answer(rid) is None
+    assert "Answer ready" not in v.lines
 
 
 # ---------- the writers ----------
@@ -661,3 +699,186 @@ def test_thread_starter_runs_in_the_background(run_app):
     release.set()
     starter.join(timeout=10)
     assert not t.is_alive() and run_app.view(rid).status == "done"
+
+
+# ---------- F3: the writer in the run, the stored answer (plan Task 6) ----------
+
+def _cut_all() -> dict:
+    return {w: [cut_off(w.lower())] * 2 for w in ("TRIALS", "OUTCOMES", "CONTEXT", "SUMMARY")} | {
+        ONE_PIECE: [cut_off(ONE_PIECE)] * 2}
+
+
+def _unreadable_all() -> dict:
+    return {w: [text_reply("no")] * 2 for w in ("TRIALS", "OUTCOMES", "CONTEXT", "SUMMARY",
+                                                 ONE_PIECE)}
+
+
+def _summary_503() -> dict:
+    return run_parts() | {"SUMMARY": [error(503, "UNAVAILABLE")] * 3,
+                          ONE_PIECE: [error(503, "UNAVAILABLE")] * 3}
+
+
+def _tools(run_app, fetch):
+    from conftest import make_tools
+
+    tools = make_tools(run_app.pool, run_app.upstream)
+    real = tools.fetch_papers
+    tools.fetch_papers = lambda pmids: fetch(real, pmids)
+    return tools
+
+
+def _fetch_down(real, pmids):
+    raise ToolFailed("the database could not be reached; try again later or use another tool",
+                     "network")
+
+
+def test_a_full_run_stores_the_answer_and_ends_answer_ready(run_app):
+    rid = run_app.start("Does laparoscopic repair reduce chronic pain after inguinal hernia "
+                        "surgery")
+    v, a = run_app.view(rid), run_app.answer(rid)
+    assert v.status == "done" and v.has_answer and v.lines[-1] == "Answer ready"
+    assert "Writer: writing the answer from 2 studies (2 with an abstract)" in v.lines
+    assert [s.kind for s in v.steps if s.line.startswith("Writer:")] == ["write"]
+    assert [r.n for r in a.references] == [1, 2] and a.references[0].pmid == ID2
+    assert a.references[1].pmid == ID1 and a.references[0].title
+    assert a.answer.outcomes[0].evidence_type == "rcts_and_meta_analyses"
+    assert a.answer.outcomes[0].outcome == "Chronic postoperative groin pain"
+    assert a.empty_reason is None and a.integrity.dropped_unfetched == 0
+    assert a.notes == []  # the fixture's four parts agree
+    assert a.searches[0] == SearchEntry("hernia[tiab]", "PubMed", 5160)
+    assert a.stopped_early is None and a.elapsed_s >= 0 and a.version == 3
+    written = rows(run_app.pool, "SELECT written FROM answers WHERE run_id = %s", (rid,))
+    assert written == [("parts",)] and end_message(v) is None
+
+
+def test_the_merge_notes_are_stored_and_nothing_is_changed(run_app):
+    from writer_fakes import fixture_part, json_reply, remap
+
+    trials = remap(fixture_part("trials"))
+    trials["studies"] = trials["studies"][:1]  # the trials table lists one study only
+    rid = run_app.start(writer=run_parts() | {"TRIALS": [json_reply(trials)]})
+    a = run_app.answer(rid)
+    assert len(a.notes) == 1 and a.notes[0].startswith(
+        "Consistency check (answer written in four parts): the outcome table cites ")
+    assert len(a.answer.studies) == 1 and len(a.answer.outcomes) == 6
+
+
+def test_the_answer_is_written_in_one_piece_when_a_part_fails(run_app):
+    from writer_fakes import fixture, json_reply, remap
+
+    writer = run_parts() | {"TRIALS": [text_reply("no")] * 2,
+                            ONE_PIECE: [json_reply(remap(fixture("whole.json")))]}
+    rid = run_app.start(writer=writer)
+    v, a = run_app.view(rid), run_app.answer(rid)
+    assert v.status == "done" and "Writer: section trials failed; writing the answer in one " \
+        "piece" in v.lines
+    assert a.notes == []  # the merge checks are for four parts only (Incisive)
+    assert rows(run_app.pool, "SELECT written FROM answers WHERE run_id = %s", (rid,)) == [
+        ("one_piece",)]
+
+
+@pytest.mark.parametrize("script,writer,fetch,status,kind,message,line", [
+    (HAPPY_RUN, _cut_all(), None, "partial", "writer_truncated", WRITER_TRUNCATED,
+     "The writer's answer was cut off by its output limit"),
+    (HAPPY_RUN, _unreadable_all(), None, "partial", "writer_unreadable", WRITER_UNREADABLE,
+     "The writer's answer could not be read"),
+    (HAPPY_RUN, _summary_503(), None, "failed", "overloaded", None, None),
+    (HAPPY_RUN, None, _fetch_down, "failed", "lit", None, None),
+    (HAPPY_RUN, None, lambda real, pmids: {}, "partial", None, UNFETCHED, None),
+    (NOTHING_SELECTED, None, None, "done", None, NO_EVIDENCE, None),
+    (EMPTY_TWICE, None, None, "partial", "empty_selection", EMPTY_SELECTION, None),
+    (UNREADABLE_TWICE, None, None, "partial", "researcher_incomplete", STOPPED_NO_ANSWER, None),
+], ids=["truncated", "unreadable", "503", "efetch_down", "efetch_empty", "nothing_selected",
+        "empty_selection", "final_failed"])
+def test_writer_outcomes_follow_incisive(run_app, script, writer, fetch, status, kind, message,
+                                         line):
+    tools = _tools(run_app, fetch) if fetch is not None else None
+    rid = run_app.start(script=script, writer=writer, tools=tools)
+    v, a = run_app.view(rid), run_app.answer(rid)
+    assert (v.status, v.error_kind) == (status, kind)
+    if status == "failed":  # a failed run stores no answer (Incisive run_team: Err -> Failed)
+        assert a is None and not v.has_answer and "Answer ready" not in v.lines
+        return
+    assert v.has_answer and a.answer is None and a.empty_reason == message
+    assert v.lines[-1] == "Answer ready" and end_message(v) == message
+    if line is not None:
+        assert v.lines[-2] == line
+    if script is HAPPY_RUN:  # the references stand
+        assert [r.pmid for r in a.references] == ([ID2, ID1] if message != UNFETCHED else [])
+
+
+def test_writer_is_not_started_with_less_than_150_s_left(run_app):
+    def slow(real, pmids):
+        out = real(pmids)
+        run_app.clock.t += 280  # 420 - 280 - a little: under 150 s left
+        return out
+
+    rid = run_app.start(tools=_tools(run_app, slow))
+    v, a = run_app.view(rid), run_app.answer(rid)
+    assert (v.status, v.error_kind) == ("partial", "writer_time")
+    assert v.lines[-2:] == ["Not enough time was left to write the answer", "Answer ready"]
+    assert a.empty_reason == WRITER_NO_TIME == (
+        "Not enough of the time limit was left to write the answer. The studies found are "
+        "listed below; please ask again.")
+    assert run_app.writer.sent == [] and [r.pmid for r in a.references] == [ID2, ID1]
+
+
+def test_one_unfetched_study_is_dropped_with_incisives_line(run_app):
+    rid = run_app.start(tools=_tools(run_app, lambda real, pmids: {
+        k: p for k, p in real(pmids).items() if k == ID2}))
+    v, a = run_app.view(rid), run_app.answer(rid)
+    assert "1 selected study could not be fetched from PubMed and was left out" in v.lines
+    assert "Writer: writing the answer from 1 study (1 with an abstract)" in v.lines
+    assert [(r.n, r.pmid) for r in a.references] == [(1, ID2)]
+    assert a.integrity.dropped_unfetched == 1 and v.status == "done"
+
+
+def test_two_unfetched_studies_line_is_plural(run_app):
+    rid = run_app.start(tools=_tools(run_app, lambda real, pmids: {}))
+    assert "2 selected studies could not be fetched from PubMed and were left out" in \
+        run_app.view(rid).lines
+
+
+def test_turn_failed_line_is_incisives_and_the_run_is_partial(run_app):
+    rid = run_app.start(script=TURN_FAILED_WITH_PICKS)
+    v, a = run_app.view(rid), run_app.answer(rid)
+    assert ("Research stopped early (a failed model call); writing the answer from what was "
+            "found") in v.lines
+    assert (v.status, v.error_kind) == ("partial", None) and a.answer is not None
+    assert a.stopped_early == "a failed model call" and v.lines[-1] == "Answer ready"
+
+
+def test_a_restart_mid_writer_leaves_no_answer_and_run_again_works(run_app):
+    def restart(request):
+        stop_unfinished(run_app.pool)  # the app restarted while the writer ran
+        return httpx.Response(200, json=run_parts()["SUMMARY"][0])
+
+    rid = run_app.start(writer=run_parts() | {"SUMMARY": [restart]})
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("stopped", "restarted")
+    assert run_app.answer(rid) is None and not v.has_answer
+    again = run_app.start()  # the slot is free; the new run is written
+    assert run_app.view(again).status == "done" and run_app.answer(again).answer is not None
+
+
+def test_the_answer_is_only_the_users(run_app):
+    rid = run_app.start()
+    assert get_answer(run_app.pool, rid, run_app.owner_id + 999) is None
+    assert get_answer(run_app.pool, uuid.uuid4(), run_app.owner_id) is None
+
+
+def test_unreadable_stored_json_reads_as_none(run_app):
+    rid = run_app.start()
+    with run_app.pool.connection() as conn:
+        conn.execute("UPDATE answers SET body = '{\"answer\": 3}'::jsonb WHERE run_id = %s",
+                     (rid,))
+    assert run_app.answer(rid) is None and run_app.view(rid).has_answer
+
+
+def test_an_f2_run_without_an_answer_reads_as_before(run_app):
+    # A run finished before F3 has no answers row: the view is as F2 made it.
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    finish_run(run_app.pool, rid, "done", None, "turn_cap", 8)
+    v = run_app.view(rid)
+    assert not v.has_answer and v.empty_reason is None and end_message(v) == NO_EVIDENCE
+    assert run_app.answer(rid) is None
