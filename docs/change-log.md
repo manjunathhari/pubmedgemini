@@ -8,6 +8,7 @@ Live: F0, F1, F2, the look, Library and Activity (merged and deployed on 10 and 
 - It is one of the question's 26 Gemini attempts (one try, 30 s, never retried). "Free runs left today" still says about 21 on a fresh day; a typical question now sends 14 requests instead of 13.
 - When the summary part of the answer has been read and its citations checked, the working page shows it marked "Early": At a glance (without its key numbers: "The key numbers are shown with the full answer."), Bottom line, and, once that part is in, Applicability and What would change this answer, with a line saying what is still being written. The full answer replaces it at the next refresh. If a part fails, the early summary is withdrawn at once. It is never kept after the question ends, and an app restart clears it.
 - Answers stored before this change look exactly as they did. Nothing to do on the VPS: the new tables are added at start-up.
+- Review fixes (12 Nov 2026): citation numbers in the early summary are plain text (there is no reference list to jump to yet); the finished page still links them. Text the model writes (the early summary and the answer) is stored without hidden characters, so a stray one can no longer stop an answer being saved.
 
 ## F1: search tools and the plain results page (branch `f1-search-tools`, not merged yet)
 
