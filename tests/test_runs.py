@@ -1760,7 +1760,7 @@ def test_a_failing_early_store_never_fails_the_run(run_app, monkeypatch, caplog)
     rid = run_app.start()
     v = run_app.view(rid)
     assert (v.status, v.error_kind) == ("done", None) and v.answer is not None
-    assert "run kind=early_not_stored error=OperationalError" in [
+    assert f"run kind=early_not_stored run_id={rid} error=OperationalError" in [
         r.getMessage() for r in caplog.records]
 
 
@@ -1774,7 +1774,7 @@ def test_an_early_body_that_cannot_be_built_never_fails_the_run(run_app, monkeyp
     caplog.set_level(logging.INFO)
     rid = run_app.start()
     assert run_app.view(rid).status == "done"
-    assert "run kind=early_not_stored error=ValueError" in [
+    assert f"run kind=early_not_stored run_id={rid} error=ValueError" in [
         r.getMessage() for r in caplog.records]
 
 
@@ -1823,3 +1823,20 @@ def test_hidden_characters_in_the_early_part_and_the_answer_are_cleaned(run_app,
     assert v.answer["question"] == "qabcd"
     msgs = [r.getMessage() for r in caplog.records]
     assert not any("early_not_stored" in m or "answer_not_stored" in m for m in msgs)
+
+
+def test_an_early_store_for_a_run_not_running_logs_its_run_id(run_app, caplog):
+    from writer_fakes import whole_answer
+
+    from pubmedgemini.runner import EarlyStore, _Answer
+    from pubmedgemini.writer.answer import IntegrityV3
+    from pubmedgemini.writer.read import as_summary
+
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)  # queued, not running
+    w = whole_answer("ex", (ID2,))
+    es = EarlyStore(run_app.pool, rid, _Answer("q", [], None, IntegrityV3()), [ID2])
+    caplog.set_level(logging.INFO)
+    es(("summary", as_summary({f: w[f] for f in Section.SUMMARY.fields})))
+    assert f"run kind=early_not_stored run_id={rid} error=NotRunning" in [
+        r.getMessage() for r in caplog.records]
+    assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(0,)]

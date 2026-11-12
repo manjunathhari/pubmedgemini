@@ -273,9 +273,10 @@ class EarlyStore:
                          self._run_id, str(body["summary"]).lower(),
                          str(body["context"]).lower(), size)
             else:
-                log.info("run kind=early_not_stored error=NotRunning")
+                log.info("run kind=early_not_stored run_id=%s error=NotRunning", self._run_id)
         except Exception as e:  # noqa: BLE001 - the early summary never fails a run
-            log.warning("run kind=early_not_stored error=%s", type(e).__name__)
+            log.warning("run kind=early_not_stored run_id=%s error=%s", self._run_id,
+                        type(e).__name__)
 
 
 class _Run:
@@ -478,6 +479,9 @@ def run_one(
             log.error("run kind=not_finished run_id=%s", run_id)
     finally:
         if intro is not None:
-            # Its own deadline ends it by then; nothing can be sent for the run after this.
+            # Waits at most INTRO_TIME_LIMIT + 5 s. A reply body that stalls can outlive this
+            # join: the thread is then still reading its one request, and nothing more is sent
+            # for the run (one attempt only). Its row is finished when that read ends, or, if
+            # the process stops first, left `pending` for `stop_unfinished` at the next start.
             intro.join(INTRO_TIME_LIMIT + 5)
         caller.forget(run_id)  # the run's attempt count is no longer needed

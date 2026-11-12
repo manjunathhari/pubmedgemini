@@ -404,7 +404,7 @@ APP_LINE_PATTERNS = [
     (rf"run kind=early_stored run_id={UUID} summary=(?:true|false) context=(?:true|false) "
      r"bytes=\d+"),
     rf"run kind=early_withdrawn run_id={UUID}",
-    r"run kind=early_not_stored error=\w+",
+    rf"run kind=early_not_stored run_id={UUID} error=\w+",
     r"run page early kind=(?:not_quick|invalid|unserialisable|internal)",
     r"run page answer kind=(?:not_quick|invalid|unserialisable)",
 ]
