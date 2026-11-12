@@ -1083,7 +1083,25 @@ def _o_side(arm, comparison):
     score = sum((w in sides[0]) - (w in sides[1]) for w in _o_words(arm))
     if score:
         return 0 if score > 0 else 1
-    return _o_group(arm, comparison)
+    g = _o_group(arm, comparison)
+    return g if g is not None else _o_role(arm, comparison)
+
+
+def _o_role(arm, comparison):
+    """Oracle (S2, owner decision N6): an arm that is exactly experimental / standard of care /
+    standard / control, with "group" or "arm" or not; experimental on the first side,
+    the others on the second, each only where that side alone holds the word."""
+    import re
+
+    a = _o_norm(arm)
+    for suffix in (" group", " arm"):
+        a = a.removesuffix(suffix)
+    if a not in ("experimental", "standard of care", "standard", "control"):
+        return None
+    parts = re.split(r" (?:vs|vs\.|versus|compared with) ", _o_norm(comparison))
+    side = 0 if a == "experimental" else 1
+    has = [re.search(rf"(?<![\w]){a}(?![\w])", p) is not None for p in parts]
+    return side if has[side] and not has[1 - side] else None
 
 
 def _o_group(arm, comparison):
@@ -1125,7 +1143,9 @@ _P = [None, "", "p", "P < .001", "0.03"]
 _COMPARISONS = ["TEP vs Lichtenstein"] * 4 + ["MD Anderson protocol vs Standard", "",
                 "TEP vs TAPP vs Lichtenstein", "Laparoscopic repair vs Open repair",
                 "TAPP vs Lichtenstein"] + ["Drug X then surgery (group A) vs surgery (group B)"] * 3 + [
-                "Drug X (group A) vs drug Y (group A)"]
+                "Drug X (group A) vs drug Y (group A)"] + [
+                "Experimental group (drug X) vs control"] * 3 + [
+                "Experimental arm vs standard of care arm", "Control drug X vs control"]
 
 
 def _rand_value(r):
@@ -1148,6 +1168,11 @@ def _rand_pair(r) -> list[Number]:
     """Two percentages of one label and study, as an out-of-100 candidate (F6)."""
     label = r.choice(["Pain", "Ache at 2 y"] if r.random() < 0.5 else _LABELS)
     arms = [r.choice(GOOD_ARMS if r.random() < 0.7 else _ARMS) for _ in range(2)]
+    if r.random() < 0.15:  # S2: role words, which some comparisons use
+        return [Number(label, r.uniform(0, 100), "%", a, None, None, None, "1")
+                for a in r.sample(["Experimental group", "Control group", "control arm",
+                                   "Standard of care arm", "Experimental control group",
+                                   "Intervention group"], 2)]
     if r.random() < 0.15:  # S1: group letters, which some comparisons name
         return [Number(label, r.uniform(0, 100), "%", a, None, None, None, "1")
                 for a in r.sample(["Group A", "group b", "Group B", "Group C", "Group A (n=9)"],
@@ -1189,7 +1214,7 @@ def test_random_answers_keep_the_pages_promises():
     from pubmedgemini.answer_page import arm_name, out_of_100_groups
 
     r = random.Random(20261112)
-    squares_seen = diffs_seen = r1_seen = s1_seen = 0
+    squares_seen = diffs_seen = r1_seen = s1_seen = s2_seen = 0
     for case in range(3000):
         body = _rand_body(r)
         w, refs = body.answer, refs_of(body)
@@ -1254,6 +1279,7 @@ def test_random_answers_keep_the_pages_promises():
             assert nums[0].label not in NOT_SQUARES_LABELS, case
             squares_seen += 1
             s1_seen += all(_o_norm(n.arm).startswith("group ") for n in nums)
+            s2_seen += any(_o_role(n.arm, comparison(n)) is not None for n in nums)
         # third check L1: drawn difference axes have three distinct labels and 0 inside
         for row in f.diffs:
             if row.drawn:
@@ -1265,7 +1291,7 @@ def test_random_answers_keep_the_pages_promises():
         assert not in_rows & {x.at for c in outcome_cards(w, refs) for x in c.listed}, case
         # third check L3: nothing the page draws holds a bidi control or zero-width character
         assert not any(ch in INVISIBLE for t in _strings(answer_view(body)) for ch in t), case
-    assert squares_seen > 50 and diffs_seen > 50 and r1_seen > 20 and s1_seen > 5
+    assert squares_seen > 50 and diffs_seen > 50 and r1_seen > 20 and s1_seen > 5 and s2_seen > 5
     # (the oracles were exercised)
 
 
@@ -2039,3 +2065,56 @@ def test_s1_pairs_that_stay_text(a, b, comparison):
     assert out_of_100(w, REFS) == []
     rows = [r for g in compare(w, REFS) for r in g.rows]
     assert all(r.problem is not None for r in rows) or not rows
+
+
+# ---------- S2: experimental / standard / control named by the comparison (N6) ----------
+
+EXP_CMP = "Experimental group (drug X then surgery) vs control"
+
+
+@pytest.mark.parametrize("arm,comparison,side", [
+    ("Control group", EXP_CMP, 1),        # the word score ties (group +1, control -1): S2 places it
+    ("control", EXP_CMP, 1), ("Control arm", EXP_CMP, 1),
+    ("Experimental group", EXP_CMP, 0),   # placed by the word score already
+    ("Standard of care group", "Experimental group vs standard of care group", 1),
+    ("Standard arm", "Experimental arm vs standard arm", 1),
+])
+def test_s2_role_word_matches_its_side(arm, comparison, side):
+    from pubmedgemini.answer_page import arm_side
+
+    assert arm_side(arm, comparison) == side
+
+
+@pytest.mark.parametrize("arm,comparison", [
+    ("Experimental", "Drug X then surgery vs surgery alone"),   # the word is not in it
+    ("Control group", "Drug X group vs surgery alone"),          # tie, and no "control"
+    ("Control group", "Control drug X group vs control"),        # the word on both sides
+    ("Experimental control group", "Experimental group vs control"),  # both kinds
+    ("Control group", "Control group vs drug X group"),          # control on the first side
+    ("Intervention group", "Intervention group vs control group"),  # not the owner's word
+    ("Experimental group A", "Experimental group vs control"),   # more than the role word
+])
+def test_s2_near_misses_do_not_match(arm, comparison):
+    from pubmedgemini.answer_page import _key, _role_side, comparison_parts
+
+    assert _role_side(_key(arm), comparison_parts(comparison)) is None
+
+
+def test_s2_pair_gets_squares_only_with_the_words_in_the_comparison():
+    w = _pct_pair("Experimental group", "Control group", comparison=EXP_CMP)
+    [it] = out_of_100(w, REFS)
+    assert [(a, s) for _, a, s in it.arms] == [("Experimental group", "A"), ("Control group", "B")]
+    # the real answer's shape: the comparison names the treatments only, so no squares
+    for a, b in [("Experimental group", "Standard of care group"), ("TNT group", "CRT group")]:
+        w = _pct_pair(a, b, comparison="Short-course radiotherapy then chemotherapy vs "
+                                       "long-course chemoradiotherapy")
+        assert out_of_100(w, REFS) == []
+        [row] = [r for g in compare(w, REFS) for r in g.rows]
+        assert row.problem == NOT_MATCHED
+
+
+def test_s2_both_arms_on_one_side_stay_text():
+    w = _pct_pair("Control group", "Control arm", comparison=EXP_CMP)
+    assert out_of_100(w, REFS) == []
+    [row] = [r for g in compare(w, REFS) for r in g.rows]
+    assert row.problem == NOT_MATCHED

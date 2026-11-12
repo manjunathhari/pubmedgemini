@@ -601,11 +601,38 @@ def _group_side(arm_key: str, parts: tuple[str, str]) -> int | None:
     return has.index(True) if has.count(True) == 1 else None
 
 
+# S2 (owner decision N6, 12 Nov 2026): an arm that is exactly one of the owner's role words,
+# optionally followed by "group" or "arm" (on the key). "experimental" is the first side of the
+# comparison; "standard of care", "standard" and "control" the second.
+_ROLE_ARM = re.compile(r"(experimental|standard of care|standard|control)(?: (?:group|arm))?")
+
+
+def _has_word(term: str, text: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text) is not None
+
+
+def _role_side(arm_key: str, parts: tuple[str, str] | None) -> int | None:
+    """S2: an arm "Experimental (group|arm)" matches the first side, and "Standard of care",
+    "Standard" or "Control" (with "group" or "arm") the second, only when the comparison has
+    that word, as a whole word, on that side and not on the other; else None."""
+    if parts is None:
+        return None
+    m = _ROLE_ARM.fullmatch(arm_key)
+    if m is None:
+        return None
+    term = m.group(1)
+    side = 0 if term == "experimental" else 1
+    if _has_word(term, parts[side]) and not _has_word(term, parts[1 - side]):
+        return side
+    return None
+
+
 def arm_side(arm: str | None, comparison: str | None) -> int | None:
     """Which side of the comparison an arm text matches: 0 (left), 1 (right) or None (no
     two-sided comparison, or a tie or zero score). The score is `_arm_score`'s token overlap
     (each word on the left only +1, on the right only -1) on the key (fourth check F1). When
-    the score is zero, the owner's recovery rule S1 may still place the arm (`_group_side`)."""
+    the score is zero, the owner's recovery rules may still place the arm: S1 (`_group_side`),
+    then S2 (`_role_side`)."""
     sides = comparison_sides(comparison)
     if sides is None or arm is None:
         return None
@@ -614,10 +641,12 @@ def arm_side(arm: str | None, comparison: str | None) -> int | None:
     if score:
         return 0 if score > 0 else 1
     # Recovery rules the owner chose (N6), only where the score finds no side, so an arm the
-    # score placed is never moved: S1 group letters.
+    # score placed is never moved: S1 group letters, S2 experimental / standard / control.
     parts = comparison_parts(comparison)
     assert parts is not None  # comparison_sides was not None
-    return _group_side(_key(arm), parts)
+    k = _key(arm)
+    group = _group_side(k, parts)
+    return group if group is not None else _role_side(k, parts)
 
 
 def names_one_side(text: str, comparison: str | None) -> bool:
