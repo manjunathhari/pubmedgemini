@@ -262,18 +262,39 @@ def arm_name(n: Number) -> str:
     return rust_trim(n.arm) if n.arm is not None else ""
 
 
+# Arm texts that are a difference marker, not an arm name: the whole text, trimmed, case-folded
+# and with inner spaces squashed, must be one of these (re-check H-A). Incisive's own examples
+# put "MD", "difference" and "risk difference" in `arm` (`answer_page.rs` tests); the rest
+# are the coordinator's list. A full match, never a search: "MD Anderson protocol",
+# "Md. Ali technique" and "Drain minus" are arm names.
+DIFF_MARKERS = frozenset({"md", "smd", "wmd", "difference", "mean difference",
+                          "risk difference", "absolute difference"})
+
+
+def _arm_key(a: str) -> str:
+    """An arm text as a comparison key: trimmed, case-folded, inner whitespace squashed."""
+    return rust_trim(_SPACES.sub(" ", a)).casefold()
+
+
+def arm_is_marker(n: Number) -> bool:
+    """The arm text is a difference marker as a whole (`DIFF_MARKERS`)."""
+    return n.arm is not None and _arm_key(n.arm) in DIFF_MARKERS
+
+
 def names_an_arm(n: Number) -> bool:
-    """The number carries an arm name: its arm text is not blank and is not itself a
-    difference marker (Incisive's own examples put "MD" or "difference" in `arm`)."""
-    a = arm_name(n)
-    return bool(a) and not _DIFF.search(a)
+    """The number carries an arm name: its arm text is not blank and is not, as a whole, a
+    difference marker (`DIFF_MARKERS`)."""
+    return bool(arm_name(n)) and not arm_is_marker(n)
 
 
 def is_difference(n: Number) -> bool:
-    """A difference for the page: Incisive's `is_diff` AND no arm name. A number with an arm
-    name is one arm's value, never drawn as a difference (review M2, owner decision d24,
-    12 Nov 2026: an approved difference from Incisive)."""
-    return is_diff(n) and not names_an_arm(n)
+    """A difference for the page: its label reads as one (Incisive's `is_diff` on the label)
+    or its arm text is a marker, AND no arm name. A number with an arm name is one arm's
+    value, never drawn as a difference (review M2, owner decision d24, 12 Nov 2026: an
+    approved difference from Incisive); text inside an arm name never makes a difference."""
+    if names_an_arm(n):
+        return False
+    return bool(_DIFF.search(n.label)) or arm_is_marker(n)
 
 
 def has_ci(n: Number) -> bool:
@@ -497,7 +518,7 @@ def listed_numbers(w: WrittenAnswer, refs: Mapping[str, int]) -> dict[int, list[
             n = o.numbers[j]
             if forest_kind(n) is not None:
                 continue
-            if in_compare and not (has_ci(n) and is_diff(n)):
+            if in_compare and not (has_ci(n) and _DIFF.search(n.label)):
                 continue  # shown in "Compare the arms"; an armed "difference" is also listed
             value = with_unit(n.value, n.unit)
             if n.ci_low is not None or n.ci_high is not None:

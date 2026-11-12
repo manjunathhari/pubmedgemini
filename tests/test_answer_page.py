@@ -714,3 +714,38 @@ def test_a_difference_without_an_arm_is_still_drawn():
     f = forest(answer_with(num("Mean difference in stay", -1.0, "days", None, lo=-2.0, hi=0.5),
                            num("Risk difference", -3.0, "%", "  ", lo=-5.0, hi=-1.0)), REFS)
     assert [r.drawn for r in f.diffs] == [True, True]
+
+
+# ---------- an arm name that contains "MD" or "minus" is an arm name (re-check H-A) ----------
+
+@pytest.mark.parametrize("arm", ["MD Anderson protocol", "Md. Ali technique", "Drain minus"])
+def test_an_arm_name_containing_a_marker_is_one_arms_rate(arm):
+    w = answer_with(num("Recurrence at 2 y", 12.5, "%", arm, lo=8.0, hi=17.0))
+    f = forest(w, REFS)
+    assert f.diffs == [] and f.ratios == []
+    assert [(x.at, x.problem) for x in outcome_cards(w, REFS)[0].listed] == [((0, 0), ONE_ARM)]
+    assert shown_at(w, REFS) == every_number(w)
+
+
+@pytest.mark.parametrize("arm", ["MD Anderson protocol", "Md. Ali technique", "Drain minus"])
+def test_an_arm_name_containing_a_marker_pairs_as_a_normal_arm(arm):
+    w = written([outcome("Recurrence", [num("Recurrence at 2 y", 12.5, "%", arm),
+                                        num("Recurrence at 2 y", 20.0, "%", "Standard")])],
+                [study("1", f"{arm} vs Standard")])
+    assert [g.kind for g in all_groups(w)] == ["pair"]
+    assert forest(w, REFS).diffs == []
+    assert [r.values_text for g in compare(w, REFS) for r in g.rows] == [
+        f"{arm} 12.5% vs Standard 20%"]
+    [it] = out_of_100(w, REFS)
+    assert it.arms == [(13, arm, "A"), (20, "Standard", "B")]
+    assert outcome_cards(w, REFS)[0].listed == []
+
+
+@pytest.mark.parametrize("arm", ["MD", " md ", "SMD", "wmd", "difference", "Mean difference",
+                                 "risk  difference", "Absolute difference"])
+def test_an_arm_text_that_is_only_a_marker_is_not_an_arm_name(arm):
+    w = answer_with(num("LOS", 0.33, "days", arm, lo=-0.03, hi=0.7))
+    [d] = forest(w, REFS).diffs
+    assert d.drawn
+    p = written([outcome("D", [num("D", 95.9, "%", "R-TAPP"), num("D", 14.4, "%", arm)])])
+    assert chart_kind([n for n in p.outcomes[0].numbers]) == "text"
