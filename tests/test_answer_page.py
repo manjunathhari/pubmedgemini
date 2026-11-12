@@ -1081,7 +1081,22 @@ def _o_side(arm, comparison):
     if sides is None:
         return None
     score = sum((w in sides[0]) - (w in sides[1]) for w in _o_words(arm))
-    return 0 if score > 0 else 1 if score < 0 else None
+    if score:
+        return 0 if score > 0 else 1
+    return _o_group(arm, comparison)
+
+
+def _o_group(arm, comparison):
+    """Oracle (S1, owner decision N6): an arm "group <letter>" and exactly one side of the
+    comparison holding "(group <letter>)"."""
+    import re
+
+    m = re.fullmatch(r"group ([a-z])", _o_norm(arm))
+    if m is None:
+        return None
+    parts = re.split(r" (?:vs|vs\.|versus|compared with) ", _o_norm(comparison))
+    has = [f"(group {m.group(1)})" in p for p in parts]
+    return has.index(True) if has.count(True) == 1 else None
 
 
 def _o_ratio(n):
@@ -1109,7 +1124,8 @@ _PMIDS = ["1", "2", " 1 ", "", "  ", "99999999"]
 _P = [None, "", "p", "P < .001", "0.03"]
 _COMPARISONS = ["TEP vs Lichtenstein"] * 4 + ["MD Anderson protocol vs Standard", "",
                 "TEP vs TAPP vs Lichtenstein", "Laparoscopic repair vs Open repair",
-                "TAPP vs Lichtenstein"]
+                "TAPP vs Lichtenstein"] + ["Drug X then surgery (group A) vs surgery (group B)"] * 3 + [
+                "Drug X (group A) vs drug Y (group A)"]
 
 
 def _rand_value(r):
@@ -1132,6 +1148,10 @@ def _rand_pair(r) -> list[Number]:
     """Two percentages of one label and study, as an out-of-100 candidate (F6)."""
     label = r.choice(["Pain", "Ache at 2 y"] if r.random() < 0.5 else _LABELS)
     arms = [r.choice(GOOD_ARMS if r.random() < 0.7 else _ARMS) for _ in range(2)]
+    if r.random() < 0.15:  # S1: group letters, which some comparisons name
+        return [Number(label, r.uniform(0, 100), "%", a, None, None, None, "1")
+                for a in r.sample(["Group A", "group b", "Group B", "Group C", "Group A (n=9)"],
+                                  2)]
     if r.random() < 0.3:  # a likely match for "TEP vs Lichtenstein", in either order
         arms = r.sample([r.choice(["TEP", "ＴＥＰ", "TEP (n=665)", "\u202eTEP"]),
                          r.choice(["Lichtenstein", "Lichtenstein group", "\ufeffLichtenstein"])], 2)
@@ -1169,7 +1189,7 @@ def test_random_answers_keep_the_pages_promises():
     from pubmedgemini.answer_page import arm_name, out_of_100_groups
 
     r = random.Random(20261112)
-    squares_seen = diffs_seen = r1_seen = 0
+    squares_seen = diffs_seen = r1_seen = s1_seen = 0
     for case in range(3000):
         body = _rand_body(r)
         w, refs = body.answer, refs_of(body)
@@ -1233,6 +1253,7 @@ def test_random_answers_keep_the_pages_promises():
             assert not any(_o_norm(n.arm) in _BAD_ARM_KEYS for n in nums), case
             assert nums[0].label not in NOT_SQUARES_LABELS, case
             squares_seen += 1
+            s1_seen += all(_o_norm(n.arm).startswith("group ") for n in nums)
         # third check L1: drawn difference axes have three distinct labels and 0 inside
         for row in f.diffs:
             if row.drawn:
@@ -1244,7 +1265,8 @@ def test_random_answers_keep_the_pages_promises():
         assert not in_rows & {x.at for c in outcome_cards(w, refs) for x in c.listed}, case
         # third check L3: nothing the page draws holds a bidi control or zero-width character
         assert not any(ch in INVISIBLE for t in _strings(answer_view(body)) for ch in t), case
-    assert squares_seen > 50 and diffs_seen > 50 and r1_seen > 20  # the oracles were exercised
+    assert squares_seen > 50 and diffs_seen > 50 and r1_seen > 20 and s1_seen > 5
+    # (the oracles were exercised)
 
 
 def rust_trim_pmid(n: Number) -> str:
@@ -1968,3 +1990,52 @@ def test_r1_ratio_keeps_every_draw_check():
     assert [r.problem for r in rows] == [
         "a ratio must be above 0", "the interval has no width", "the interval is reversed",
         "the estimate is outside its interval", "its study is not in the references", None]
+
+
+# ---------- S1: group letters named by the comparison (owner decision N6, 12 Nov 2026) ----
+
+GROUP_CMP = "Short-course radiotherapy then chemotherapy (group A) vs chemoradiotherapy (group B)"
+
+
+@pytest.mark.parametrize("arm,side", [("Group A", 0), ("group b", 1), (" GROUP  A ", 0),
+                                      ("Group B", 1)])
+def test_s1_group_letter_matches_its_side(arm, side):
+    from pubmedgemini.answer_page import arm_side
+
+    assert arm_side(arm, GROUP_CMP) == side
+
+
+@pytest.mark.parametrize("arm,comparison", [
+    ("Group A", "Drug X (group A) vs drug Y (group A)"),    # both sides name the letter
+    ("Group C", GROUP_CMP),                                  # letter absent
+    ("Group A", "Drug X vs drug Y"),                         # no group letters at all
+    ("Group A", "Drug X group A vs drug Y group B"),         # the letter is not "(group A)"
+    ("Group A (n=60)", GROUP_CMP),                           # not exactly "group <letter>"
+    ("Groups A", GROUP_CMP), ("Group AB", GROUP_CMP), ("A", GROUP_CMP),
+    ("Group A", "Drug X (group A) and drug Y (group B)"),   # not two-sided
+])
+def test_s1_near_misses_do_not_match(arm, comparison):
+    from pubmedgemini.answer_page import arm_side
+
+    assert arm_side(arm, comparison) is None
+
+
+def test_s1_group_letters_get_squares():
+    w = _pct_pair("Group A", "Group B", comparison=GROUP_CMP)
+    [it] = out_of_100(w, REFS)
+    assert [(c, a, s) for c, a, s in it.arms] == [(9, "Group A", "A"), (19, "Group B", "B")]
+    w = _pct_pair("Group B", "Group A", comparison=GROUP_CMP)  # the writer's order kept
+    assert [a for _, a, _ in out_of_100(w, REFS)[0].arms] == ["Group B", "Group A"]
+
+
+@pytest.mark.parametrize("a,b,comparison", [
+    ("Group A", "Group B", "Drug X vs drug Y"),                      # letters not named
+    ("Group A", "Group A ", GROUP_CMP),                              # both the same side
+    ("Group A", "Group C", GROUP_CMP),                               # one letter absent
+    ("Group A", "Group B", "Drug X (group A) vs drug Y (group A)"),  # both sides name A
+])
+def test_s1_pairs_that_stay_text(a, b, comparison):
+    w = _pct_pair(a, b, comparison=comparison)
+    assert out_of_100(w, REFS) == []
+    rows = [r for g in compare(w, REFS) for r in g.rows]
+    assert all(r.problem is not None for r in rows) or not rows

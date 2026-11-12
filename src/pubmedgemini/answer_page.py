@@ -564,31 +564,60 @@ def _arm_score(arm: str, comparison: str) -> int:
 _SIDE_SEP = re.compile(r" (?:vs\.?|versus|compared with) ")
 
 
+def comparison_parts(comparison: str | None) -> tuple[str, str] | None:
+    """The two sides of a two-sided comparison as keys (`_key`), or None: no comparison, not
+    exactly one separator, or a side without a word (fourth check F1)."""
+    if comparison is None:
+        return None
+    parts = _SIDE_SEP.split(_key(comparison))
+    if len(parts) != 2 or not _words(parts[0]) or not _words(parts[1]):
+        return None
+    return parts[0], parts[1]
+
+
 def comparison_sides(comparison: str | None) -> tuple[set[str], set[str]] | None:
     """The words only the left side, and only the right side, of a two-sided comparison
     holds ("TEP vs Lichtenstein": {"tep"}, {"lichtenstein"}), on the key and Incisive's
     `words`; None when there is no comparison or it does not split into exactly two sides."""
-    if comparison is None:
-        return None
-    parts = _SIDE_SEP.split(_key(comparison))
-    if len(parts) != 2:
+    parts = comparison_parts(comparison)
+    if parts is None:
         return None
     left, right = (set(_words(x)) for x in parts)
-    if not left or not right:
-        return None
     return left - right, right - left
+
+
+# S1 (owner decision N6, 12 Nov 2026): an arm that is exactly "Group <letter>" (on the key).
+_GROUP_ARM = re.compile(r"group ([^\W\d_])")
+
+
+def _group_side(arm_key: str, parts: tuple[str, str]) -> int | None:
+    """S1: an arm "Group X" matches the side of the comparison that names "(group X)" when the
+    other side does not; else None."""
+    m = _GROUP_ARM.fullmatch(arm_key)
+    if m is None:
+        return None
+    mark = f"(group {m.group(1)})"
+    has = [mark in p for p in parts]
+    return has.index(True) if has.count(True) == 1 else None
 
 
 def arm_side(arm: str | None, comparison: str | None) -> int | None:
     """Which side of the comparison an arm text matches: 0 (left), 1 (right) or None (no
     two-sided comparison, or a tie or zero score). The score is `_arm_score`'s token overlap
-    (each word on the left only +1, on the right only -1) on the key (fourth check F1)."""
+    (each word on the left only +1, on the right only -1) on the key (fourth check F1). When
+    the score is zero, the owner's recovery rule S1 may still place the arm (`_group_side`)."""
     sides = comparison_sides(comparison)
     if sides is None or arm is None:
         return None
     left, right = sides
     score = sum(int(w in left) - int(w in right) for w in _words(_key(arm)))
-    return 0 if score > 0 else 1 if score < 0 else None
+    if score:
+        return 0 if score > 0 else 1
+    # Recovery rules the owner chose (N6), only where the score finds no side, so an arm the
+    # score placed is never moved: S1 group letters.
+    parts = comparison_parts(comparison)
+    assert parts is not None  # comparison_sides was not None
+    return _group_side(_key(arm), parts)
 
 
 def names_one_side(text: str, comparison: str | None) -> bool:
