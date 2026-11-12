@@ -290,12 +290,22 @@ def set_running(pool: ConnectionPool, run_id: UUID) -> None:
         )
 
 
+STEP_LOCK_CLASS = 4_101  # the first key of add_step's per-run advisory lock
+
+
 def add_step(pool: ConnectionPool, run_id: UUID, kind: str, line: str) -> None:
     """Appends a step line (cut to MAX_STEP_LINE). A failed write is logged by kind only and
-    otherwise ignored (Incisive `add_line`)."""
+    otherwise ignored (Incisive `add_line`).
+
+    Safe from several threads at once (the writer's four parts): a transaction-level advisory
+    lock per run serialises the `seq` computation, so two lines never take the same number
+    and neither is dropped (review L10). The two-key lock space does not overlap the
+    migrations' one-key lock."""
     text = clip(line, MAX_STEP_LINE)
     try:
-        with pool.connection() as conn:
+        with pool.connection() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))",
+                         (STEP_LOCK_CLASS, str(run_id)))
             conn.execute(
                 "INSERT INTO run_steps (run_id, seq, kind, line) SELECT %s, "
                 "COALESCE(MAX(seq), 0) + 1, %s, %s FROM run_steps WHERE run_id = %s",

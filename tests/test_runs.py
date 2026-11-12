@@ -925,3 +925,29 @@ def test_save_answer_removes_nul_at_any_depth(run_app):  # review M4
     got = run_app.answer(rid)
     assert got.answer.outcomes[0].numbers[0].p == "<0.001"
     assert got.answer.bottom_line.text == "b" + C0_KEPT and got.notes[-1] == "n"
+
+
+def test_step_lines_written_at_once_from_threads_are_all_kept(run_app):  # review L10
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    progress = DbProgress(run_app.pool, rid)
+    threads, per_thread = 4, 25
+    start = threading.Barrier(threads)
+
+    def write(t):
+        start.wait()
+        for k in range(per_thread):
+            progress.line("write", f"line {t}-{k}")
+
+    workers = [threading.Thread(target=write, args=(t,)) for t in range(threads)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+    got = rows(run_app.pool, "SELECT seq, line FROM run_steps WHERE run_id = %s ORDER BY seq",
+               (rid,))
+    assert [s for s, _ in got] == list(range(1, threads * per_thread + 1))
+    assert {line for _, line in got} == {f"line {t}-{k}" for t in range(threads)
+                                         for k in range(per_thread)}
+    for t in range(threads):  # each thread's lines in the order it wrote them
+        mine = [line for _, line in got if line.startswith(f"line {t}-")]
+        assert mine == [f"line {t}-{k}" for k in range(per_thread)]
