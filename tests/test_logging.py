@@ -397,6 +397,8 @@ APP_LINE_PATTERNS = [
     r"researcher s3 outcome=usable reported=\d+ considered=\d+",
     r"researcher s3 outcome=(?:empty|not_made) seen=\d+ rounds=\d+",
     *WRITER_LINE_PATTERNS,
+    r"answer_page kind=row_not_derived rows=\d+",  # F3b: the answer page's one line
+    r"run page answer kind=(?:not_quick|invalid|unserialisable)",
 ]
 
 # What must never reach a log line: the question (zq7 and its words), the model's note (yq8),
@@ -944,3 +946,61 @@ def ask_env_marked(db_url, parts, one_piece=(), script=None):
     with ask_env(db_url, marked_upstream(), leak_script() if script is None else script,
                  key="gk-q7", parts=parts, one_piece=one_piece) as env:
         yield env
+
+
+# ---------- the answer page (F3b Task 5) ----------
+
+def _marked_answer():
+    """The hernia answer with a marker in every kind of model field the page draws."""
+    from test_answer_page import hernia
+
+    b = hernia()
+    w = b.answer
+    o = w.outcomes[0]
+    o.outcome = "mkq-outcome"
+    o.effect_text = "mkq-effect [90000001]"
+    o.why = "mkq-why"
+    for n in o.numbers:
+        n.label += " mkq-label"
+        if n.arm:
+            n.arm += " mkq-arm"
+    w.studies[0].comparison = "mkq-cmp vs other"
+    w.studies[0].label = "mkq-study"
+    w.bottom_line.text = "mkq-bottom"
+    b.references[0].title = "mkq-title"
+    b.notes.append("mkq-note")
+    return b
+
+
+def test_answer_page_logs_nothing_of_the_answer(db_url, upstream, caplog, app_debug,
+                                                monkeypatch):
+    from test_ask_page import HAPPY_RUN, H, ask_env
+    from test_run_answer_layout import store
+
+    import pubmedgemini.answer_page as ap
+
+    with ask_env(db_url, upstream, HAPPY_RUN) as env:
+        app_debug()
+        url = store(env, _marked_answer())
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG):
+            r = env.c.get(url, headers=H)
+        assert r.status_code == 200 and "mkq-outcome" in r.text and "mkq-arm" in r.text
+        assert "mkq" not in caplog.text
+        assert_app_lines_fixed(_app_messages(caplog))
+        assert not [m for m in _app_messages(caplog) if m.startswith("answer_page")]
+
+        # a row whose derivation fails: listed on the page, one fixed line with a count only
+        def boom(*_a):
+            raise OverflowError("mkq-exception")
+
+        monkeypatch.setattr(ap, "_signed", boom)  # the difference axis labels
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG):
+            r = env.c.get(url, headers=H)
+        assert r.status_code == 200
+        assert "Not drawn: the numbers could not be placed on a scale." in r.text
+        assert "mkq" not in caplog.text
+        lines = [m for m in _app_messages(caplog) if m.startswith("answer_page")]
+        assert lines == ["answer_page kind=row_not_derived rows=1"]
+        assert_app_lines_fixed(_app_messages(caplog))
