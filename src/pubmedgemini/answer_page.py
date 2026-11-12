@@ -26,7 +26,7 @@ cards of a pair level (X14). Rounding is Rust's `f64::round` (half away from zer
 import logging
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Literal
@@ -387,15 +387,21 @@ def study_of(w: WrittenAnswer, pmid: str) -> Study | None:
     return None
 
 
-def arm_lines(o: Outcome, comparison_of) -> list[tuple[str, str, list[int]]]:
+def arm_lines(o: Outcome, comparison_of,
+              known: Callable[[str], bool]) -> list[tuple[str, str, list[int]]]:
     """The outcome's numbers grouped by label and study in first-appearance order, each
     group with the intervention arm (more words shared with the left side of the study's
-    comparison) first; a stable sort, so equal scores keep the writer's order."""
+    comparison) first; a stable sort, so equal scores keep the writer's order. A number
+    whose study is not `known` is a line of its own: numbers with no study may come from
+    different studies and are never grouped (re-check L-F)."""
     lines: list[tuple[str, str, list[int]]] = []
     for i, n in enumerate(o.numbers):
         label, pmid = rust_trim(n.label), rust_trim(n.pmid)
+        if not (pmid and known(pmid)):
+            lines.append((label, pmid, [i]))
+            continue
         for line in lines:
-            if line[0] == label and line[1] == pmid:
+            if line[0] == label and line[1] == pmid:  # both known: the same PMID
                 line[2].append(i)
                 break
         else:
@@ -409,7 +415,7 @@ def arm_lines(o: Outcome, comparison_of) -> list[tuple[str, str, list[int]]]:
     return lines
 
 
-def outcome_groups(w: WrittenAnswer, i: int) -> list[NumGroup]:
+def outcome_groups(w: WrittenAnswer, i: int, refs: Mapping[str, int]) -> list[NumGroup]:
     o = w.outcomes[i]
 
     def comparison_of(p: str) -> str | None:
@@ -417,12 +423,13 @@ def outcome_groups(w: WrittenAnswer, i: int) -> list[NumGroup]:
         return s.comparison if s is not None else None
 
     return [NumGroup(i, label, pmid, idx, chart_kind([o.numbers[j] for j in idx]))
-            for label, pmid, idx in arm_lines(o, comparison_of)]
+            for label, pmid, idx in arm_lines(o, comparison_of, lambda p: p in refs)]
 
 
-def all_groups(w: WrittenAnswer) -> list[NumGroup]:
-    """Every outcome's groups, in page order."""
-    return [g for i in range(len(w.outcomes)) for g in outcome_groups(w, i)]
+def all_groups(w: WrittenAnswer, refs: Mapping[str, int]) -> list[NumGroup]:
+    """Every outcome's groups, in page order; a number whose PMID is blank or not in
+    `refs` is a group of its own (re-check L-F)."""
+    return [g for i in range(len(w.outcomes)) for g in outcome_groups(w, i, refs)]
 
 
 # ---------- the draw checks (plan D3 option a) ----------
@@ -474,9 +481,13 @@ def _looks_ratio(n: Number) -> bool:
                 or _RATIO_WORDS.search(f"{n.label} {u}"))
 
 
-def listed_problem(n: Number, group: Sequence[Number], pair: bool = False) -> str:
+def listed_problem(n: Number, group: Sequence[Number], pair: bool = False,
+                   has_study: bool = True) -> str:
     """Why a number that is neither a forest row nor a "Compare the arms" value is not drawn.
-    `pair`: its group is a pair left out of "Compare the arms" for an arm with no name."""
+    `pair`: its group is a pair left out of "Compare the arms" for an arm with no name.
+    `has_study`: its PMID is in the references (else it is never grouped: re-check L-F)."""
+    if not has_study:
+        return NO_STUDY
     if pair:
         return "the other arm is not named" if arm_name(n) else "arm not named"
     if names_an_arm(n) and labelled_difference(n):
@@ -495,6 +506,7 @@ def listed_problem(n: Number, group: Sequence[Number], pair: bool = False) -> st
 
 
 ONE_ARM_RATE = "one arm's rate, not a difference"
+NO_STUDY = "its study is not in the references"
 # A number whose label or unit names a difference measure and which also carries an arm name:
 # not drawn (d24), and the reason says what is wrong (re-check M-C, coordinator option a).
 ARM_ON_DIFF = "an arm is named on a difference"
@@ -529,7 +541,7 @@ def listed_numbers(w: WrittenAnswer, refs: Mapping[str, int]) -> dict[int, list[
     """By outcome, the numbers no forest row and no "Compare the arms" row shows, as text
     with the reason (flag, never delete: every number the writer gave is on the page)."""
     out: dict[int, list[ListedNumber]] = {}
-    for g in all_groups(w):
+    for g in all_groups(w, refs):
         in_compare = compared(w, g)
         o = w.outcomes[g.outcome]
         group = g.nums(w)
@@ -548,7 +560,8 @@ def listed_numbers(w: WrittenAnswer, refs: Mapping[str, int]) -> dict[int, list[
             sub += [("text", f" · {x}") for x in (arm, p or "") if x]
             out.setdefault(g.outcome, []).append(ListedNumber(
                 rust_trim(n.label) or o.outcome, value, sub,
-                listed_problem(n, group, g.kind == "pair" and not in_compare),
+                listed_problem(n, group, g.kind == "pair" and not in_compare,
+                               rust_trim(n.pmid) in refs),
                 (g.outcome, j)))
     return out
 
@@ -745,7 +758,7 @@ def forest(w: WrittenAnswer, refs: Mapping[str, int]) -> Forest:
     """Every ratio or difference with both CI bounds (Incisive `forest_rows`), ratios then
     differences, each in group order; drawn only when the checks pass."""
     found: list[tuple[str, Number, Outcome, tuple[int, int]]] = []
-    for g in all_groups(w):
+    for g in all_groups(w, refs):
         o = w.outcomes[g.outcome]
         for j in g.numbers:
             n = o.numbers[j]
@@ -849,7 +862,7 @@ def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -
 def out_of_100(w: WrittenAnswer, refs: Mapping[str, int]) -> list[OutItem]:
     """The "Out of 100" items: every two-arm percent group whose numbers pass the checks."""
     items: list[OutItem] = []
-    for g in out_of_100_groups(w, all_groups(w)):
+    for g in out_of_100_groups(w, all_groups(w, refs)):
         nums = g.nums(w)
         if out_of_100_problem(w, g, refs) is not None:
             continue
@@ -898,7 +911,7 @@ def compare(w: WrittenAnswer, refs: Mapping[str, int]) -> list[CompareGroup]:
     Lichtenstein 18.8%", Incisive `app/page.rs` `compare_view`, `PairBar.arm`); a pair with
     an arm not named is listed in its outcome instead (review H1)."""
     out: list[tuple[str, str, list[CompareRow]]] = []
-    groups = all_groups(w)
+    groups = all_groups(w, refs)
     squares = {id(g) for g in out_of_100_groups(w, groups)}
     for g in groups:
         if not compared(w, g):
@@ -1158,7 +1171,7 @@ def answer_view(body: AnswerBody) -> dict[str, Any]:
         "keys": [(_clean(k.label), cp(k.value_text)) for k in g.key_numbers
                  if _clean(k.label) or _clean(k.value_text)],
         "caveat": cp(g.main_caveat) if _clean(g.main_caveat) else None}
-    no_numbers = not all_groups(w)
+    no_numbers = not all_groups(w, refs)
     forest_p = forest_panel(body)
     v["pairs"] = [p for p in (
         _pair(0, ("forest", "outcomes"), Panel(forest_p.head, []) if no_numbers else forest_p,

@@ -319,11 +319,12 @@ def test_compare_groups_by_normalised_comparison():
                  outcome("C", pair("33333"))],
                 [study("11111", "TEP vs Lichtenstein (open)"),
                  study("22222", "tep vs  lichtenstein")])
-    g = compare(w, REFS)
+    refs = REFS | {"33333": 3}  # a reference with no trials-table row: "Other" (L-F)
+    g = compare(w, refs)
     assert [x.label for x in g] == ["TEP vs Lichtenstein (open)", "Other"]
     assert [len(x.rows) for x in g] == [2, 1]
     assert pieces_text(g[0].rows[0].study_pieces) == "Trial 11111 [1]"
-    assert pieces_text(g[1].rows[0].study_pieces) == "PMID 33333 (not in the study list)"
+    assert pieces_text(g[1].rows[0].study_pieces) == "PMID 33333 [3]"
 
 
 def test_compare_rows_against_the_mock():
@@ -371,7 +372,7 @@ def test_numbers_group_by_label_and_study_intervention_first():
         num(" VAS 24 h ", 5.0, None, "laparoscopic TEP", "22222 "),
         num("VAS 7 d", 1.0, None, None, "11111"),
     ])], [study("11111", "Robotic TAPP vs laparoscopic TEP")])
-    g = all_groups(w)
+    g = all_groups(w, REFS)
     assert len(g) == 3
     assert (g[0].label, g[0].pmid) == ("VAS 24 h", "11111")
     assert g[0].numbers == [1, 0] and g[0].kind == "pair"  # robotic first by the comparison
@@ -669,7 +670,7 @@ def test_each_value_is_shown_with_its_own_arm_name():  # the reviewer's case
 def test_rows_under_other_carry_arm_names_too():
     w = written([outcome("Pain", [num("Pain", 2.0, None, "a", "33333"),
                                   num("Pain", 1.0, None, "b", "33333")])])
-    [g] = compare(w, REFS)
+    [g] = compare(w, REFS | {"33333": 3})
     assert (g.label, g.rows[0].values_text) == ("Other", "a 2 vs b 1")
 
 
@@ -705,7 +706,7 @@ def test_a_two_arm_pair_labelled_difference_is_a_pair_not_two_differences():
                 [study("1", "TEP vs Lichtenstein")])
     f = forest(w, REFS)
     assert f.diffs == [] and f.ratios == []
-    assert [g.kind for g in all_groups(w)] == ["pair"]
+    assert [g.kind for g in all_groups(w, REFS)] == ["pair"]
     assert [r.values_text for g in compare(w, REFS) for r in g.rows] == [
         "TEP 9.4% vs Lichtenstein 18.8%"]
     assert [[c for c, _, _ in it.arms] for it in out_of_100(w, REFS)] == [[9, 19]]
@@ -734,7 +735,7 @@ def test_an_arm_name_containing_a_marker_pairs_as_a_normal_arm(arm):
     w = written([outcome("Recurrence", [num("Recurrence at 2 y", 12.5, "%", arm),
                                         num("Recurrence at 2 y", 20.0, "%", "Standard")])],
                 [study("1", f"{arm} vs Standard")])
-    assert [g.kind for g in all_groups(w)] == ["pair"]
+    assert [g.kind for g in all_groups(w, REFS)] == ["pair"]
     assert forest(w, REFS).diffs == []
     assert [r.values_text for g in compare(w, REFS) for r in g.rows] == [
         f"{arm} 12.5% vs Standard 20%"]
@@ -821,7 +822,7 @@ def test_a_number_not_labelled_as_a_difference_keeps_the_one_arm_reason(label):
 def test_arms_differing_only_by_case_or_spacing_are_not_a_pair(a, b):
     w = written([outcome("Pain", [num("Pain", 9.4, "%", a), num("Pain", 18.8, "%", b)])],
                 [study("1", "TEP vs Lichtenstein")])
-    assert [g.kind for g in all_groups(w)] == ["text"]
+    assert [g.kind for g in all_groups(w, REFS)] == ["text"]
     assert compare(w, REFS) == [] and out_of_100(w, REFS) == []
     listed = outcome_cards(w, REFS)[0].listed
     assert [(x.at, x.problem) for x in listed] == [((0, 0), "its arms are not distinct"),
@@ -831,4 +832,33 @@ def test_arms_differing_only_by_case_or_spacing_are_not_a_pair(a, b):
 
 def test_distinct_arms_still_pair():
     w = written([outcome("Pain", [num("Pain", 9.4, "%", "TEP"), num("Pain", 18.8, "%", "TAPP")])])
-    assert [g.kind for g in all_groups(w)] == ["pair"]
+    assert [g.kind for g in all_groups(w, REFS)] == ["pair"]
+
+
+# ---------- numbers with no study are never paired (re-check L-F) ----------
+
+NO_STUDY = "its study is not in the references"
+
+
+@pytest.mark.parametrize("pmid", ["", "  ", "99999999"])
+def test_numbers_with_no_study_are_never_paired(pmid):
+    w = written([outcome("Pain", [num("Pain", 9.4, "%", "TEP", pmid),
+                                  num("Pain", 18.8, "%", "Lichtenstein", pmid),
+                                  num("Pain", 0.5, "RR", None, pmid, 0.2, 0.9)])],
+                [study("1", "TEP vs Lichtenstein")])
+    assert all(len(g.numbers) == 1 for g in all_groups(w, REFS))
+    assert compare(w, REFS) == [] and out_of_100(w, REFS) == []
+    f = forest(w, REFS)
+    assert [(r.at, r.drawn, r.problem) for r in f.ratios] == [((0, 2), False, NO_STUDY)]
+    assert [(x.at, x.problem) for x in outcome_cards(w, REFS)[0].listed] == [
+        ((0, 0), NO_STUDY), ((0, 1), NO_STUDY)]
+    assert shown_at(w, REFS) == every_number(w)
+
+
+def test_a_known_study_still_pairs_beside_numbers_with_none():
+    w = written([outcome("Pain", [num("Pain", 9.4, "%", "TEP"), num("Pain", 3.0, "%", "TEP", ""),
+                                  num("Pain", 18.8, "%", "Lichtenstein")])],
+                [study("1", "TEP vs Lichtenstein")])
+    assert [r.values_text for g in compare(w, REFS) for r in g.rows] == [
+        "TEP 9.4% vs Lichtenstein 18.8%"]
+    assert [(x.at, x.problem) for x in outcome_cards(w, REFS)[0].listed] == [((0, 1), NO_STUDY)]
