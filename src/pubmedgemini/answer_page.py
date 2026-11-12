@@ -772,8 +772,16 @@ def _pos(kind: str, x: float, scale: Axis) -> float:
     return _lin_pos(x, scale.lo, scale.hi)
 
 
-def _signed(v: float) -> str:
-    t = fmt_axis(v)
+def step_places(step: float) -> int:
+    """The decimals a difference axis label needs: those of its step (1, 2 or 5 × 10^k has
+    max(0, −k)), so the edges, multiples of the step, print exactly and distinctly
+    (third check L1: two decimals made RD 0.001 to 0.003 read "0 · 0 · +0")."""
+    return max(0, math.ceil(-math.log10(step) - 1e-9))
+
+
+def _signed(v: float, places: int = 2) -> str:
+    f = 10.0 ** places
+    t = fmt_value(round_half_away(v * f) / f)
     return f"+{t}" if v > 0 else ("0" if v == 0 else t)
 
 
@@ -831,18 +839,20 @@ def _diff_scale(n: Number) -> Axis | None:
     lo, hi = n.ci_low, n.ci_high
     assert lo is not None and hi is not None
     try:
-        a, b, _ = diff_axis(lo, hi)
+        a, b, step = diff_axis(lo, hi)
     except (ArithmeticError, ValueError):
         return None
     span = b - a
-    if not (math.isfinite(span) and span > 0 and a - lo <= _SPAN_SLACK * span
+    # 0 strictly inside (X16): at the 9-decimal rounding a tiny interval can put an edge on 0.
+    if not (math.isfinite(span) and span > 0 and a < 0 < b and a - lo <= _SPAN_SLACK * span
             and hi - b <= _SPAN_SLACK * span):
         return None
-    # An axis label rounds edge * 100, which is not finite for an edge above about 1.8e306
-    # (re-check M-B): no labelled axis holds such an interval.
-    if not (math.isfinite(a * 100.0) and math.isfinite(b * 100.0)):
+    places = step_places(step)
+    # An edge above about 1.8e306 is too wide to label (re-check M-B, kept as it was: an edge
+    # × 100 not finite), and an edge × 10^places must be finite for its label.
+    if not all(math.isfinite(x * f) for x in (a, b) for f in (100.0, 10.0 ** places)):
         return None
-    return Axis(a, b, _lin_pos(0, a, b), _signed(a), "0", _signed(b))
+    return Axis(a, b, _lin_pos(0, a, b), _signed(a, places), "0", _signed(b, places))
 
 
 def _diff_scale_problem(n: Number) -> str:

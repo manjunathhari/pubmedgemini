@@ -783,7 +783,7 @@ def test_any_arithmetic_error_in_a_rows_derivation_lists_that_row_only(monkeypat
     def boom(v):
         raise OverflowError("x")
 
-    monkeypatch.setattr(ap, "_signed", boom)  # the difference axis labels
+    monkeypatch.setattr(ap, "_signed", lambda *a: boom(a[0]))  # the difference axis labels
     f = forest(answer_with(md(-1.0, -2.0, 0.5), ratio(0.5, 0.2, 0.9)), REFS)
     assert [(r.drawn, r.problem) for r in f.diffs] == [
         (False, "the numbers could not be placed on a scale")]
@@ -1106,3 +1106,29 @@ def test_a_named_measure_without_an_arm_is_drawn_and_named_in_its_aria():
     assert [r.drawn for r in f.diffs] == [True, True, True]
     assert [r.aria.split(" ")[0:2] for r in f.diffs] == [
         ["Difference", "2,"], ["Mean", "difference"], ["Difference", "minus"]]
+
+
+# ---------- difference axis labels are distinct and true (third check L1) ----------
+
+@pytest.mark.parametrize("v,lo,hi,labels", [
+    (0.002, 0.001, 0.003, ("−0.001", "0", "+0.003")),
+    (-0.003, -0.006, 0.0005, ("−0.006", "0", "+0.002")),
+    (0.004, 0.004, 0.004, ("−0.001", "0", "+0.004")),
+    (5.0, 5.0, 5.0, ("−1", "0", "+5")),
+    (0.33, -0.03, 0.7, ("−0.2", "0", "+0.8")),
+    (-4.74, -6.78, -2.7, ("−8", "0", "+2")),
+    (-120.0, -120.0, 80.0, ("−150", "0", "+100")),
+    (2.5e-5, 1e-5, 4e-5, ("−0.00001", "0", "+0.00004")),
+])
+def test_difference_axis_labels_take_their_precision_from_the_step(v, lo, hi, labels):
+    [d] = forest(answer_with(num("Risk difference", v, None, None, lo=lo, hi=hi)), REFS).diffs
+    assert d.drawn and (d.scale.lo_text, d.scale.mid_text, d.scale.hi_text) == labels
+    assert 0 < d.null < 100  # 0 is never at an edge (X16)
+
+
+def test_a_tiny_point_interval_whose_axis_would_put_0_at_an_edge_is_not_drawn():
+    # 1e-9 (1e-9 to 1e-9): at the axis's 9-decimal rounding its lower edge is 0, so no axis
+    # keeps 0 off the edge (X16): listed, not drawn on a wrong scale.
+    [d] = forest(answer_with(num("Risk difference", 1e-9, None, None, lo=1e-9, hi=1e-9)),
+                 REFS).diffs
+    assert (d.drawn, d.problem) == (False, "the interval is too narrow to draw")
