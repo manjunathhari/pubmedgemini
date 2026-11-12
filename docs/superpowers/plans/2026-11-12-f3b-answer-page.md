@@ -388,3 +388,16 @@ Each in plain words, with options and one suggestion.
 - How the owner's phone renders v6 (only Chromium was used).
 - The rules on the other three benchmark questions' real answers (only one real answer was available).
 - Whether the other chat has started its own F3b page changes on an unpushed branch.
+
+## Deferred to F4 (recorded after the independent re-check, 12 Nov 2026)
+
+The re-check of this branch found no wrong picture that a model answering from abstracts would plausibly produce and no regression against the live pages. These items are recorded for F4, in addition to the list in the earlier F3 plan (time points or subgroups inside arm texts; same label, different measures; a difference row not saying which arm minus which; a compared value's interval not printed):
+
+1. **A percentage or a log value under a ratio label.** "Hazard ratio for … " with 72 (65–79) is drawn pinned at the edge of the scale and marked as running past it; "… (log)" is drawn as the plain ratio. Guard to add for ratios recognised by label only: refuse labels containing "%", "percent", "log", "ln", "inverse" or "reciprocal" (except "(95% CI)"), and refuse a row whose whole interval lies outside 0.05–50.
+2. **A change word with a ratio unit given.** "Relative risk reduction" with the unit written as "RR" is drawn as a risk ratio, because a given unit decides. Apply the change-word and negation ban when the unit is RR, OR or HR too.
+3. **Order in "Compare the arms"** keeps its own grouping order, while "Out of 100" shows the comparison's first side first.
+4. **The reason shown for a refused blank-unit ratio label** ("unit not RR, OR or HR") is true but does not say why the label was refused.
+5. **One extreme ratio row squeezes the others** on the shared axis, down to a few pixels on a phone. The numbers sit beside each row.
+6. **Strictness.** On made-up but realistic answers, about 70% of genuine ratios with a full interval get a line and about 69% of genuine pairs get squares when the comparison has no negation (none when it has). Labels such as "HR for …" and "Hazard ratio (HR) for …" stay as text. Loosen from real answers, not from guesses.
+
+What code cannot remove: a plausible value under the wrong measure name (a survival of 0.76 labelled "Hazard ratio") is drawn as that measure. F4's number checks must match each drawn value, its unit and its arm against the cited abstract.
