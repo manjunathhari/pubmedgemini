@@ -6,7 +6,6 @@
 <h2>Key-word search</h2>
 <p>Searches PubMed and Europe PMC with exactly what you type. No model.</p>
 {% include "_search_form.html" %}
-<p>Written answers arrive in the next stage.</p>
 <h2>Your questions</h2>
 {% for r in runs %}
 <p><a href="/runs/{{ r.id }}">{{ r.short }}</a><br>{{ r.created_ist }} · {{ r.status_word }}</p>

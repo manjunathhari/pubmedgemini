@@ -170,7 +170,7 @@ def test_home_has_both_boxes_and_no_script(env):
     assert "<h2>Key-word search</h2>" in r.text
     assert "Searches PubMed and Europe PMC with exactly what you type. No model." in r.text
     assert '<label for="q">Search PubMed and Europe PMC</label>' in r.text  # F1's form
-    assert "Written answers arrive in the next stage." in r.text
+    assert "Written answers arrive in the next stage." not in r.text  # F3: they are here
     assert "Answers written from these papers" not in r.text
     assert "Daily free limit reached" not in r.text
 

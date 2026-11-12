@@ -786,3 +786,142 @@ def compare_panel(body: AnswerBody) -> Panel:
     groups = compare(body.answer, refs_of(body)) if body.answer is not None else []
     return _items("compare", [(g.label if i == 0 else None, r)
                               for g in groups for i, r in enumerate(g.rows)])
+
+
+# ---------- the whole page (Task 8) ----------
+
+
+@dataclass(frozen=True)
+class PanelView:
+    """One card of a pair: its items as shown, then those folded into "Show N more"."""
+
+    kind: str
+    shown: list[Item]
+    hidden: list[Item]
+    more_text: str
+
+
+@dataclass(frozen=True)
+class PairView:
+    heading: str
+    sub: str
+    left: PanelView | None  # None: no card (an empty panel)
+    right: PanelView | None
+    note: str | None = None  # the "no structured numbers" note, in place of the left card
+
+
+def _panel_view(kind: str, p: Panel, k: int) -> PanelView | None:
+    if not p.items:
+        return None
+    shown, hidden = p.split(k)
+    one, many = FOLD_NOUNS[kind]
+    n = len(hidden)
+    return PanelView(kind, shown, hidden, f"Show {n} more {one if n == 1 else many}")
+
+
+def _pair(n: int, kinds: tuple[str, str], left: Panel, right: Panel,
+          note: str | None = None) -> PairView | None:
+    heading, sub = PAIRS[n]
+    if not left.items and not right.items and note is None:
+        return None
+    if left.items and right.items:
+        kl, kr = fold_pair(left, right)
+    else:  # one card alone, at full width, unfolded
+        kl, kr = len(left.items), len(right.items)
+    return PairView(heading, sub, _panel_view(kinds[0], left, kl),
+                    _panel_view(kinds[1], right, kr), note)
+
+
+@dataclass(frozen=True)
+class TrialView:
+    ref_pieces: list[Piece]
+    label: str
+    facts: str
+    key_pieces: list[Piece]
+    appraisal: str
+
+
+@dataclass(frozen=True)
+class ReferenceView:
+    n: int
+    pmid: str
+    text: str
+    retracted: bool
+
+
+def _ref_text(title: str, journal: str | None, year: int | None) -> str:
+    t = rust_trim(title).rstrip(".")
+    tail = ", ".join(x for x in (rust_trim(journal) if journal else "",
+                                 str(year) if year is not None else "") if x)
+    return f"{t}. {tail}." if tail else f"{t}."
+
+
+def _clean(text: str) -> str:
+    return rust_trim(_SPACES.sub(" ", text))
+
+
+def answer_view(body: AnswerBody) -> dict[str, Any]:
+    """Everything the answer page draws, computed here; the template only places it."""
+    refs = refs_of(body)
+    v: dict[str, Any] = {
+        "empty_reason": body.empty_reason,
+        "references": [ReferenceView(r.n, r.pmid, _ref_text(r.title, r.journal, r.year),
+                                     r.retracted) for r in body.references],
+        "trail": [f"{e.source}: {e.query} ({e.hits:,} found)" for e in body.searches],
+        "notes": list(body.notes),
+        "answer": body.answer is not None,
+    }
+    w = body.answer
+    if w is None:
+        return v
+
+    def cp(text: str) -> list[Piece]:
+        return cite_pieces(_clean(text), refs)
+
+    b = w.bottom_line
+    v["bottom"] = {"paragraphs": paragraphs(b.text, refs), "pill": pill_class(b.certainty),
+                   "certainty": b.certainty, "reason": cp(b.certainty_reason)}
+    practice = []
+    c = w.clinical_practice
+    if c is not None:
+        if _clean(c.text):
+            practice.append((None, cp(c.text)))
+        for label, text in (("Default choice", c.default_choice),
+                            ("Who may benefit", c.who_may_benefit),
+                            ("Counselling", c.counselling), ("Cost per case", c.cost_per_case)):
+            if _clean(text):
+                practice.append((label, cp(text)))
+    v["practice"] = practice
+    g = w.at_a_glance
+    v["glance"] = None if g is None else {
+        "verdict": cp(g.verdict),
+        "keys": [(_clean(k.label), cp(k.value_text)) for k in g.key_numbers
+                 if _clean(k.label) or _clean(k.value_text)],
+        "caveat": cp(g.main_caveat) if _clean(g.main_caveat) else None}
+    no_numbers = not all_groups(w)
+    forest_p = forest_panel(body)
+    v["pairs"] = [p for p in (
+        _pair(0, ("forest", "outcomes"), Panel(forest_p.head, []) if no_numbers else forest_p,
+              outcomes_panel(body), NO_NUMBERS if no_numbers else None),
+        _pair(1, ("out100", "compare"), out100_panel(body), compare_panel(body)),
+    ) if p is not None]
+    v["outcome_count"] = count_noun(len(w.outcomes), "outcome", "outcomes")
+    v["conflicts"] = [cp(x.text) for x in w.conflicts if _clean(x.text)]
+    a = w.applicability
+    v["applicability"] = [(label, cp(text)) for label, text in (
+        ("Case mix", a.case_mix), ("India and cost", a.india_cost_context),
+        ("Training", a.training)) if _clean(text)]
+    v["would_change"] = [cp(x) for x in w.would_change if _clean(x)]
+    trials = []
+    for s in w.studies:
+        p = rust_trim(s.pmid)
+        ref: list[Piece] = [("cite", [refs[p]])] if p in refs else [
+            ("text", f"PMID {p} ({NOT_IN_LIST})")]
+        facts = " · ".join(x for x in (_clean(s.design),
+                                       f"n = {fmt_value(s.n)}" if s.n is not None else "",
+                                       _clean(s.setting), _clean(s.comparison)) if x)
+        trials.append(TrialView(ref, _clean(s.label).rstrip("."), facts, cp(s.key_results),
+                                _clean(s.appraisal)))
+    v["trials"] = trials
+    v["notable"] = [cp(n.text) for n in w.notable_findings if _clean(n.text)]
+    return v

@@ -12,11 +12,13 @@ from fastapi import APIRouter, Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from pubmedgemini.answer_page import answer_view, fmt_pct, pill_class
 from pubmedgemini.db import is_healthy
 from pubmedgemini.gemini.quota import reset_time_ist, runs_left
 from pubmedgemini.identity import NotSetUp, NotSignedIn, User, current_user
 from pubmedgemini.lit.query import query_rejected_message
 from pubmedgemini.runs import (
+    UNFETCHED,
     ActiveRunExists,
     QuestionBlocked,
     RunView,
@@ -24,6 +26,7 @@ from pubmedgemini.runs import (
     create_run,
     end_message,
     finish_run,
+    get_answer,
     get_run,
     list_runs,
     stored_question,
@@ -34,6 +37,18 @@ log = logging.getLogger("pubmedgemini.web")
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 router = APIRouter()
+
+
+def _pct(x: object) -> str:
+    """A position for a style attribute: only a number code computed is accepted, so no
+    model text can reach a style value."""
+    if isinstance(x, bool) or not isinstance(x, int | float):
+        raise TypeError("pct takes a number")
+    return fmt_pct(float(x))
+
+
+templates.env.filters["pct"] = _pct
+templates.env.filters["pill"] = pill_class
 
 NOT_SIGNED_IN = "You are not signed in."
 NOT_SET_UP = (
@@ -74,7 +89,9 @@ KIND_MESSAGES = {
         "Please run the question again."
     ),
     **{k: GEMINI_UNAVAILABLE for k in ("overloaded", "timeout", "network", "http",
-                                       "request_refused", "not_found", "too_large", "parse")},
+                                       "request_refused", "not_found", "too_large", "parse",
+                                       "refused")},
+    "lit": UNFETCHED,  # F3: the selected studies' records could not be fetched (Incisive)
 }
 STATUS_WORDS = {"queued": "Waiting", "running": "Running", "done": "Done", "partial": "Partial",
                 "failed": "Failed", "stopped": "Stopped"}
@@ -413,6 +430,26 @@ def run_page(request: Request, run_id: str, user: Annotated[User, Depends(curren
         "trail": [f"{e.source}: {e.query} ({e.hits:,} found)" for e in v.searches],
     }
     return templates.TemplateResponse(request, "run.html", context)
+
+
+@router.get("/runs/{run_id}/answer", response_class=HTMLResponse,
+            dependencies=[Depends(require_ready)])
+def answer_page(request: Request, run_id: str, user: Annotated[User, Depends(current_user)]):
+    """The written answer (F3). Not found, alike, for a malformed id, an unknown run,
+    another user's, a run without an answer, or a stored answer that cannot be read."""
+    v = _own_run(request, user, run_id)
+    if v is None or not v.has_answer:
+        return _message(request, RUN_NOT_FOUND, 404)
+    body = get_answer(request.app.state.pool, v.id, user.id)
+    if body is None:
+        log.warning("answer kind=unreadable run_id=%s", v.id)
+        return _message(request, RUN_NOT_FOUND, 404)
+    context = answer_view(body) | {
+        "run_id": v.id,
+        "question": " ".join(x.strip() for x in v.question.split("\n") if x.strip()),
+        "model": v.model,
+    }
+    return templates.TemplateResponse(request, "answer.html", context)
 
 
 @router.post(

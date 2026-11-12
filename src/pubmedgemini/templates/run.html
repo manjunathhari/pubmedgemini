@@ -7,6 +7,9 @@
 {% block content %}
 <h1>pubmedgemini</h1>
 <p><a href="/">Home</a></p>
+{%- if run.has_answer %}
+<p><a href="/runs/{{ run.id }}/answer">Read the answer</a></p>
+{%- endif %}
 <h2>Question</h2>
 {% for para in question_paragraphs %}
 <p>{{ para }}</p>

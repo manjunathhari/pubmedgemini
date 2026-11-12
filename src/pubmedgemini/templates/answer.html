@@ -1,0 +1,250 @@
+{#- The answer page: the frozen mock (docs/mocks/f3-answer-page-v3.html, v3, 12 Nov 2026),
+its stylesheet byte for byte. Every number, position, count and fold comes from
+answer_page.py; model text is only ever escaped text here (autoescape, no |safe). No script. -#}
+{%- macro pieces(ps) -%}
+{%- for kind, v in ps -%}
+{%- if kind == "text" -%}{{ v }}
+{%- elif kind == "bold" -%}<b>{{ v }}</b>
+{%- elif kind == "cite" -%}[{% for n in v %}<a href="#ref-{{ n }}">{{ n }}</a>{% if not loop.last %}, {% endif %}{% endfor %}]
+{%- else -%}[not in the study list]
+{%- endif -%}
+{%- endfor -%}
+{%- endmacro -%}
+{%- macro forest_item(item) -%}
+{%- set r = item.payload -%}
+{%- if item.heading %}
+<p class="eyebrow">{{ item.heading }}</p>
+{%- endif %}
+<div class="ci"><p class="lab"><b>{{ r.label }}</b> <span class="mono">{{ r.estimate_text }}</span></p><p class="muted">{{ pieces(r.sub_pieces) }}</p>
+{%- if r.drawn %}
+<div class="track" role="img" aria-label="{{ r.aria }}"><div class="span" style="left:{{ r.left|pct }}%;width:{{ r.width|pct }}%"></div><div class="est" style="left:{{ r.est|pct }}%"></div><div class="null" style="left:{{ r.null|pct }}%"></div></div>
+<div class="scale"><span class="l">{{ r.scale.lo_text }}</span><span style="left:{{ r.scale.null|pct }}%">{{ r.scale.mid_text }}</span><span class="r">{{ r.scale.hi_text }}</span></div></div>
+{%- else -%}
+<p class="muted">Not drawn: {{ r.problem }}.</p></div>
+{%- endif -%}
+{%- endmacro -%}
+{%- macro outcome_item(item) -%}
+{%- set c = item.payload %}
+<details class="oc"><summary><span class="t">{{ c.title }}</span><span class="pill {{ c.pill }}">{{ c.certainty }}</span><span class="meta">{% if c.evidence_label %}<span class="tag">{{ c.evidence_label }}</span> {% endif %}{{ c.n_numbers }}</span><span class="s">{{ c.first_sentence }}</span></summary><div class="body">
+{%- if c.evidence_pieces %}<p class="muted">Evidence: {{ pieces(c.evidence_pieces) }}</p>{% endif -%}
+{%- for para in c.effect_paragraphs %}<p>{{ pieces(para) }}</p>{% endfor -%}
+{%- if c.why_pieces %}<p class="muted">Why this certainty: {{ pieces(c.why_pieces) }}</p>{% endif -%}
+</div></details>
+{%- endmacro -%}
+{%- macro out100_item(item) -%}
+{%- set it = item.payload %}
+<div class="cp"><p>{{ pieces(it.sentence_pieces) }}</p>
+<div class="arms">
+{%- for count, arm, side in it.arms -%}
+<div class="{{ side }}"><span class="big">{{ count }}</span> <span class="muted">of 100 · {{ arm }}</span><div class="dots" aria-hidden="true">{% for k in range(100) %}<i class="{{ 'on' if k < count else '' }}"></i>{% endfor %}</div></div>
+{%- endfor -%}
+</div></div>
+{%- endmacro -%}
+{%- macro compare_item(item) -%}
+{%- set r = item.payload -%}
+{%- if item.heading %}
+<p class="eyebrow">{{ item.heading }}</p>
+{%- endif %}
+<div class="row"><b>{{ r.label }}</b><span class="pill {{ r.certainty|pill }}">{{ r.certainty }}</span><span class="mono">{{ r.values_text }}</span><span></span><span class="muted">{{ pieces(r.study_pieces) }}{% if r.p_text %} · {{ r.p_text }}{% endif %}</span></div>
+{%- endmacro -%}
+{%- macro item(kind, it) -%}
+{%- if kind == "forest" -%}{{ forest_item(it) }}
+{%- elif kind == "outcomes" -%}{{ outcome_item(it) }}
+{%- elif kind == "out100" -%}{{ out100_item(it) }}
+{%- else -%}{{ compare_item(it) }}
+{%- endif -%}
+{%- endmacro -%}
+{%- macro card_head(kind) -%}
+{%- if kind == "forest" %}
+<h3>Every estimate with a 95% CI</h3>
+<p class="muted">Ratios on a log scale (dashed mark at 1); differences centred on 0. A line crossing the mark is compatible with no difference.</p>
+{%- elif kind == "outcomes" %}
+<div class="head"><h3>Outcome by outcome</h3><span class="muted">{{ outcome_count }} · tap to open</span></div>
+{%- elif kind == "out100" %}
+<p class="eyebrow" style="margin-top:0">Out of 100 patients</p>
+<h3>Out of 100 people like those in the trials</h3>
+{%- else %}
+<h3>Compare the arms</h3>
+<p class="muted">Side-by-side arm results, grouped by each study&#39;s comparison. Most have no confidence interval.</p>
+{%- endif -%}
+{%- endmacro -%}
+{%- macro card(p, alone) -%}
+{%- if alone %}
+<section class="card" style="margin-top:10px">
+{%- else %}
+<section class="card">
+{%- endif -%}
+{{ card_head(p.kind) }}
+{%- for it in p.shown %}{{ item(p.kind, it) }}{% endfor -%}
+{%- if p.hidden %}
+<details class="more"><summary><span class="a">{{ p.more_text }}</span><span class="b">Show fewer</span></summary>
+{%- for it in p.hidden %}{{ item(p.kind, it) }}{% endfor %}
+</details>
+{%- endif -%}
+</section>
+{%- endmacro -%}
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pubmedgemini answer</title>
+<style>
+:root{--bg:#f4f3ef;--card:#fff;--fg:#14181f;--muted:#5b6270;--rule:#dcd9d2;--link:#0b4aa2;--a:#1f5fd0;--b:#b45a09;--off:#e3e5ea;
+--vl-bg:#f8dedb;--vl:#9a2c25;--lo-bg:#f7e9cc;--lo:#855600;--mo-bg:#dfe9f7;--mo:#234a85;--hi-bg:#dcefe4;--hi:#1d6645}
+@media (prefers-color-scheme:dark){:root{--bg:#121418;--card:#1c1f25;--fg:#e9eaed;--muted:#a4aab5;--rule:#353a44;--link:#8ab4f8;--a:#7fa8f5;--b:#e8a25a;--off:#30343c;
+--vl-bg:#40211e;--vl:#f0a29b;--lo-bg:#3a2f16;--lo:#e5bd6b;--mo-bg:#26324a;--mo:#9db6ea;--hi-bg:#1c3429;--hi:#7ccba5}}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;padding:16px;max-width:1100px;margin-inline:auto}
+h1{font-size:1.15rem;margin:0 0 4px}h2{font-size:1.25rem;margin:26px 0 0}h3{font-size:1.05rem;margin:0 0 6px}
+p{margin:6px 0}a{color:var(--link)}.muted{color:var(--muted);font-size:.86rem;margin:2px 0}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.84rem;white-space:nowrap}
+.ex{border:1px dashed var(--rule);padding:6px 10px;font-size:.85rem;color:var(--muted);margin-bottom:14px;border-radius:6px}
+.card{background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:16px;min-width:0}
+.two{display:grid;gap:14px;grid-template-columns:minmax(0,1fr);margin-top:10px}
+@media (min-width:700px){.two{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:stretch}}
+.eyebrow{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:14px 0 6px}
+.ci{margin:0 0 14px}.ci .lab{margin:0;display:flex;flex-wrap:wrap;gap:2px 10px;justify-content:space-between}
+.track{position:relative;height:22px;margin-top:2px;border-bottom:1px solid var(--rule)}
+.track .span{position:absolute;top:10px;height:2px;background:var(--fg)}
+.track .est{position:absolute;top:3px;width:5px;height:16px;margin-left:-2px;background:var(--fg);border-radius:1px}
+.track .null{position:absolute;top:0;height:22px;border-left:1px dashed var(--muted)}
+.scale{position:relative;height:16px;font-size:.72rem;color:var(--muted)}
+.scale span{position:absolute;transform:translateX(-50%);white-space:nowrap}.scale .l{left:0;transform:none}.scale .r{right:0;left:auto;transform:none}
+.pill{font-size:.74rem;font-weight:600;padding:2px 9px;border-radius:999px;white-space:nowrap}
+.vl{background:var(--vl-bg);color:var(--vl)}.lo{background:var(--lo-bg);color:var(--lo)}.mo{background:var(--mo-bg);color:var(--mo)}.hi{background:var(--hi-bg);color:var(--hi)}
+.head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+details.oc{border:1px solid var(--rule);border-radius:10px;padding:10px 12px;margin-top:8px}
+details.oc summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;align-items:start}
+details.oc summary::-webkit-details-marker{display:none}
+details.oc .t{font-weight:600}details.oc .meta,details.oc .s{grid-column:1/-1;font-size:.86rem;color:var(--muted)}details.oc .s{color:var(--fg)}
+details.oc .tag{border:1px solid var(--rule);border-radius:5px;padding:0 6px;font-size:.76rem}
+details.oc summary::after{content:"open";grid-column:1/-1;font-size:.76rem;color:var(--link)}details.oc[open] summary::after{content:"close"}
+details.oc .body{border-top:1px solid var(--rule);margin-top:8px;padding-top:6px;font-size:.92rem}
+.arms{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0 4px}
+.big{font-size:1.9rem;font-weight:700;line-height:1}.A .big{color:var(--a)}.B .big{color:var(--b)}
+.dots{display:grid;grid-template-columns:repeat(10,1fr);gap:2px;margin-top:6px;max-width:150px}
+.dots i{aspect-ratio:1;background:var(--off);border-radius:2px}.A .dots i.on{background:var(--a)}.B .dots i.on{background:var(--b)}
+.cp{border-top:1px solid var(--rule);padding-top:10px;margin-top:12px}.cp:first-of-type{border-top:0;padding-top:0;margin-top:6px}
+.row{border:1px solid var(--rule);border-radius:10px;padding:9px 12px;margin-top:8px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px}
+.row b{font-weight:600}.row .muted{grid-column:1/-1}
+.two>.card{display:flex;flex-direction:column}details.more{margin-top:auto;padding-top:8px}details.more>summary{cursor:pointer;color:var(--link);font-size:.9rem;padding:8px 0 0;list-style:none;border-top:1px solid var(--rule)}details.more>summary::-webkit-details-marker{display:none}details.more[open]>summary .a{display:none}details.more:not([open])>summary .b{display:none}
+</style></head><body>
+<p><a href="/">Home</a> · <a href="/runs/{{ run_id }}">Steps and studies</a></p>
+<h1>{{ question }}</h1>
+<p class="muted">Decision support. The clinician decides.</p>
+{%- if glance %}
+
+<div class="card" style="margin-top:12px">
+<h3>At a glance</h3>
+<p>{{ pieces(glance.verdict) }}</p>
+{%- for label, value in glance["keys"] %}
+<p>{% if label %}<b>{{ label }}:</b> {% endif %}{{ pieces(value) }}</p>
+{%- endfor %}
+{%- if glance.caveat %}
+<p><b>Main caveat:</b> {{ pieces(glance.caveat) }}</p>
+{%- endif %}
+</div>
+{%- endif %}
+
+<div class="card" style="margin-top:12px">
+<h3>Bottom line</h3>
+{%- if answer %}
+{%- for para in bottom.paragraphs %}
+<p>{{ pieces(para) }}</p>
+{%- endfor %}
+<p><span class="pill {{ bottom.pill }}">{{ bottom.certainty }} certainty</span> {{ pieces(bottom.reason) }}</p>
+{%- for label, text in practice %}
+<p>{% if label %}<b>{{ label }}:</b> {% endif %}{{ pieces(text) }}</p>
+{%- endfor %}
+{%- else %}
+<p>{{ empty_reason or "No answer was written." }}</p>
+{%- endif %}
+</div>
+{%- for pair in pairs %}
+
+<h2>{{ pair.heading }}</h2>
+<p class="muted">{{ pair.sub }}</p>
+{%- if pair.note %}
+<div class="two">
+<section class="card">
+<p>{{ pair.note }}</p>
+</section>
+{%- if pair.right %}{{ card(pair.right, false) }}{% endif %}
+</div>
+{%- elif pair.left and pair.right %}
+<div class="two">
+{{- card(pair.left, false) }}
+{{- card(pair.right, false) }}
+</div>
+{%- else %}
+{{- card(pair.left or pair.right, true) }}
+{%- endif %}
+{%- endfor %}
+{%- if answer %}
+{%- if conflicts %}
+
+<h2>Conflicting evidence</h2>
+<div class="card" style="margin-top:10px">
+{%- for c in conflicts %}
+<p>{{ pieces(c) }}</p>
+{%- endfor %}
+</div>
+{%- endif %}
+{%- if applicability %}
+
+<h2>Applicability</h2>
+<div class="card" style="margin-top:10px">
+{%- for label, text in applicability %}
+<p><b>{{ label }}:</b> {{ pieces(text) }}</p>
+{%- endfor %}
+</div>
+{%- endif %}
+{%- if would_change %}
+
+<h2>What would change this answer</h2>
+<div class="card" style="margin-top:10px">
+{%- for c in would_change %}
+<p>{{ pieces(c) }}</p>
+{%- endfor %}
+</div>
+{%- endif %}
+{%- if trials %}
+
+<h2>The trials</h2>
+<div class="card" style="margin-top:10px">
+{%- for t in trials %}
+<p><b>{{ pieces(t.ref_pieces) }} {{ t.label }}.</b> {{ t.facts }}{% if t.facts %}. {% endif %}{{ pieces(t.key_pieces) }}</p>
+{%- if t.appraisal %}
+<p class="muted">Limitations: {{ t.appraisal }}</p>
+{%- endif %}
+{%- endfor %}
+</div>
+{%- endif %}
+{%- if notable or notes %}
+
+<h2>Other notable findings</h2>
+<div class="card" style="margin-top:10px">
+{%- for n in notable %}
+<p>{{ pieces(n) }}</p>
+{%- endfor %}
+{%- for n in notes %}
+<p class="muted">{{ n }}</p>
+{%- endfor %}
+</div>
+{%- endif %}
+{%- endif %}
+{%- if trail %}
+
+<h2>Search trail</h2>
+<div class="card" style="margin-top:10px">
+{%- for line in trail %}
+<p>{{ line }}</p>
+{%- endfor %}
+</div>
+{%- endif %}
+<h2>References</h2>
+{%- for r in references %}
+<p id="ref-{{ r.n }}">[{{ r.n }}] {{ r.text }} <a href="https://pubmed.ncbi.nlm.nih.gov/{{ r.pmid }}/">PMID {{ r.pmid }}</a>{% if r.retracted %} <b>Retracted</b>{% endif %}</p>
+{%- else %}
+<p>No studies were fetched.</p>
+{%- endfor %}
+<p class="muted">Searched PubMed and Europe PMC (free sources); written by {{ model }} from the abstracts.</p>
+<p class="muted">Google may use what you type here, and its reviewers may read it (Gemini free tier). Do not type anything that identifies a patient.</p>
+</body></html>
