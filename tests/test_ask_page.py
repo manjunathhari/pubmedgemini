@@ -2,7 +2,8 @@
 `run_ask` for the order of the question checks, `runs/mod.rs` `RUN_NOT_FOUND_MESSAGE`).
 
 Every test runs the real routes on a dev app over fakes: `FakeUpstream` for PubMed and Europe
-PMC, `FakeGemini` for Google. No test reaches the network."""
+PMC, `RunGemini` for Google (F2's `FakeGemini` for the researcher, the writer's parts by route;
+F3a Task 7). No test reaches the network."""
 
 import re
 import uuid
@@ -11,8 +12,9 @@ from contextlib import contextmanager
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from gemini_fakes import FAKE_KEY, QUOTA_FAILURE, FakeGemini, call, error
+from gemini_fakes import FAKE_KEY, QUOTA_FAILURE, call, error
 from test_runs import BUSY_RUN, END, HAPPY_RUN, ID1, ID2, ID3, Q1, list_reply, turn
+from writer_fakes import RunGemini
 
 from pubmedgemini.config import Settings
 from pubmedgemini.gemini.quota import calls_today
@@ -88,14 +90,16 @@ class AskEnv:
 
 
 @contextmanager
-def ask_env(db_url, upstream=None, script=(), key=FAKE_KEY, starter=None, **settings_extra):
-    """A dev app: literature over `upstream`, Gemini over a FakeGemini serving `script`, an
+def ask_env(db_url, upstream=None, script=(), key=FAKE_KEY, starter=None, parts=None,
+            one_piece=(), **settings_extra):
+    """A dev app: literature over `upstream`, Gemini over a RunGemini serving `script` to the
+    researcher and `parts` to the writer (by default every part answers at once), an
     InlineStarter (the run happens inside the POST) unless another starter is given."""
     if upstream is None:
         from lit_fakes import FakeUpstream, europepmc_routes, pubmed_routes
 
         upstream = FakeUpstream(pubmed_routes() | europepmc_routes())
-    gemini = FakeGemini(list(script))
+    gemini = RunGemini(list(script), parts, one_piece)
     starter = starter if starter is not None else InlineStarter()
     extra = {"gemini_rpm": 1000} | settings_extra  # no pacing waits in tests
     if key is not None:
@@ -164,7 +168,7 @@ def test_home_has_both_boxes_and_no_script(env):
     assert '<label for="question">Ask a question</label>' in r.text
     assert '<textarea id="question" name="question" maxlength="4000" required rows="4">' in r.text
     assert '<button type="submit">Ask</button>' in r.text
-    assert "Free runs left today: about 45" in r.text and PRIVACY in r.text
+    assert "Free runs left today: about 21" in r.text and PRIVACY in r.text
     assert "<h2>Key-word search</h2>" in r.text
     assert "Searches PubMed and Europe PMC with exactly what you type. No model." in r.text
     assert '<label for="q">Search PubMed and Europe PMC</label>' in r.text  # F1's form
@@ -174,7 +178,7 @@ def test_home_has_both_boxes_and_no_script(env):
 
 
 def test_runs_left_goes_down_and_zero_shows_the_reset_time(env):
-    add_calls(env, 486)
+    add_calls(env, 474)
     assert "Free runs left today: about 1" in env.c.get("/", headers=H).text
     add_calls(env, 1)
     page = env.c.get("/", headers=H).text
@@ -230,8 +234,8 @@ def test_ask_redirects_to_an_unguessable_run_page(env):
     rid = uuid.UUID(r.headers["location"].removeprefix("/runs/"))
     assert rid.version == 4
     page = env.run_page(r.headers["location"]).text
-    assert ("Searched PubMed and Europe PMC (free sources); studies selected by "
-            "gemini-3.5-flash-lite") in page
+    assert ("Searched PubMed and Europe PMC (free sources); answer written by "
+            "gemini-3.5-flash-lite") in page  # F3a Task 8: the run now writes an answer
     assert "Selected studies" in page and "Considered, not selected" in page
     assert "Search trail" in page and PRIVACY in page
     assert env.starter.started == [rid] and len(env.gemini.sent) == 9
@@ -372,7 +376,7 @@ def test_cross_site_run_again_is_refused(env):
 
 
 def test_daily_limit_refuses_before_any_call(env):
-    add_calls(env, 487)
+    add_calls(env, 475)
     r = env.ask(QUESTION)
     assert r.status_code == 429
     assert re.search(r"Daily free limit reached\. Resets at \d\d:\d\d IST\.", r.text)
@@ -380,8 +384,8 @@ def test_daily_limit_refuses_before_any_call(env):
     assert env.one("SELECT count(*) FROM runs") == 0 and env.gemini.sent == []
 
 
-def test_daily_limit_leaves_one_run_at_486(env):
-    add_calls(env, 486)
+def test_daily_limit_leaves_one_run_at_474(env):
+    add_calls(env, 474)
     assert env.ask(QUESTION).status_code == 303
 
 
@@ -436,7 +440,7 @@ def test_running_page_refreshes_itself_and_finished_does_not(held):
     held.starter.run(held.starter.started[0])  # the app's run function, set at start-up
     done = held.run_page(r.headers["location"]).text
     assert "http-equiv" not in done and "Working." not in done
-    assert "Study list ready" in done
+    assert "Answer ready" in done  # F3a Task 7: the run now writes the answer
 
 
 def test_finished_page_shows_the_study_list(env):
@@ -511,6 +515,33 @@ def test_kind_messages_are_plain(db_url, upstream, script, text):
     assert text in page and "Traceback" not in page and "made-up message" not in page
 
 
+def test_a_failed_records_fetch_shows_its_plain_message(db_url):
+    # Owner's answer Q6: the selected studies' records could not be fetched (`failed lit`).
+    from lit_fakes import EUTILS_HOST, EUTILS_PATH, FakeUpstream, europepmc_routes, pubmed_routes
+
+    listed = []
+    routes = pubmed_routes() | europepmc_routes()
+    summaries = routes[(EUTILS_HOST, EUTILS_PATH + "esummary.fcgi")]
+
+    def down_after_the_list(request):  # the searches work; the records fetch after the list
+        if listed:
+            return httpx.Response(503)
+        return httpx.Response(200, headers=summaries.headers, content=summaries.content)
+
+    def the_list(request):
+        listed.append(True)
+        return httpx.Response(200, json=HAPPY_RUN[-1])
+
+    routes[(EUTILS_HOST, EUTILS_PATH + "esummary.fcgi")] = down_after_the_list
+    with ask_env(db_url, FakeUpstream(routes), HAPPY_RUN[:-1] + [the_list]) as env:
+        page = env.run_page(env.ask(QUESTION).headers["location"]).text
+        assert env.rows("SELECT status, error_kind FROM runs") == [("failed", "lit")]
+        assert env.one("SELECT count(*) FROM answers") == 0
+    assert ("PubMed could not be reached to fetch the selected studies, so no answer could be "
+            "written. Please run the question again.") in page
+    assert "<h2>Selected studies</h2>" in page and "Traceback" not in page
+
+
 def test_hard_stop_and_internal_messages(env):
     hs = insert_run(env, status="failed", error_kind="hard_stop")
     assert "This run ran out of time (7 minutes). Please run the question again." in \
@@ -534,10 +565,10 @@ def test_the_run_cap_shows_its_plain_message(db_url, upstream):
 
 
 def test_a_run_admitted_with_one_left_never_passes_the_day_limit(db_url, upstream):
-    # Owner decision, 11 Nov 2026: cap calls per run. 486 of 500 used leaves one run; Gemini
+    # Owner decision, 11 Nov 2026: cap calls per run. 474 of 500 used leaves one run; Gemini
     # busy on every call takes it to its cap, which lands exactly on the day limit.
     with ask_env(db_url, upstream, BUSY_RUN) as env:
-        add_calls(env, 486)
+        add_calls(env, 474)
         assert "Free runs left today: about 1" in env.c.get("/", headers=H).text
         assert env.ask(QUESTION).status_code == 303
         assert env.one("SELECT error_kind FROM runs") == "run_call_cap"
@@ -627,3 +658,261 @@ def test_run_again_without_a_key_is_503(no_key):
     rid = insert_run(no_key)
     r = no_key.c.post(f"/runs/{rid}/again", headers=H)
     assert r.status_code == 503 and NO_KEY in r.text
+
+
+# ---------- the stored answer, plain (F3a Task 8) ----------
+
+def _written(**over):
+    from pubmedgemini.writer.answer import WrittenAnswer
+
+    body = {
+        "bottom_line": {"text": "Mesh helps [33763744].", "certainty": "Moderate",
+                        "certainty_reason": "Two trials."},
+        "outcomes": [{
+            "outcome": "Recurrence", "rct_evidence": "2 RCTs [36262096]",
+            "effect_text": "Fewer recurrences [36262096]",
+            "numbers": [
+                {"label": "RR", "value": 0.76, "unit": None, "arm": "mesh", "ci_low": 0.49,
+                 "ci_high": 1.1, "p": "0.2", "pmid": "36262096"},
+                {"label": "Events", "value": 12.0, "unit": "%", "arm": None, "ci_low": None,
+                 "ci_high": None, "p": None, "pmid": "33763744"}],
+            "certainty": "Low", "why": "Small trials.", "pmids": ["36262096"],
+            "evidence_type": "rct"}],
+        "studies": [{"pmid": "36262096", "label": "Trial A", "design": "RCT", "n": 60,
+                     "setting": "One centre", "comparison": "Mesh vs none",
+                     "key_results": "Less pain", "appraisal": "Unblinded"}],
+        "conflicts": [{"text": "Trials differ [33763744].", "pmids": ["33763744"]}],
+        "applicability": {"case_mix": "Simple hernias", "india_cost_context": "",
+                          "training": "Low"},
+        "would_change": ["A larger trial"],
+        "at_a_glance": {"verdict": "Probably helps.",
+                        "key_numbers": [{"label": "RR", "value_text": "0.76", "pmid": "36262096"}],
+                        "main_caveat": "Small trials"},
+        "clinical_practice": {"default_choice": "Use mesh", "who_may_benefit": "",
+                              "counselling": "Explain risks", "cost_per_case": "Unknown",
+                              "text": "Free text."},
+        "notable_findings": [{"text": "Two withdrawals [36262096].", "pmids": ["36262096"]}],
+    }
+    body.update(over)
+    return WrittenAnswer.model_validate(body)
+
+
+def _refs():
+    from pubmedgemini.writer.answer import ReferenceV3
+
+    return [ReferenceV3(n=1, pmid="36262096", title="A trial of mesh", journal="Hernia",
+                        year=2022, doi=None, retracted=False),
+            ReferenceV3(n=2, pmid="33763744", title="A review", journal=None, year=None,
+                        doi=None, retracted=True)]
+
+
+def store_answer(env, run_id, written=None, empty_reason=None, refs=None, raw=None):
+    from datetime import UTC, datetime
+
+    from psycopg.types.json import Jsonb
+
+    from pubmedgemini.writer.answer import AnswerV3, IntegrityV3
+
+    body = raw if raw is not None else AnswerV3(
+        question="q", created_at=datetime.now(UTC), answer=written, empty_reason=empty_reason,
+        references=_refs() if refs is None else refs, searches=[], integrity=IntegrityV3(),
+        stopped_early=None, elapsed_s=3).to_body()
+    with env.pool.connection() as conn:
+        conn.execute("INSERT INTO answers (run_id, version, body) VALUES (%s, 3, %s)",
+                     (run_id, Jsonb(body)))
+
+
+def answered(env, status="done", **kw):
+    rid = insert_run(env, status=status, error_kind=None)
+    store_answer(env, rid, **kw)
+    return env.run_page(f"/runs/{rid}").text
+
+
+def test_answer_sections_in_order(env):
+    page = answered(env, written=_written())
+    heads = ["At a glance", "Bottom line", "Clinical practice", "Outcomes", "Trials",
+             "Conflicting evidence", "Applicability", "What would change this answer",
+             "Other notable findings", "References"]
+    pos = [page.index(f"<h2>{h}</h2>") for h in heads]
+    assert pos == sorted(pos) and len(set(pos)) == len(pos)
+    assert "<h2>Notes</h2>" not in page and "<h2>Selected studies</h2>" not in page
+    assert "<p>Probably helps.</p>" in page and "<li>RR: 0.76</li>" in page
+    assert "<p>Main caveat: Small trials</p>" in page
+    assert "<p>Mesh helps [33763744].</p>" in page
+    assert "<p>Certainty: Moderate. Two trials.</p>" in page
+    for line in ("Default choice: Use mesh", "Counselling: Explain risks",
+                 "Cost per case: Unknown", "Free text."):
+        assert f"<p>{line}</p>" in page
+    assert "Who may benefit" not in page and "India cost context" not in page
+    assert "<h3>Recurrence</h3>" in page and "Certainty: Low · RCTs" in page
+    assert "<li>RR: 0.76 (0.49 to 1.1), mesh, p 0.2, PMID 36262096</li>" in page
+    assert "<li>Events: 12 %, PMID 33763744</li>" in page
+    assert "None" not in page
+    assert "<h3>Trial A</h3>" in page and "Appraisal: Unblinded" in page
+    assert "<li>A larger trial</li>" in page
+    assert ('<li>[1] A trial of mesh. Hernia 2022. '
+            '<a href="https://pubmed.ncbi.nlm.nih.gov/36262096/">PMID 36262096</a></li>') in page
+    assert ('<li>[2] A review. <a href="https://pubmed.ncbi.nlm.nih.gov/33763744/">'
+            'PMID 33763744</a> <strong>Retracted</strong></li>') in page
+    assert f"answer written by {MODEL}" in page and "studies selected by" not in page
+
+
+def test_notes_show_when_present(env):
+    from datetime import UTC, datetime
+
+    from pubmedgemini.writer.answer import AnswerV3, IntegrityV3
+
+    body = AnswerV3(question="q", created_at=datetime.now(UTC), answer=_written(),
+                    empty_reason=None, references=[], searches=[], integrity=IntegrityV3(),
+                    stopped_early=None, elapsed_s=1, notes=["A note."]).to_body()
+    page = answered(env, raw=body)
+    assert "<h2>Notes</h2>" in page and "<li>A note.</li>" in page
+    assert page.index("<h2>Other notable findings</h2>") < page.index("<h2>Notes</h2>")
+
+
+def test_answer_text_is_escaped(env):
+    w = _written(studies=[{"pmid": "36262096", "label": "L", "design": "d", "n": None,
+                           "setting": "s", "comparison": "c", "key_results": "k",
+                           "appraisal": "<script>alert(1)</script>"}])
+    page = answered(env, written=w)
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "<script" not in page
+
+
+def test_page_has_no_script_and_no_new_css(env):
+    page = answered(env, written=_written())
+    plain = env.run_page(f"/runs/{insert_run(env)}").text  # a run with no answer
+    assert "<script" not in page.lower() and "style=" not in page.lower()
+    assert "<style" not in page.lower() and page.count("<link") == plain.count("<link")
+
+
+def test_old_run_without_answer_unchanged(env):
+    rid = insert_run(env, status="partial", error_kind=None)
+    page = env.run_page(f"/runs/{rid}").text
+    for h in ("At a glance", "Bottom line", "References", "Outcomes"):
+        assert f"<h2>{h}</h2>" not in page
+    assert "studies selected by" in page and "answer written by" not in page
+    assert "could not be shown" not in page
+
+
+def test_unwritten_answer_shows_its_reason_and_references(env):
+    page = answered(env, status="partial", empty_reason="Not enough time <b>left</b>.")
+    assert "<p>Not enough time &lt;b&gt;left&lt;/b&gt;.</p>" in page
+    assert "<h2>References</h2>" in page and "<h2>Bottom line</h2>" not in page
+    assert page.index("Not enough time") < page.index("<h2>References</h2>")
+    assert "studies selected by" in page and "answer written by" not in page
+
+
+def test_unreadable_answer_shows_a_plain_line_and_logs_the_kind(env, caplog):
+    body = {"version": 3, "SECRET-MODEL-TEXT": "x"}
+    with caplog.at_level("WARNING"):
+        page = answered(env, raw=body)
+    assert "The answer could not be shown." in page
+    assert "SECRET-MODEL-TEXT" not in page and "SECRET-MODEL-TEXT" not in caplog.text
+    assert "kind=invalid" in caplog.text
+    assert "studies selected by" in page and "<h2>Bottom line</h2>" not in page
+
+
+# ---------- Task 8, round 2 ----------
+
+def _set_ending(env, rid, error_kind=None, stop_reason=None):
+    with env.pool.connection() as conn:
+        conn.execute("UPDATE runs SET error_kind = %s, stop_reason = %s WHERE id = %s",
+                     (error_kind, stop_reason, rid))
+
+
+@pytest.mark.parametrize("error_kind,stop_reason,const", [
+    ("researcher_incomplete", None, "STOPPED_NO_ANSWER"),
+    ("empty_selection", None, "EMPTY_SELECTION"),
+    (None, None, "NO_EVIDENCE"),
+])
+def test_the_same_ending_text_shows_once(env, error_kind, stop_reason, const):
+    from pubmedgemini import runs
+
+    text = getattr(runs, const)
+    rid = insert_run(env, status="partial", error_kind=error_kind)
+    _set_ending(env, rid, error_kind, stop_reason)
+    store_answer(env, rid, empty_reason=text, refs=[])
+    page = env.run_page(f"/runs/{rid}").text
+    from html import escape
+    assert page.count(escape(text)) == 1
+
+
+def test_a_different_reason_still_shows_beside_the_outcome_line(env):
+    from pubmedgemini import runs
+
+    reason = "Not enough of the time limit was left to write the answer."
+    rid = insert_run(env, status="partial", error_kind=None)
+    store_answer(env, rid, empty_reason=reason, refs=[])
+    page = env.run_page(f"/runs/{rid}").text
+    assert reason in page and runs.NO_EVIDENCE in page
+
+
+@pytest.mark.parametrize("pmid", ["12/../x?y#z", "１２３４５６７", "12３"])
+def test_a_pmid_that_is_not_ascii_digits_gets_no_link(env, pmid):
+    from html import escape
+
+    from pubmedgemini.writer.answer import ReferenceV3
+
+    w = _written(studies=[{"pmid": pmid, "label": "L", "design": "d", "n": None, "setting": "s",
+                           "comparison": "c", "key_results": "k", "appraisal": "a"}],
+                 guidelines=[{"pmid": pmid, "body": "Soc", "year": None, "statement": "S"}])
+    refs = [ReferenceV3(n=1, pmid=pmid, title="T", journal=None, year=None, doi=None,
+                        retracted=False)]
+    page = answered(env, written=w, refs=refs)
+    assert "pubmed.ncbi.nlm.nih.gov/" + pmid not in page and "nih.gov/12/" not in page
+    assert page.count("pubmed.ncbi.nlm.nih.gov/") == 0  # trial, guideline and reference: no link
+    assert f"PMID {escape(pmid)}" in page
+
+
+def _num_page(env, **n):
+    base = {"label": "L", "value": 1.0, "unit": None, "arm": None, "ci_low": None,
+            "ci_high": None, "p": None, "pmid": "36262096"}
+    o = _written().outcomes[0].model_dump(mode="json") | {"numbers": [base | n]}
+    return answered(env, written=_written(outcomes=[o]))
+
+
+def test_a_lone_ci_end_is_shown(env):
+    assert "<li>L: 1 (CI from 0.5), PMID 36262096</li>" in _num_page(env, ci_low=0.5)
+    assert "<li>L: 1 (CI to 2.5), PMID 36262096</li>" in _num_page(env, ci_high=2.5)
+    assert "<li>L: 1 (0.5 to 3), PMID 36262096</li>" in _num_page(env, ci_low=0.5, ci_high=3.0)
+
+
+@pytest.mark.parametrize("v,shown", [
+    (12.0, "12"), (0.76, "0.76"), (1.1, "1.1"), (-3.0, "-3"), (-0.0, "0"), (0.0, "0"),
+    (0.00001, "0.00001"), (1e-7, "0.0000001"), (1e15, "1000000000000000"),
+    (1e16, "10000000000000000"), (123456.789, "123456.789")])
+def test_numbers_print_as_plain_decimals(v, shown):
+    from pubmedgemini.web import _num
+
+    assert _num(v) == shown
+
+
+def test_a_shown_number_is_the_stored_value_with_no_exponent():
+    import random
+
+    from pubmedgemini.web import _num
+
+    rng = random.Random(8)
+    values = [rng.uniform(-1, 1) * 10.0 ** rng.randint(-12, 20) for _ in range(400)]
+    values += [float(rng.randint(-10**6, 10**6)) for _ in range(50)] + [5e-324, 1.7e308]
+    for v in values:
+        t = _num(v)
+        assert float(t) == v and "e" not in t and "E" not in t, (v, t)
+
+
+def test_guidelines_show_with_each_field_and_the_flag(env):
+    w = _written(guidelines=[
+        {"pmid": "36262096", "body": "Hernia Society", "year": 2021, "statement": "Use mesh."},
+        {"pmid": None, "body": "Other Body", "year": None, "statement": "Watch.",
+         "pmid_removed": True}])
+    page = answered(env, written=w)
+    sec = page.split("<h2>Guidelines</h2>", 1)[1].split("<h2>", 1)[0]
+    assert "<h3>Hernia Society</h3>" in sec and "<p>Use mesh.</p>" in sec
+    assert "<p>Year: 2021</p>" in sec and ">PMID 36262096</a>" in sec
+    assert "<h3>Other Body</h3>" in sec and sec.count("was removed") == 1
+    assert page.index("What would change this answer") < page.index("<h2>Guidelines</h2>") \
+        < page.index("<h2>Other notable findings</h2>")
+
+
+def test_no_guidelines_section_when_the_list_is_empty(env):
+    assert "<h2>Guidelines</h2>" not in answered(env, written=_written())

@@ -1,6 +1,6 @@
 # Change log
 
-Nothing is deployed yet. Entries start with the first merge to `main` that changes the running app.
+Live: F0, F1, F2, the look, Library and Activity (merged and deployed on 10 and 11 Nov 2026). F3a (the writer) is on its branch `f3a-writer` and is not merged. Entries start with the first merge to `main` that changes the running app.
 
 ## F1: search tools and the plain results page (branch `f1-search-tools`, not merged yet)
 
@@ -20,7 +20,7 @@ Nothing is deployed yet. Entries start with the first merge to `main` that chang
 - One question runs at a time for the whole app. A restart marks a running question "stopped". A stopped, failed or partial question has a "Run again" button (owner decision, 11 Nov 2026).
 - Before a question leaves the app it is checked for details that could identify a patient (Incisive's check, copied rule for rule). If anything is found, nothing is stored or sent, and the page says what kind of detail was found, never the text itself.
 - The free day's Gemini calls are counted in a `model_calls` table (no text); a question is refused before it starts when the day's allowance is used up ("Daily free limit reached. Resets at HH:MM IST.").
-- One question sends at most 14 requests to Gemini, retries included (owner decision, 11 Nov 2026). If Gemini stays busy and a question reaches that, it stops and says "Gemini stayed busy, so this run used up its share of today's free calls. Please run the question again." So one question can never use more than the day has left. "Free runs left today" shows the same number as before (45 on a fresh day).
+- One question sends at most 14 requests to Gemini (until F3a), retries included (owner decision, 11 Nov 2026). If Gemini stays busy and a question reaches that, it stops and says "Gemini stayed busy, so this run used up its share of today's free calls. Please run the question again." So one question can never use more than the day has left. "Free runs left today" shows the same number as before (45 on a fresh day, until F3a).
 - Review fix (11 Nov 2026): when Gemini sends back something that is not readable, no part of its reply is kept with the error.
 - Never logged: the question, queries, titles, abstracts, the model's text, tool results, Google's error messages, the Gemini key. Tested in the app and under the real server.
 - New optional settings `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_RPM`, `GEMINI_TPM`, `GEMINI_RPD`. The app runs without them; without the key the question box says "Questions are not set up yet" and the key-word search works. One step on the VPS to add the key (runbook: "The Gemini key (for questions)").
@@ -28,7 +28,7 @@ Nothing is deployed yet. Entries start with the first merge to `main` that chang
 ## F2 search checklist (branch `f2-search-checklist`, not merged yet)
 
 - The researcher's instructions get one added block, approved by the owner on 11 Nov 2026 (not from Incisive): before it stops, the researcher checks that it has run a broad trial search, the same search for the last five years, a five-year search for reviews and meta-analyses, at least one Europe PMC search, a search for each key trial's longer follow-up, and similar articles for the two most important trials; it re-runs a search that finds fewer than 40 papers with fewer terms, and selects a guideline only when the question asks about practice recommendations. The five years count back from the current year (2021 to 2026 this year).
-- Nothing else changes: the same 8 rounds, the same 14-request cap, the same tools and the same study-list step. Nothing to do on the VPS.
+- Nothing else changes: the same 8 rounds, the same 14-request cap (until F3a), the same tools and the same study-list step. Nothing to do on the VPS.
 
 ## Look: greys and two fonts (branch `look-greys-fonts`, not merged yet)
 
@@ -47,3 +47,15 @@ Nothing is deployed yet. Entries start with the first merge to `main` that chang
 - The "Your questions" list is gone from the home page; it lives on Library. Nothing else on the home page changed.
 - Each page shows only the signed-in user's own questions and counts. Nothing new is logged. No JavaScript.
 - Nothing to do on the VPS.
+
+## F3a: the writer (branch `f3a-writer`, not merged yet)
+
+- A finished question now shows a written answer on its page, in plain sections: At a glance, Bottom line, Clinical practice, the outcomes, the trials and the references. The page still lists the studies, as before. The Incisive layout, the Introduction and the number check come later (F3b, F4).
+- Gemini Flash-Lite writes the answer in four parts at once, from Incisive's prompts, word for word. If a part fails in a way that is not final and at least 150 seconds are left, the answer is written in one piece instead. The step lines show "Writer: writing the answer from N studies", a "Citation check:" line and "Answer ready".
+- The citation check now removes a citation, a number or a trial row that points to a study that was not selected. Owner decision (11 Nov 2026), as Incisive does. This is the one stated exception to "flag, never delete".
+- A question may now send at most 26 requests to Gemini, retries included (was 14). "Free runs left today" shows 21 on a fresh day (was 45). A normal question makes 13 requests: 8 for the search, 1 for the study list, 4 for the writer. The 21 counts the worst case, so a question admitted late in the day can never pass the day's limit.
+- If the daily limit, the key or billing is refused, or the question's 26 requests are used up, while the answer is written, the run ends at once with the same plain message as before. The one-piece retry is not tried then (owner decision Q2, 11 Nov 2026).
+- If no answer could be written, the page shows a short plain message, and the run is marked partial: not enough time left (under 150 s), the answer was longer than the writer's limit, or the answer could not be read. If the records of the selected studies cannot be fetched from PubMed, the run fails and says "PubMed could not be reached to fetch the selected studies, so no answer could be written. Please run the question again." A failed run keeps its study list.
+- Answers are stored in a new `answers` table (migration 0005, applied at start-up). The answer and the run's final status are stored together, so the page never shows one without the other.
+- Never logged: the question, abstracts, and anything the writer wrote or Gemini said. Tested in the app and under the real server, with a marker in each part's text, the one-piece text, a blocked reply and an answer the database refuses.
+- Nothing to do on the VPS. No new setting: `compose.yaml` and `.env.example` are unchanged.

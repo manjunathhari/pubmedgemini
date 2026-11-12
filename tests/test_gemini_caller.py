@@ -254,17 +254,17 @@ BUSY_TWICE = [error(503, "UNAVAILABLE"), error(503, "UNAVAILABLE"), reply([{"tex
 
 
 def test_the_cap_stops_a_run_at_its_attempts(caller_with, migrated_pool):
-    # 503 twice per call: three attempts a call, so the fifth call reaches 14 on its second.
-    c, g, clock, _ = caller_with(BUSY_TWICE * 5, jitter=0.0)
-    for _ in range(4):
+    # 503 twice per call: three attempts a call, so the ninth call reaches 26 on its second.
+    c, g, clock, _ = caller_with(BUSY_TWICE * 9, jitter=0.0)
+    for _ in range(8):
         c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 200, on_wait=print)
     with pytest.raises(RunCapReached):
         c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 200, on_wait=print)
-    assert len(g.sent) == RUN_ATTEMPTS == 14 and len(rows(migrated_pool)) == 14
-    assert len(g.script) == 1  # the third attempt of the fifth call was never sent
+    assert len(g.sent) == RUN_ATTEMPTS == 26 and len(rows(migrated_pool)) == 26
+    assert len(g.script) == 1  # the third attempt of the ninth call was never sent
     with pytest.raises(RunCapReached):  # nor anything after it, on any step
         c.call({}, step="study_list", run_id=RUN, deadline=clock.t + 200, on_wait=print)
-    assert len(g.sent) == 14 and len(rows(migrated_pool)) == 14
+    assert len(g.sent) == RUN_ATTEMPTS and len(rows(migrated_pool)) == RUN_ATTEMPTS
 
 
 def test_the_cap_is_not_a_gemini_error_nor_a_deadline():
@@ -273,13 +273,13 @@ def test_the_cap_is_not_a_gemini_error_nor_a_deadline():
 
 def test_every_sent_attempt_counts_and_unsent_ones_do_not(caller_with):
     # A pacer refusal sends nothing, so it uses none of the run's attempts.
-    c, g, clock, _ = caller_with([reply([{"text": "x"}])] * 15, rpm=10)
+    c, g, clock, _ = caller_with([reply([{"text": "x"}])] * (RUN_ATTEMPTS + 1), rpm=10)
     with pytest.raises(DeadlineReached):
         for _ in range(2):
             c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 2, on_wait=print)
-    for _ in range(13):
+    for _ in range(RUN_ATTEMPTS - 1):
         c.call({}, step="researcher", run_id=RUN, deadline=10**9, on_wait=print)
-    assert len(g.sent) == 14
+    assert len(g.sent) == RUN_ATTEMPTS
     with pytest.raises(RunCapReached):
         c.call({}, step="researcher", run_id=RUN, deadline=10**9, on_wait=print)
 
@@ -287,8 +287,8 @@ def test_every_sent_attempt_counts_and_unsent_ones_do_not(caller_with):
 def test_a_capped_run_reserves_no_pacer_slot_and_waits_for_nothing(caller_with):
     # rpm=10 spaces attempts 6 s apart, so a pacer visit by the capped call would sleep and
     # reserve a slot; the cap check runs before the pacer, so neither happens.
-    c, g, clock, _ = caller_with([reply([{"text": "x"}])] * 14, rpm=10)
-    for _ in range(14):
+    c, g, clock, _ = caller_with([reply([{"text": "x"}])] * RUN_ATTEMPTS, rpm=10)
+    for _ in range(RUN_ATTEMPTS):
         c.call({}, step="researcher", run_id=RUN, deadline=10**9, on_wait=print)
     visits = []
     real_wait = c._pacer.wait
@@ -297,14 +297,14 @@ def test_a_capped_run_reserves_no_pacer_slot_and_waits_for_nothing(caller_with):
     with pytest.raises(RunCapReached):
         c.call({}, step="study_list", run_id=RUN, deadline=10**9, on_wait=print)
     assert visits == [] and len(c._pacer._window) == slots and clock.t == now
-    assert len(g.sent) == 14
+    assert len(g.sent) == RUN_ATTEMPTS
 
 
 def test_forget_drops_one_runs_count_and_keeps_the_others(caller_with):
-    c, _g, _clock, _ = caller_with([reply([{"text": "x"}])] * 16)
+    c, _g, _clock, _ = caller_with([reply([{"text": "x"}])] * (RUN_ATTEMPTS + 2))
     a, b = uuid.uuid4(), uuid.uuid4()
     c._sent.clear()
-    for _ in range(14):  # the cap holds while the count is kept
+    for _ in range(RUN_ATTEMPTS):  # the cap holds while the count is kept
         c.call({}, step="researcher", run_id=None, deadline=10**9, on_wait=print)
     with pytest.raises(RunCapReached):
         c.call({}, step="researcher", run_id=None, deadline=10**9, on_wait=print)
@@ -325,23 +325,25 @@ def test_each_run_has_its_own_cap(caller_with, migrated_pool):
         for rid in (a, b):
             conn.execute("INSERT INTO runs (id, user_id, question, model, status) VALUES "
                          "(%s, %s, 'q', 'm', 'done')", (rid, uid))
-    c, g, _clock, _ = caller_with([reply([{"text": "x"}])] * 15)
-    for _ in range(14):
+    c, g, _clock, _ = caller_with([reply([{"text": "x"}])] * (RUN_ATTEMPTS + 1))
+    for _ in range(RUN_ATTEMPTS):
         c.call({}, step="researcher", run_id=a, deadline=10**9, on_wait=print)
     with pytest.raises(RunCapReached):
         c.call({}, step="researcher", run_id=a, deadline=10**9, on_wait=print)
     assert c.call({}, step="researcher", run_id=b, deadline=10**9, on_wait=print).text == "x"
-    assert len(g.sent) == 15
+    assert len(g.sent) == RUN_ATTEMPTS + 1
 
 
 def test_the_cap_log_line_holds_a_kind_and_counts_only(caller_with, caplog):
     caplog.set_level(logging.DEBUG)
-    c, _g, _clock, _ = caller_with([reply([{"text": "yq8 text"}])] * 14)
-    for _ in range(14):
+    c, _g, _clock, _ = caller_with([reply([{"text": "yq8 text"}])] * RUN_ATTEMPTS)
+    for _ in range(RUN_ATTEMPTS):
         c.call({"q": "zq7"}, step="researcher", run_id=RUN, deadline=10**9, on_wait=print)
     caplog.clear()
     with pytest.raises(RunCapReached):
         c.call({"q": "zq7"}, step="study_list", run_id=RUN, deadline=10**9, on_wait=print)
     msgs = [r.getMessage() for r in caplog.records if r.name.startswith("pubmedgemini")]
-    assert msgs == ["gemini kind=run_call_cap step=study_list attempts=14 cap=14"]
+    assert msgs == [
+        f"gemini kind=run_call_cap step=study_list attempts={RUN_ATTEMPTS} cap={RUN_ATTEMPTS}"
+    ]
     assert str(RunCapReached()) == "run_call_cap"
