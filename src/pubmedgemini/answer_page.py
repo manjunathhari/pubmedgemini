@@ -732,12 +732,30 @@ def _arm_name(n: Number, i: int) -> str:
     return a or f"arm {i + 1}"
 
 
+ALL_ZERO = "both arms round to 0 of 100"
+
+
+def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -> str | None:
+    """Why a two-arm percent group is not drawn as squares (shown in "Compare the arms"), or
+    None. The counts keep Incisive's rounding; Incisive has no rule for both arms at 0
+    (`answer_page.rs` `out_of_100`, `app/page.rs` `out_of_100_view`), so two empty grids
+    are not drawn (review L7)."""
+    nums = g.nums(w)
+    for n in nums:
+        problem = draw_problem(n, "percent", refs)
+        if problem is not None:
+            return problem
+    if all(out_of_100_count(n.value) == 0 for n in nums):
+        return ALL_ZERO
+    return None
+
+
 def out_of_100(w: WrittenAnswer, refs: Mapping[str, int]) -> list[OutItem]:
     """The "Out of 100" items: every two-arm percent group whose numbers pass the checks."""
     items: list[OutItem] = []
     for g in out_of_100_groups(w, all_groups(w)):
         nums = g.nums(w)
-        if any(draw_problem(n, "percent", refs) is not None for n in nums):
+        if out_of_100_problem(w, g, refs) is not None:
             continue
         o = w.outcomes[g.outcome]
         names = [_arm_name(n, i) for i, n in enumerate(nums)]
@@ -770,6 +788,7 @@ class CompareRow:
     study_pieces: list[Piece]
     p_text: str | None
     at: tuple[tuple[int, int], ...] = ()  # (outcome, number) of each value
+    problem: str | None = None  # why an out-of-100 pair is not drawn as squares
 
 @dataclass(frozen=True)
 class CompareGroup:
@@ -780,7 +799,9 @@ class CompareGroup:
 def compare(w: WrittenAnswer, refs: Mapping[str, int]) -> list[CompareGroup]:
     """Paired groups by their study's comparison, first-appearance order (text only)."""
     out: list[tuple[str, str, list[CompareRow]]] = []
-    for g in all_groups(w):
+    groups = all_groups(w)
+    squares = {id(g) for g in out_of_100_groups(w, groups)}
+    for g in groups:
         if g.kind != "pair":
             continue
         s = study_of(w, g.pmid)
@@ -790,7 +811,8 @@ def compare(w: WrittenAnswer, refs: Mapping[str, int]) -> list[CompareGroup]:
         row = CompareRow(g.label, w.outcomes[g.outcome].certainty,
                          " vs ".join(with_unit(n.value, n.unit) for n in nums),
                          study_pieces(w, g.pmid, refs), g.p_text(w),
-                         tuple((g.outcome, j) for j in g.numbers))
+                         tuple((g.outcome, j) for j in g.numbers),
+                         out_of_100_problem(w, g, refs) if id(g) in squares else None)
         for k, _label, rows in out:
             if k == key:
                 rows.append(row)

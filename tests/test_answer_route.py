@@ -309,3 +309,16 @@ def test_numbers_no_scale_can_hold_never_500_the_page(env):  # review M5
         num("Pain", 1e300, "OR", None, PMIDS[0], 1e299, 1e300))))
     assert t.count("Not drawn: the interval is too wide to draw.") == 1
     assert t.count("Not drawn: the interval is too narrow to draw.") == 1
+
+
+def _rows_of(t, label):
+    return re.findall(rf'<div class="row"><b>{label}</b>.*?</div>', t)
+
+
+def test_a_pair_both_rounding_to_0_shows_its_reason_in_compare(env):  # review L7
+    t = page(env, store(env, _with_numbers(num("Mesh infection", 0.4, "%", "TEP", PMIDS[0]),
+                                           num("Mesh infection", 0.2, "%", "L", PMIDS[0]))))
+    [row] = _rows_of(t, "Mesh infection")
+    assert '<span class="muted">Not drawn: both arms round to 0 of 100.</span>' in row
+    assert "of 100 · TEP</span>" in t  # the hernia's own items are still drawn
+    assert "Mesh infection:</b>" not in t

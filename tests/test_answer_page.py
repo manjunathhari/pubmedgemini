@@ -592,3 +592,23 @@ def test_a_row_whose_derivation_raises_is_listed_and_logged(monkeypatch, caplog)
     assert [r.drawn for r in f.ratios] == [True]
     assert [m.getMessage() for m in caplog.records] == [
         "answer_page kind=row_not_derived rows=1"]
+
+
+# ---------- out of 100: both arms round to 0 (review L7) ----------
+
+def pct_pair(a, b, label="Mesh infection"):
+    return written([outcome(label, [num(label, a, "%", "TEP"), num(label, b, "%", "L")])],
+                   [study("1", "TEP vs L")])
+
+
+def test_both_arms_rounding_to_0_of_100_are_not_drawn_and_say_why():
+    w = pct_pair(0.4, 0.2)
+    assert out_of_100(w, REFS) == []
+    [r] = [r for g in compare(w, REFS) for r in g.rows]
+    assert (r.values_text, r.problem) == ("0.4% vs 0.2%", "both arms round to 0 of 100")
+
+
+def test_one_arm_above_0_of_100_is_still_drawn_with_incisives_rounding():
+    [it] = out_of_100(pct_pair(0.4, 0.6), REFS)
+    assert [c for c, _, _ in it.arms] == [0, 1]
+    assert [r.problem for g in compare(pct_pair(0.4, 0.6), REFS) for r in g.rows] == [None]

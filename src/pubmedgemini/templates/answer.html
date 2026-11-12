@@ -46,7 +46,7 @@ answer_page.py; model text is only ever escaped text here (autoescape, no |safe)
 {%- if item.heading %}
 <p class="eyebrow">{{ item.heading }}</p>
 {%- endif %}
-<div class="row"><b>{{ r.label }}</b><span class="pill {{ r.certainty|pill }}">{{ r.certainty }}</span><span class="mono">{{ r.values_text }}</span><span></span><span class="muted">{{ pieces(r.study_pieces) }}{% if r.p_text %} · {{ r.p_text }}{% endif %}</span></div>
+<div class="row"><b>{{ r.label }}</b><span class="pill {{ r.certainty|pill }}">{{ r.certainty }}</span><span class="mono">{{ r.values_text }}</span><span></span><span class="muted">{{ pieces(r.study_pieces) }}{% if r.p_text %} · {{ r.p_text }}{% endif %}</span>{% if r.problem %}<span class="muted">Not drawn: {{ r.problem }}.</span>{% endif %}</div>
 {%- endmacro -%}
 {%- macro item(kind, it) -%}
 {%- if kind == "forest" -%}{{ forest_item(it) }}
