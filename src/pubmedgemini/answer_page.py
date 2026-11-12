@@ -257,6 +257,25 @@ def is_diff(n: Number) -> bool:
     return bool(_DIFF.search(f"{n.label} {n.arm or ''}"))
 
 
+def arm_name(n: Number) -> str:
+    """The arm name the writer gave for this number, trimmed ("" when none)."""
+    return rust_trim(n.arm) if n.arm is not None else ""
+
+
+def names_an_arm(n: Number) -> bool:
+    """The number carries an arm name: its arm text is not blank and is not itself a
+    difference marker (Incisive's own examples put "MD" or "difference" in `arm`)."""
+    a = arm_name(n)
+    return bool(a) and not _DIFF.search(a)
+
+
+def is_difference(n: Number) -> bool:
+    """A difference for the page: Incisive's `is_diff` AND no arm name. A number with an arm
+    name is one arm's value, never drawn as a difference (review M2, owner decision d24,
+    12 Nov 2026: an approved difference from Incisive)."""
+    return is_diff(n) and not names_an_arm(n)
+
+
 def has_ci(n: Number) -> bool:
     """Both CI bounds stored and finite."""
     return (n.ci_low is not None and n.ci_high is not None and math.isfinite(n.ci_low)
@@ -269,11 +288,11 @@ def chart_kind(nums: Sequence[Number]) -> Kind:
         return "text"
     if all(is_ratio(n) and has_ci(n) for n in nums):
         return "ratio"
-    if len(nums) == 1 and has_ci(nums[0]) and is_diff(nums[0]):
+    if len(nums) == 1 and has_ci(nums[0]) and is_difference(nums[0]):
         return "diff"
     arms = {rust_trim(n.arm) if n.arm is not None else None for n in nums}
     if len(nums) >= 2 and len(arms) == len(nums) and not any(
-            is_ratio(n) or is_diff(n) for n in nums):
+            is_ratio(n) or is_difference(n) for n in nums):
         return "pair"
     return "text"
 
@@ -285,12 +304,7 @@ def forest_kind(n: Number) -> Literal["ratio", "diff"] | None:
         return None
     if is_ratio(n):
         return "ratio"
-    return "diff" if is_diff(n) else None
-
-
-def arm_name(n: Number) -> str:
-    """The arm name the writer gave for this number, trimmed ("" when none)."""
-    return rust_trim(n.arm) if n.arm is not None else ""
+    return "diff" if is_difference(n) else None
 
 
 def compared(w: WrittenAnswer, g: "NumGroup") -> bool:
@@ -442,15 +456,20 @@ def listed_problem(n: Number, group: Sequence[Number], pair: bool = False) -> st
     `pair`: its group is a pair left out of "Compare the arms" for an arm with no name."""
     if pair:
         return "the other arm is not named" if arm_name(n) else "arm not named"
+    if is_diff(n) and names_an_arm(n):
+        return ONE_ARM_RATE
     if not is_ratio(n) and _looks_ratio(n):
         return "unit not RR, OR or HR"
-    if (is_ratio(n) or is_diff(n)) and not has_ci(n):
+    if (is_ratio(n) or is_difference(n)) and not has_ci(n):
         return "no interval"
     if len(group) == 1:
         return "not marked as a ratio or a difference" if has_ci(n) else "single arm"
-    if any(is_ratio(x) or is_diff(x) or _looks_ratio(x) for x in group):
+    if any(is_ratio(x) or is_difference(x) or _looks_ratio(x) for x in group):
         return "the group mixes kinds"
     return "its arms are not distinct"
+
+
+ONE_ARM_RATE = "one arm's rate, not a difference"
 
 
 def _opt_bound(x: float | None) -> str:
@@ -471,14 +490,15 @@ def listed_numbers(w: WrittenAnswer, refs: Mapping[str, int]) -> dict[int, list[
     with the reason (flag, never delete: every number the writer gave is on the page)."""
     out: dict[int, list[ListedNumber]] = {}
     for g in all_groups(w):
-        if compared(w, g):
-            continue
+        in_compare = compared(w, g)
         o = w.outcomes[g.outcome]
         group = g.nums(w)
         for j in g.numbers:
             n = o.numbers[j]
             if forest_kind(n) is not None:
                 continue
+            if in_compare and not (has_ci(n) and is_diff(n)):
+                continue  # shown in "Compare the arms"; an armed "difference" is also listed
             value = with_unit(n.value, n.unit)
             if n.ci_low is not None or n.ci_high is not None:
                 value += f" ({_opt_bound(n.ci_low)} to {_opt_bound(n.ci_high)})"
@@ -488,7 +508,7 @@ def listed_numbers(w: WrittenAnswer, refs: Mapping[str, int]) -> dict[int, list[
             sub += [("text", f" · {x}") for x in (arm, p or "") if x]
             out.setdefault(g.outcome, []).append(ListedNumber(
                 rust_trim(n.label) or o.outcome, value, sub,
-                listed_problem(n, group, g.kind == "pair"),
+                listed_problem(n, group, g.kind == "pair" and not in_compare),
                 (g.outcome, j)))
     return out
 
@@ -739,9 +759,11 @@ def out_of_100_count(v: float) -> int:
 
 
 def out_of_100_groups(w: WrittenAnswer, groups: Sequence[NumGroup]) -> list[NumGroup]:
-    """Incisive's selection (paired, every unit `%`, no difference), two arms only (X20)."""
+    """Incisive's selection (paired, every unit `%`, no difference), two arms only (X20); a
+    difference is `is_difference` (review M2)."""
     return [g for g in groups if g.kind == "pair" and len(g.numbers) == 2 and all(
-        n.unit is not None and rust_trim(n.unit) == "%" and not is_diff(n) for n in g.nums(w))]
+        n.unit is not None and rust_trim(n.unit) == "%" and not is_difference(n)
+        for n in g.nums(w))]
 
 
 @dataclass(frozen=True)

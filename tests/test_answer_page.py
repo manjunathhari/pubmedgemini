@@ -665,3 +665,37 @@ def test_a_value_without_an_arm_name_is_listed_not_paired(blank):
     assert [(x.at, x.problem) for x in c.listed] == [((0, 0), "the other arm is not named"),
                                                      ((0, 1), "arm not named")]
     assert shown_at(w, REFS) == every_number(w)
+
+
+# ---------- a per-arm rate is never a difference (review M2, owner decision d24) ----------
+
+ONE_ARM = "one arm's rate, not a difference"
+
+
+def test_an_armed_rate_labelled_difference_is_not_in_the_ci_card():
+    w = answer_with(num("Recurrence (no significant difference)", 2.1, "%", "TEP", lo=1.0,
+                        hi=3.5))
+    f = forest(w, REFS)
+    assert f.diffs == [] and f.ratios == []
+    assert [(x.at, x.problem) for x in outcome_cards(w, REFS)[0].listed] == [((0, 0), ONE_ARM)]
+    assert shown_at(w, REFS) == every_number(w)
+
+
+def test_a_two_arm_pair_labelled_difference_is_a_pair_not_two_differences():
+    label = "Pain, difference not significant"
+    w = written([outcome("Pain", [num(label, 9.4, "%", "TEP", lo=7.0, hi=12.0),
+                                  num(label, 18.8, "%", "Lichtenstein", lo=15.0, hi=22.0)])],
+                [study("1", "TEP vs Lichtenstein")])
+    f = forest(w, REFS)
+    assert f.diffs == [] and f.ratios == []
+    assert [g.kind for g in all_groups(w)] == ["pair"]
+    assert [r.values_text for g in compare(w, REFS) for r in g.rows] == [
+        "TEP 9.4% vs Lichtenstein 18.8%"]
+    assert [[c for c, _, _ in it.arms] for it in out_of_100(w, REFS)] == [[9, 19]]
+    assert [x.problem for x in outcome_cards(w, REFS)[0].listed] == [ONE_ARM, ONE_ARM]
+
+
+def test_a_difference_without_an_arm_is_still_drawn():
+    f = forest(answer_with(num("Mean difference in stay", -1.0, "days", None, lo=-2.0, hi=0.5),
+                           num("Risk difference", -3.0, "%", "  ", lo=-5.0, hi=-1.0)), REFS)
+    assert [r.drawn for r in f.diffs] == [True, True]
