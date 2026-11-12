@@ -675,7 +675,9 @@ class ListedNumber:
 
 def listed_numbers(w: WrittenAnswer, refs: Mapping[str, int]) -> dict[int, list[ListedNumber]]:
     """By outcome, the numbers no forest row and no "Compare the arms" row shows, as text
-    with the reason (flag, never delete: every number the writer gave is on the page)."""
+    with the reason (flag, never delete: every number the writer gave is on the page). A
+    number in a compare row is shown there, so it is never listed here as "Not drawn" (third
+    check L2), whatever its label says."""
     out: dict[int, list[ListedNumber]] = {}
     for g in all_groups(w, refs):
         in_compare = compared(w, g)
@@ -685,8 +687,8 @@ def listed_numbers(w: WrittenAnswer, refs: Mapping[str, int]) -> dict[int, list[
             n = o.numbers[j]
             if forest_kind(n) is not None:
                 continue
-            if in_compare and not (has_ci(n) and _DIFF.search(n.label)):
-                continue  # shown in "Compare the arms"; an armed "difference" is also listed
+            if in_compare:
+                continue  # shown in "Compare the arms" (and Out of 100): never "Not drawn" (L2)
             value = with_unit(n.value, n.unit)
             if n.ci_low is not None or n.ci_high is not None:
                 value += f" ({_opt_bound(n.ci_low)} to {_opt_bound(n.ci_high)})"

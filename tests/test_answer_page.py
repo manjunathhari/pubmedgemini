@@ -712,7 +712,10 @@ def test_a_two_arm_pair_labelled_difference_is_a_pair_not_two_differences():
     assert [r.values_text for g in compare(w, REFS) for r in g.rows] == [
         "TEP 9.4% vs Lichtenstein 18.8%"]
     assert [[c for c, _, _ in it.arms] for it in out_of_100(w, REFS)] == [[9, 19]]
-    assert [x.problem for x in outcome_cards(w, REFS)[0].listed] == [ONE_ARM, ONE_ARM]
+    # Drawn in "Out of 100" and shown in "Compare the arms": never also "Not drawn" in the
+    # outcome (third check L2; it was listed again with "one arm's rate").
+    assert outcome_cards(w, REFS)[0].listed == []
+    assert shown_at(w, REFS) == every_number(w)
 
 
 def test_a_difference_without_an_arm_is_still_drawn():
@@ -1132,3 +1135,16 @@ def test_a_tiny_point_interval_whose_axis_would_put_0_at_an_edge_is_not_drawn():
     [d] = forest(answer_with(num("Risk difference", 1e-9, None, None, lo=1e-9, hi=1e-9)),
                  REFS).diffs
     assert (d.drawn, d.problem) == (False, "the interval is too narrow to draw")
+
+
+# ---------- a number shown in a pair is never also "Not drawn" (third check L2) ----------
+
+@pytest.mark.parametrize("label", ["Recurrence, difference not significant", "Pain minus",
+                                   "MD in pain"])
+def test_a_compared_number_is_not_listed_again(label):
+    w = written([outcome("Pain", [num(label, 9.4, "%", "TEP", lo=7.0, hi=12.0),
+                                  num(label, 18.8, "%", "Lichtenstein", lo=15.0, hi=22.0)])],
+                [study("1", "TEP vs Lichtenstein")])
+    in_pairs = {x for g in compare(w, REFS) for r in g.rows for x in r.at}
+    assert in_pairs == {(0, 0), (0, 1)}
+    assert outcome_cards(w, REFS)[0].listed == []
