@@ -322,3 +322,11 @@ def test_a_pair_both_rounding_to_0_shows_its_reason_in_compare(env):  # review L
     assert '<span class="muted">Not drawn: both arms round to 0 of 100.</span>' in row
     assert "of 100 · TEP</span>" in t  # the hernia's own items are still drawn
     assert "Mesh infection:</b>" not in t
+
+
+def test_a_pair_failing_a_check_shows_its_reason_in_compare(env):  # review L8
+    t = page(env, store(env, _with_numbers(num("Seroma", 140.0, "%", "TEP", PMIDS[0]),
+                                           num("Seroma", 20.0, "%", "L", PMIDS[0]))))
+    [row] = _rows_of(t, "Seroma")
+    assert "<span class=\"mono\">140% vs 20%</span>" in row
+    assert '<span class="muted">Not drawn: a percentage must be from 0 to 100.</span>' in row

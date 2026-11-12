@@ -385,11 +385,21 @@ def draw_problem(n: Number, kind: Literal["ratio", "diff", "percent"],
     """Why a number may not be drawn (the first check that fails), or None."""
     if rust_trim(n.pmid) not in refs:
         return "its study is not in the references"
-    values = [n.value] if kind == "percent" else [n.value, n.ci_low, n.ci_high]
+    if kind == "percent":  # its interval is checked only where one is given (review L8)
+        values = [v for v in (n.value, n.ci_low, n.ci_high) if v is not None]
+    else:
+        values = [n.value, n.ci_low, n.ci_high]
     if any(v is None or not math.isfinite(v) for v in values):
         return "a value is not a finite number"
     if kind == "percent":
-        return None if 0 <= n.value <= 100 else "a percentage must be from 0 to 100"
+        if not 0 <= n.value <= 100:
+            return "a percentage must be from 0 to 100"
+        if n.ci_low is not None and n.ci_high is not None and n.ci_low > n.ci_high:
+            return "the interval is reversed"
+        if ((n.ci_low is not None and n.value < n.ci_low)
+                or (n.ci_high is not None and n.value > n.ci_high)):
+            return "the estimate is outside its interval"
+        return None
     lo, hi = n.ci_low, n.ci_high
     assert lo is not None and hi is not None
     if kind == "ratio" and not (n.value > 0 and lo > 0 and hi > 0):

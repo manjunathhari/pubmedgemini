@@ -612,3 +612,28 @@ def test_one_arm_above_0_of_100_is_still_drawn_with_incisives_rounding():
     [it] = out_of_100(pct_pair(0.4, 0.6), REFS)
     assert [c for c, _, _ in it.arms] == [0, 1]
     assert [r.problem for g in compare(pct_pair(0.4, 0.6), REFS) for r in g.rows] == [None]
+
+
+# ---------- out of 100: a percentage's own interval (review L8) ----------
+
+@pytest.mark.parametrize("lo,hi,problem", [
+    (12.0, 8.0, "the interval is reversed"),
+    (11.0, 14.0, "the estimate is outside its interval"),
+    (None, 9.0, "the estimate is outside its interval"),
+    (11.0, None, "the estimate is outside its interval"),
+    (float("inf"), None, "a value is not a finite number"),
+    (8.0, 12.0, None), (None, 12.0, None), (None, None, None),
+])
+def test_a_percentage_is_checked_against_its_own_interval(lo, hi, problem):
+    assert draw_problem(num("Pain", 10.0, "%", "TEP", lo=lo, hi=hi), "percent", REFS) == problem
+
+
+def test_a_pair_dropped_from_out_of_100_shows_its_reason_in_compare():
+    w = written([outcome("Pain", [num("Pain", 140.0, "%", "TEP"), num("Pain", 20.0, "%", "L")]),
+                 outcome("Ache", [num("Ache", 10.0, "%", "TEP", lo=11.0, hi=14.0),
+                                  num("Ache", 20.0, "%", "L")])],
+                [study("1", "TEP vs L")])
+    assert out_of_100(w, REFS) == []
+    assert [(r.label, r.problem) for g in compare(w, REFS) for r in g.rows] == [
+        ("Pain", "a percentage must be from 0 to 100"),
+        ("Ache", "the estimate is outside its interval")]
