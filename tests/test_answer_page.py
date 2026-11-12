@@ -862,3 +862,82 @@ def test_a_known_study_still_pairs_beside_numbers_with_none():
     assert [r.values_text for g in compare(w, REFS) for r in g.rows] == [
         "TEP 9.4% vs Lichtenstein 18.8%"]
     assert [(x.at, x.problem) for x in outcome_cards(w, REFS)[0].listed] == [((0, 1), NO_STUDY)]
+
+
+# ---------- random answers: the page's promises hold (re-check, property-style) ----------
+
+_VALUES = [0.0, -0.0, 1.0, -1.0, 0.5, 12.5, 20.0, 99.5, 100.0, 140.0, -3.0, 1e-300, 5e-324,
+           1e306, 1e307, 1e308, -1e308, 1.7e308, float("nan"), float("inf"), float("-inf")]
+_LABELS = ["Pain", "MD", "Mean difference in pain", "Recurrence (no significant difference)",
+           "Seroma RR", "Robotic minus lap", "Difference", "", "  ", "Ache at 2 y",
+           "Risk difference", "Md. score"]
+_ARMS = [None, "", " ", " ", "MD", " md ", "SMD", "risk  difference", "TEP", "tep", "TEP ",
+         "Lichtenstein", "MD Anderson protocol", "Md. Ali technique", "Drain minus",
+         "TEP vs Lichtenstein", "POEM minus PD", "Robotic  TAPP", "robotic TAPP"]
+_UNITS = [None, "", "%", " % ", "RR", "OR", "HR", "rr", "aHR", "days", "points", "MD"]
+_PMIDS = ["1", "2", " 1 ", "", "  ", "99999999"]
+_P = [None, "", "p", "P < .001", "0.03"]
+
+
+def _rand_value(r):
+    return r.choice(_VALUES) if r.random() < 0.5 else r.uniform(-1e3, 1e3) * 10 ** r.randint(-8, 8)
+
+
+def _rand_number(r) -> Number:
+    lo = None if r.random() < 0.3 else _rand_value(r)
+    hi = None if r.random() < 0.3 else _rand_value(r)
+    if lo is not None and hi is not None and r.random() < 0.6:
+        lo, hi = sorted((lo, hi), key=lambda x: (math.isnan(x), x))
+    v = _rand_value(r)
+    if lo is not None and hi is not None and r.random() < 0.5 and lo <= hi:
+        v = lo + (hi - lo) / 2 if math.isfinite(hi - lo) else lo
+    return Number(r.choice(_LABELS), v, r.choice(_UNITS), r.choice(_ARMS), lo, hi, r.choice(_P),
+                  r.choice(_PMIDS))
+
+
+def _rand_body(r) -> AnswerBody:
+    outs = [outcome(f"Outcome {i}", [_rand_number(r) for _ in range(r.randint(0, 6))],
+                    r.choice(CERTAINTIES)) for i in range(r.randint(1, 3))]
+    studies = [study("1", r.choice(["TEP vs Lichtenstein", "MD Anderson protocol vs Standard",
+                                    ""]))] if r.random() < 0.7 else []
+    w = written(outs, studies)
+    refs = [Reference(1, "1", "T1", "J", 2020, None, False),
+            Reference(2, "2", "T2", None, None, None, False)]
+    return AnswerBody(created_at="2026-11-12T00:00:00Z", answer=w, empty_reason=None,
+                      references=refs, searches=[], integrity=Integrity(), stopped_early=None,
+                      elapsed_s=1, notes=[])
+
+
+def test_random_answers_keep_the_pages_promises():
+    import random
+
+    from pubmedgemini.answer_page import arm_name, names_an_arm, out_of_100_groups
+
+    r = random.Random(20261112)
+    for case in range(3000):
+        body = _rand_body(r)
+        w, refs = body.answer, refs_of(body)
+        answer_view(body)  # never raises
+        assert shown_at(w, refs) == every_number(w), case  # every number is on the page
+        f = forest(w, refs)
+        for row in f.ratios + f.diffs:  # a drawn row never carries a reason
+            assert (row.problem is None) == row.drawn, case
+        for row in f.diffs:  # d24: no number with an arm name is a difference row
+            assert not names_an_arm(w.outcomes[row.at[0]].numbers[row.at[1]]), case
+        rows = [row for g in compare(w, refs) for row in g.rows]
+        for row in rows:  # every compared value has its own arm name and a known study
+            assert all(arm_name(w.outcomes[o].numbers[j]) for o, j in row.at), case
+            assert all(rust_trim_pmid(w.outcomes[o].numbers[j]) in refs
+                       for o, j in row.at), case
+        items = out_of_100(w, refs)
+        for it in items:
+            assert all(name.strip() for _, name, _ in it.arms), case
+        # each out-of-100 candidate is drawn or its compare row gives the reason, never both
+        candidates = out_of_100_groups(w, all_groups(w, refs))
+        assert len(items) + sum(row.problem is not None for row in rows) == len(candidates), case
+
+
+def rust_trim_pmid(n: Number) -> str:
+    from pubmedgemini.gemini.structured import rust_trim
+
+    return rust_trim(n.pmid)
