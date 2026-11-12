@@ -1001,8 +1001,13 @@ ONE_SIDE_LABELS = ["MD in TEP group", "Difference: recurrence in TEP arm",
 DIFF_LABELS = ["Risk difference", "Mean difference in pain", "MD", "Difference",
                "Difference in pain", "MD, days", "Risk difference, wound infection",
                "Mean difference in pain score"]
-NOT_SQUARES_LABELS = DIFF_LABELS + ["MD in pain", "Pain minus", "Recurrence, risk difference",
-                                    "Difference: recurrence", "Robotic minus lap"]
+# Labels that name a change, not a rate: never squares (coordinator ruling 2).
+CHANGE_LABELS = ["Reduction in recurrence", "Absolute risk reduction", "Change from baseline",
+                 "Recurrence, relative risk", "Odds ratio of pain", "Δ pain", "NNT", "Weight gain",
+                 "Increased pain", "Hazard ratio", "Excess recurrence", "Pain delta"]
+NOT_SQUARES_LABELS = DIFF_LABELS + CHANGE_LABELS + [
+    "MD in pain", "Pain minus", "Recurrence, risk difference", "Difference: recurrence",
+    "Robotic minus lap"]
 _ORACLE_MARKERS = {"md", "smd", "wmd", "difference", "mean difference", "risk difference",
                    "absolute difference"}
 _ORACLE_UNITS = _ORACLE_MARKERS | {"median difference", "rate difference",
@@ -1656,6 +1661,31 @@ def test_a_pair_labelled_as_a_difference_is_a_text_row_not_squares(label):
     assert (r.values_text, r.problem) == ("TEP 9.4% vs Lichtenstein 18.8%", LABEL_DIFF)
     assert outcome_cards(w, REFS)[0].listed == []
     assert shown_at(w, REFS) == every_number(w)
+
+
+# ---------- a pair whose label names a change gets no squares (coordinator ruling 2) ----------
+
+LABEL_CHANGE = "the label names a change, not a rate"
+
+
+@pytest.mark.parametrize("label", ["Reduction in recurrence", "Absolute risk reduction",
+                                   "Change from baseline", "Pain, increased", "Odds ratio",
+                                   "Relative risk of recurrence", "Δ pain", "NNT", "ARR",
+                                   "Weight gain", "Excess risk", "Improvement in pain"])
+def test_a_pair_labelled_as_a_change_is_a_text_row_not_squares(label):
+    w = _pct_pair("TEP", "Lichtenstein", label=label)
+    assert out_of_100(w, REFS) == []
+    [r] = [r for g in compare(w, REFS) for r in g.rows]
+    assert (r.values_text, r.problem) == ("TEP 9.4% vs Lichtenstein 18.8%", LABEL_CHANGE)
+    assert outcome_cards(w, REFS)[0].listed == []
+    assert shown_at(w, REFS) == every_number(w)
+
+
+@pytest.mark.parametrize("label", ["Recurrence at 5 years", "Ratiocination score",
+                                   "Unchanged pain", "Increasingly common pain"])
+def test_a_pair_whose_label_names_no_change_keeps_its_squares(label):
+    w = _pct_pair("TEP", "Lichtenstein", label=label)
+    assert [[c for c, _, _ in it.arms] for it in out_of_100(w, REFS)] == [[9, 19]]
 
 
 def test_a_pair_whose_label_only_mentions_a_difference_keeps_its_squares():

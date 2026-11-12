@@ -1101,13 +1101,28 @@ class OutItem:
 
 ALL_ZERO = "both arms round to 0 of 100"
 LABEL_DIFF = "the label names a difference, not a rate"
+LABEL_CHANGE = "the label names a change, not a rate"
 NO_SIDES = "the study's comparison does not name two sides"
+# Words that make a label name a change rather than a rate (coordinator ruling 2 on the
+# fourth check): matched as whole words on the case-folded display key.
+_CHANGE_WORDS = ("reduction", "reduced", "increase", "increased", "decrease", "decreased",
+                 "change", "changed", "improvement", "gain", "excess", "delta", "δ",
+                 "relative risk", "risk ratio", "odds ratio", "hazard ratio", "ratio", "nnt",
+                 "nnh", "arr", "rrr")
+_CHANGE = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(w) for w in _CHANGE_WORDS) + r")(?!\w)")
+
+
+def label_names_change(label: str) -> bool:
+    """The label names a change, not a rate (coordinator ruling 2): one of `_CHANGE_WORDS` as
+    a whole word, case-folded. Such a pair gets no squares."""
+    return _CHANGE.search(_display_key(label).casefold()) is not None
 NOT_MATCHED = "its arms do not match the study's comparison"
 
 
 def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -> str | None:
     """Why a two-arm percent group is not drawn as squares (shown in "Compare the arms"), or
-    None. After the value checks: the label must not name a difference (fourth check F3),
+    None. After the value checks: the label must not name a difference (fourth check F3)
+    nor a change (`label_names_change`; coordinator ruling 2),
     the study's comparison must split into two sides
     (`comparison_sides`) and the two arm texts match opposite sides (`arm_side`; fourth
     check F1, coordinator ruling option a). The counts keep Incisive's rounding; Incisive has no rule for both arms at 0
@@ -1127,6 +1142,8 @@ def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -
     # either rule: the reason's (`labelled_difference`) or the drawing's (`label_measure`).
     if any(labelled_difference(n) or label_measure(n.label) is not None for n in nums):
         return LABEL_DIFF
+    if any(label_names_change(n.label) for n in nums):
+        return LABEL_CHANGE
     # Squares need positive evidence of which arm is which (fourth check F1): each arm text
     # matches one side of the study's two-sided comparison, the two arms opposite sides.
     comparison = comparison_of(w, g.pmid)
