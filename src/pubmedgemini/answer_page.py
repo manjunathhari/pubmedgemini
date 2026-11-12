@@ -671,6 +671,10 @@ def _diff_scale(n: Number) -> Axis | None:
     if not (math.isfinite(span) and span > 0 and a - lo <= _SPAN_SLACK * span
             and hi - b <= _SPAN_SLACK * span):
         return None
+    # An axis label rounds edge * 100, which is not finite for an edge above about 1.8e306
+    # (re-check M-B): no labelled axis holds such an interval.
+    if not (math.isfinite(a * 100.0) and math.isfinite(b * 100.0)):
+        return None
     return Axis(a, b, _lin_pos(0, a, b), _signed(a), "0", _signed(b))
 
 
@@ -749,17 +753,20 @@ def forest(w: WrittenAnswer, refs: Mapping[str, int]) -> Forest:
         text = ratio_estimate(n) if kind == "ratio" else diff_estimate(n)
         drawn = None
         if problem is None:
-            scale = r_axis if kind == "ratio" else _diff_scale(n)
-            if scale is None:
-                problem = _diff_scale_problem(n)
-            else:
-                try:
+            # The whole derivation of one row (scale, axis labels, positions, aria) is
+            # guarded: any arithmetic failure lists this row only (re-check M-B).
+            try:
+                scale = r_axis if kind == "ratio" else _diff_scale(n)
+                if scale is None:
+                    problem = _diff_scale_problem(n)
+                else:
                     drawn = _drawn_row(kind, n, scale, label, text, sub, extra, at)
-                except (ArithmeticError, ValueError):
-                    drawn = None
-                if drawn is None:
-                    failed += 1
-                    problem = NOT_PLACED
+                    if drawn is None:
+                        problem = NOT_PLACED
+            except (ArithmeticError, ValueError):
+                drawn, problem = None, NOT_PLACED
+            if problem == NOT_PLACED:
+                failed += 1
         if drawn is None:
             sub += [("text", f" · {x}") for x in extra]
             drawn = ForestRow(label, text, sub, False, problem, at=at)
@@ -806,11 +813,16 @@ def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -
     (`answer_page.rs` `out_of_100`, `app/page.rs` `out_of_100_view`), so two empty grids
     are not drawn (review L7)."""
     nums = g.nums(w)
-    for n in nums:
-        problem = draw_problem(n, "percent", refs)
-        if problem is not None:
-            return problem
-    if all(out_of_100_count(n.value) == 0 for n in nums):
+    try:  # one pair's arithmetic never fails the page (re-check M-B)
+        for n in nums:
+            problem = draw_problem(n, "percent", refs)
+            if problem is not None:
+                return problem
+        counts = [out_of_100_count(n.value) for n in nums]
+        _ = [fmt_value(n.value) for n in nums]  # the sentence's values
+    except (ArithmeticError, ValueError):
+        return NOT_PLACED
+    if all(c == 0 for c in counts):
         return ALL_ZERO
     return None
 

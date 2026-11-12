@@ -359,3 +359,12 @@ def test_long_numbers_sit_where_the_v4_wrap_rule_applies(env):  # review M6 (d25
         before = t[:m.start()]
         assert (before.rfind('<p class="lab">') > before.rfind("</p>")
                 or before.rfind('<div class="row">') > before.rfind("</div>")), t[m.start():][:60]
+
+
+@pytest.mark.parametrize("v,lo,hi", [(0.0, -5.0, 1e308), (10.0, 8.0, 1e308), (0.0, -1e308, 0.8),
+                                     (-10.0, -1e308, -5.0), (5e306, 1e306, 1e307)])
+def test_a_difference_whose_axis_overflows_never_500s_the_page(env, v, lo, hi):  # re-check M-B
+    t = page(env, store(env, _with_numbers(
+        num("Mean difference in stay", v, "days", None, PMIDS[0], lo, hi))))
+    i = t.index("<b>Mean difference in stay</b>")
+    assert "Not drawn: the interval is too wide to draw." in t[i:i + 2000]

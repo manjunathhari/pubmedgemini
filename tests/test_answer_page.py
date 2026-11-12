@@ -17,9 +17,11 @@ from writer_fakes import fixture
 from pubmedgemini.answer_page import (
     MIN_SHOWN,
     WEIGHTS,
+    ForestRow,
     Item,
     Panel,
     all_groups,
+    answer_view,
     chart_kind,
     cite_pieces,
     compare,
@@ -749,3 +751,37 @@ def test_an_arm_text_that_is_only_a_marker_is_not_an_arm_name(arm):
     assert d.drawn
     p = written([outcome("D", [num("D", 95.9, "%", "R-TAPP"), num("D", 14.4, "%", arm)])])
     assert chart_kind([n for n in p.outcomes[0].numbers]) == "text"
+
+
+# ---------- a row whose axis cannot be labelled never fails the page (re-check M-B) ----------
+
+HUGE_DIFFS = [(0.0, -5.0, 1e308), (10.0, 8.0, 1e308), (0.0, -1e308, 0.8),
+              (-10.0, -1e308, -5.0), (5e306, 1e306, 1e307)]
+
+
+@pytest.mark.parametrize("v,lo,hi", HUGE_DIFFS)
+def test_a_difference_whose_axis_overflows_is_listed_not_drawn(v, lo, hi):
+    w = answer_with(md(v, lo, hi), ratio(0.5, 0.2, 0.9))
+    f = forest(w, REFS)
+    assert [(r.drawn, r.problem) for r in f.diffs] == [(False, "the interval is too wide to draw")]
+    assert [r.drawn for r in f.ratios] == [True]
+    body = AnswerBody(created_at="2026-11-12T00:00:00Z", answer=w, empty_reason=None,
+                      references=[Reference(1, "1", "T", "J", 2020, None, False)], searches=[],
+                      integrity=Integrity(), stopped_early=None, elapsed_s=1, notes=[])
+    v_ = answer_view(body)
+    rows = [i.payload for p in v_["pairs"] for side in (p.left, p.right) if side
+            for i in side.shown + side.hidden if isinstance(i.payload, ForestRow)]
+    assert [r.problem for r in rows if r.at == (0, 0)] == ["the interval is too wide to draw"]
+
+
+def test_any_arithmetic_error_in_a_rows_derivation_lists_that_row_only(monkeypatch):
+    import pubmedgemini.answer_page as ap
+
+    def boom(v):
+        raise OverflowError("x")
+
+    monkeypatch.setattr(ap, "_signed", boom)  # the difference axis labels
+    f = forest(answer_with(md(-1.0, -2.0, 0.5), ratio(0.5, 0.2, 0.9)), REFS)
+    assert [(r.drawn, r.problem) for r in f.diffs] == [
+        (False, "the numbers could not be placed on a scale")]
+    assert [r.drawn for r in f.ratios] == [True]
