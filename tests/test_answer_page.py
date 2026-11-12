@@ -1454,3 +1454,51 @@ def test_the_hernia_squares_are_unchanged():
         ("Chronic pain at 52 months", [15, 31]), ("Moderate or severe pain at 5 years", [2, 4]),
         ("Recurrence at 5 years", [4, 1])]
     assert all(r.problem is None for g in compare(HERNIA.answer, HERNIA_REFS) for r in g.rows)
+
+
+# ---------- a named difference counts only where it names the row (fourth check F2) ----------
+
+@pytest.mark.parametrize("n", [
+    num("No mean difference was found; recurrence", 12.5, "%", None, lo=8.0, hi=17.0),
+    num("Recurrence rate (risk difference not significant)", 12.5, "%", None, lo=8.0, hi=17.0),
+    num("Event rate where the risk difference was small", 12.5, "%", None, lo=8.0, hi=17.0),
+    num("Patients without a mean difference in pain", 12.5, "%", None, lo=8.0, hi=17.0),
+    num("Mean difference not significant", -1.2, None, None, lo=-2.0, hi=-0.4),
+    num("Risk difference, n.s.", -1.2, "%", None, lo=-2.0, hi=-0.4),
+    num("MD, NS", -1.2, None, None, lo=-2.0, hi=-0.4),
+    num("Difference in pain: none", -1.2, None, None, lo=-2.0, hi=-0.4),
+    num("Mean difference (non-significant)", -1.2, None, None, lo=-2.0, hi=-0.4),
+    num("Mean difference, nonsignificant", -1.2, None, None, lo=-2.0, hi=-0.4),
+    num("Mean difference insignificant", -1.2, None, None, lo=-2.0, hi=-0.4),
+    num("Pain, neither arm", -1.2, "MD", None, lo=-2.0, hi=-0.4),
+    num("Pain nor stay", -1.2, "days", "MD", lo=-2.0, hi=-0.4),
+])
+def test_a_difference_mentioned_mid_label_or_negated_is_listed(n):  # fourth check F2
+    from pubmedgemini.answer_page import difference_measure
+
+    assert difference_measure(n) is None
+    w = answer_with(n)
+    f = forest(w, REFS)
+    assert f.diffs == [] and f.ratios == []
+    assert [(x.at, x.problem) for x in outcome_cards(w, REFS)[0].listed] == [
+        ((0, 0), NOT_CLEAR_DIFF)]
+    assert shown_at(w, REFS) == every_number(w)
+
+
+@pytest.mark.parametrize("n,term", [
+    (num("Mean difference in pain score", -1.2, None, None, lo=-2.0, hi=-0.4), "mean difference"),
+    (num("Risk difference, wound infection", -3.0, "%", None, lo=-5.0, hi=-1.0), "risk difference"),
+    (num("  Absolute risk difference in recurrence", -3.0, "%", None, lo=-5.0, hi=-1.0),
+     "risk difference"),
+    (num("Return to daily activities, mean difference", -4.74, "days", None, lo=-6.78, hi=-2.7),
+     "mean difference"),
+    (num("Pain", -1.2, "mean difference", None, lo=-2.0, hi=-0.4), "mean difference"),
+    (num("Pain", -1.2, None, "MD", lo=-2.0, hi=-0.4), "MD"),
+    (num("Notable pain score", -1.2, "MD", None, lo=-2.0, hi=-0.4), "MD"),
+])
+def test_a_named_difference_at_the_start_or_as_the_unit_is_drawn(n, term):
+    from pubmedgemini.answer_page import difference_measure
+
+    assert difference_measure(n) == term
+    [d] = forest(answer_with(n), REFS).diffs
+    assert d.drawn

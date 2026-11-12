@@ -355,10 +355,19 @@ def plain_arm(n: Number) -> bool:
     return arm_kind(n) == "name"
 
 
-# The named kinds of difference, as words anywhere in a label (third check M2).
-_NAMED_DIFF = re.compile(
-    r"(?<!\w)(mean|risk|absolute|median|rate|weighted mean|standardi[sz]ed mean)"
-    r" differences?(?!\w)", re.IGNORECASE)
+# The named kinds of difference (third check M2): the whole unit (`fullmatch`), or the start
+# of the label (`_START_DIFF`, an "absolute" before the kind allowed) or, as in Incisive's own
+# "Return to daily activities, mean difference", the whole part of the label after its last
+# comma (`_END_DIFF`); never anywhere else in a label (fourth check F2).
+_KINDS = r"(mean|risk|absolute|median|rate|weighted mean|standardi[sz]ed mean)"
+_NAMED_DIFF = re.compile(rf"(?<!\w){_KINDS} differences?(?!\w)", re.IGNORECASE)
+_START_DIFF = re.compile(rf"(?:absolute )?{_KINDS} differences?(?!\w)", re.IGNORECASE)
+_END_DIFF = re.compile(rf".*, ?(?:absolute )?{_KINDS} differences?$", re.IGNORECASE | re.DOTALL)
+# A negation or significance word, as a whole token anywhere in the label: then the label
+# names no difference, whatever else it holds (fourth check F2): no, not, non, without, none,
+# neither, nor, NS, n.s., non-significant, nonsignificant, insignificant.
+_NEGATION = re.compile(r"(?<!\w)(?:no|not|non|without|none|neither|nor|ns|n\.s|"
+                       r"nonsignificant|insignificant)(?!\w)", re.IGNORECASE)
 # A term that counts in a label only standing alone: the whole label, or the start of the
 # label followed by a separator (",", ":", "(", "—", "–" after optional spaces, or " in ",
 # " for ", " of "). The abbreviations count only in capitals.
@@ -379,12 +388,16 @@ def difference_measure(n: Number) -> str | None:
     decision d24). One rule, on the label and the unit as `_display_key` gives them and the
     arm as `arm_kind` reads it; the first that applies:
 
+    0. never when the label holds a negation or significance word as a token (`_NEGATION`:
+       "No mean difference was found", "Risk difference, n.s."; fourth check F2);
     1. the unit, as a whole and ignoring case, is a measure term: MD, SMD, WMD, "difference"
        or a named kind of difference ("mean difference", "risk difference", "absolute
        difference", "median difference", "rate difference", "weighted mean difference",
        "standardised mean difference");
-    2. the label contains a named kind of difference, as words ("Return to daily
-       activities, mean difference", "Absolute risk difference in recurrence");
+    2. the label starts with a named kind of difference ("Mean difference in pain score",
+       "Absolute risk difference in recurrence"), or its part after the last comma is one
+       ("Return to daily activities, mean difference"); a named kind elsewhere ("Event rate
+       where the risk difference was small") names no measure (fourth check F2);
     3. the label is "difference" (any case) or MD, SMD or WMD (in capitals), or starts with
        one followed by a separator: optional spaces then ",", ":", "(", "—" or "–", or a
        space, "in", "for" or "of" and a space ("Difference in length of stay", "MD, days").
@@ -397,14 +410,16 @@ def difference_measure(n: Number) -> str | None:
     Merely the word "difference" elsewhere ("Recurrence (no significant difference)"), MD
     inside a name ("MD Anderson Dysphagia Inventory score"), or "minus" names no measure.
     Returned: the term, as "MD", "SMD", "WMD", "difference" or "<kind> difference"."""
+    label = _display_key(n.label)
+    if _NEGATION.search(label):
+        return None
     unit = _display_key(n.unit).casefold() if n.unit is not None else ""
     if unit in _UNIT_TERMS:
         return _UNIT_TERMS[unit]
     m = _NAMED_DIFF.fullmatch(unit)
     if m:
         return _named(m)
-    label = _display_key(n.label)
-    m = _NAMED_DIFF.search(label)
+    m = _START_DIFF.match(label) or _END_DIFF.fullmatch(label)
     if m:
         return _named(m)
     m = _LEAD_TERM.match(label)
@@ -677,7 +692,7 @@ def listed_problem(n: Number, group: Sequence[Number], pair: bool = False,
         return ONE_ARM_RATE
     if not is_ratio(n) and _looks_ratio(n):
         return "unit not RR, OR or HR"
-    if not names_an_arm(n) and is_diff(n) and not is_difference(n):
+    if not names_an_arm(n) and (is_diff(n) or labelled_difference(n)) and not is_difference(n):
         return NOT_CLEAR_DIFF
     if (is_ratio(n) or is_difference(n)) and not has_ci(n):
         return "no interval"
