@@ -1280,6 +1280,20 @@ def label_names_change(label: str) -> bool:
     a whole word, case-folded. Such a pair gets no squares."""
     return _CHANGE.search(_display_key(label).casefold()) is not None
 NOT_MATCHED = "its arms do not match the study's comparison"
+NEGATED = "the comparison or an arm is worded with a negation"
+# Negation words (coordinator ruling 1a, 12 Nov 2026): a word after one of them names the
+# opposite of that side, so no side match is trusted. Whole words on `_words` of the key, and
+# any word "non" + a letter ("non-standard" splits to "non"; "nonoperative" is one word).
+# "sham" and "placebo" are not negations.
+_NEGATION_WORDS = frozenset({"no", "not", "non", "none", "neither", "nor", "without"})
+
+
+def worded_with_negation(text: str | None) -> bool:
+    """`text` holds a negation word (`_NEGATION_WORDS`) or a word "non" + a letter."""
+    if text is None:
+        return False
+    return any(w in _NEGATION_WORDS or (w.startswith("non") and w[3:4].isalpha())
+               for w in _words(_key(text)))
 
 
 def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -> str | None:
@@ -1287,8 +1301,9 @@ def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -
     None. After the value checks: the label must not name a difference (fourth check F3)
     nor a change (`label_names_change`; coordinator ruling 2),
     the study's comparison must split into two sides
-    (`comparison_sides`) and the two arm texts match opposite sides (`arm_side`; fourth
-    check F1, coordinator ruling option a). The counts keep Incisive's rounding; Incisive has no rule for both arms at 0
+    (`comparison_sides`), neither it nor an arm text may be worded with a negation
+    (`worded_with_negation`; coordinator ruling 1a), and the two arm texts match opposite
+    sides (`arm_side`; fourth check F1, coordinator ruling option a). The counts keep Incisive's rounding; Incisive has no rule for both arms at 0
     (`answer_page.rs` `out_of_100`, `app/page.rs` `out_of_100_view`), so two empty grids
     are not drawn (review L7)."""
     nums = g.nums(w)
@@ -1312,6 +1327,10 @@ def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -
     comparison = comparison_of(w, g.pmid)
     if comparison_sides(comparison) is None:
         return NO_SIDES
+    # Ruling 1a: either side of the comparison or either arm worded with a negation means no
+    # squares, whichever rule (word score, S1, S2) would place the arms.
+    if worded_with_negation(comparison) or any(worded_with_negation(n.arm) for n in nums):
+        return NEGATED
     if not arms_match_sides(nums, comparison):
         return NOT_MATCHED
     if all(c == 0 for c in counts):

@@ -1087,6 +1087,19 @@ def _o_side(arm, comparison):
     return g if g is not None else _o_role(arm, comparison)
 
 
+_O_NEGATIONS = {"no", "not", "non", "none", "neither", "nor", "without"}
+
+
+def _o_negated(text):
+    """Oracle (coordinator ruling 1a): a whole word no / not / non / none / neither / nor /
+    without, or a word "non" + a letter ("non-standard", "nonoperative"); "sham" and
+    "placebo" are not negations."""
+    import re
+
+    toks = re.findall(r"[^\W_]+", _o_norm(text))
+    return any(t in _O_NEGATIONS or re.match(r"non[^\W\d_]", t) for t in toks)
+
+
 def _o_role(arm, comparison):
     """Oracle (S2, owner decision N6): an arm that is exactly experimental / standard of care /
     standard / control, with "group" or "arm" or not; experimental on the first side,
@@ -1208,7 +1221,9 @@ _COMPARISONS = ["TEP vs Lichtenstein"] * 4 + ["MD Anderson protocol vs Standard"
                 "TAPP vs Lichtenstein"] + ["Drug X then surgery (group A) vs surgery (group B)"] * 3 + [
                 "Drug X (group A) vs drug Y (group A)"] + [
                 "Experimental group (drug X) vs control"] * 3 + [
-                "Experimental arm vs standard of care arm", "Control drug X vs control"]
+                "Experimental arm vs standard of care arm", "Control drug X vs control"] + [
+                "Extended surgery vs no control arm",
+                "Experimental drug vs non-standard dosing schedule", "TEP vs nonoperative TEP"]
 
 
 def _rand_value(r):
@@ -1240,6 +1255,10 @@ def _rand_pair(r) -> list[Number]:
         return [Number(label, r.uniform(0, 100), "%", a, None, None, None, "1")
                 for a in r.sample(["Group A", "group b", "Group B", "Group C", "Group A (n=9)"],
                                   2)]
+    if r.random() < 0.1:  # negated arms (coordinator ruling 1a), against a likely match
+        return [Number(label, r.uniform(0, 100), "%", a, None, None, None, "1")
+                for a in r.sample(["TEP", "non-Lichtenstein", "Not TEP", "Lichtenstein",
+                                   "No mesh", "Nonoperative Lichtenstein"], 2)]
     if r.random() < 0.3:  # a likely match for "TEP vs Lichtenstein", in either order
         arms = r.sample([r.choice(["TEP", "ＴＥＰ", "TEP (n=665)", "\u202eTEP"]),
                          r.choice(["Lichtenstein", "Lichtenstein group", "\ufeffLichtenstein"])], 2)
@@ -1278,6 +1297,7 @@ def test_random_answers_keep_the_pages_promises():
 
     r = random.Random(20261112)
     squares_seen = diffs_seen = r1_seen = r1_refused_seen = s1_seen = s2_seen = 0
+    negated_seen = 0
     for case in range(4000):
         body = _rand_body(r)
         w, refs = body.answer, refs_of(body)
@@ -1344,12 +1364,16 @@ def test_random_answers_keep_the_pages_promises():
         assert len(items) + sum(row.problem is not None for row in rows) == len(candidates), case
         cand_at = {tuple((g.outcome, j) for j in g.numbers) for g in candidates}
         squares = [row for row in rows if row.problem is None and row.at in cand_at]
+        negated_seen += sum(row.problem == NEGATED for row in rows)
         assert len(squares) == len(items), case
         for row in squares:  # F1, F3: squares only for arms on opposite sides, rate labels
             nums = [at(x) for x in row.at]
             assert {_o_side(n.arm, comparison(n)) for n in nums} == {0, 1}, case
             assert not any(_o_norm(n.arm) in _BAD_ARM_KEYS for n in nums), case
             assert nums[0].label not in NOT_SQUARES_LABELS, case
+            # ruling 1a: no squares when a side of the comparison or an arm is negated
+            assert not _o_negated(comparison(nums[0])), case
+            assert not any(_o_negated(n.arm) for n in nums), case
             squares_seen += 1
             s1_seen += all(_o_norm(n.arm).startswith("group ") for n in nums)
             s2_seen += any(_o_role(n.arm, comparison(n)) is not None for n in nums)
@@ -1365,7 +1389,7 @@ def test_random_answers_keep_the_pages_promises():
         # third check L3: nothing the page draws holds a bidi control or zero-width character
         assert not any(ch in INVISIBLE for t in _strings(answer_view(body)) for ch in t), case
     assert squares_seen > 50 and diffs_seen > 50 and r1_seen > 20 and s1_seen > 5 and s2_seen > 5
-    assert r1_refused_seen > 20
+    assert r1_refused_seen > 20 and negated_seen > 20
     # (the oracles were exercised)
 
 
@@ -1775,6 +1799,55 @@ def test_the_hernia_squares_are_unchanged():
         ("Chronic pain at 52 months", [15, 31]), ("Moderate or severe pain at 5 years", [2, 4]),
         ("Recurrence at 5 years", [4, 1])]
     assert all(r.problem is None for g in compare(HERNIA.answer, HERNIA_REFS) for r in g.rows)
+
+
+# ---------- a negated comparison side or arm gets no squares (coordinator ruling 1a) ----------
+
+NEGATED = "the comparison or an arm is worded with a negation"
+
+
+def _negated_row(w, a, b):
+    assert out_of_100(w, REFS) == []
+    [r] = [r for g in compare(w, REFS) for r in g.rows]
+    assert (r.values_text, r.problem) == (f"{a} 9.4% vs {b} 18.8%", NEGATED)
+    assert outcome_cards(w, REFS)[0].listed == []
+    assert shown_at(w, REFS) == every_number(w)
+
+
+@pytest.mark.parametrize("comparison,a,b", [
+    ("Extended surgery vs no control arm", "Extended surgery", "Control group"),  # word score, S2
+    ("Experimental drug vs non-standard dosing schedule", "Experimental group", "Standard group"),
+    ("Mesh vs no mesh", "Mesh", "No mesh"),
+    ("TEP vs Lichtenstein", "TEP", "non-Lichtenstein"),
+    ("TEP vs Lichtenstein", "Not TEP", "Lichtenstein"),
+    ("Drug X (group A) vs no drug (group B)", "Group A", "Group B"),  # S1
+    ("Drug X vs surgery without drug X", "Drug X", "Surgery"),
+    ("TEP vs Lichtenstein", "TEP", "Lichtenstein, none"),
+    ("TEP vs neither TEP nor TAPP", "TEP", "Lichtenstein"),
+])
+def test_a_negated_side_or_arm_is_a_named_text_row_not_squares(comparison, a, b):
+    _negated_row(_pct_pair(a, b, comparison), a, b)
+
+
+def test_nonoperative_as_one_word_is_a_negation_by_the_non_prefix_rule_so_no_squares():
+    # "non" followed by letters is a negation, hyphen or not (coordinator ruling)
+    _negated_row(_pct_pair("Surgery", "Nonoperative management",
+                           "Surgery vs nonoperative management"),
+                 "Surgery", "Nonoperative management")
+
+
+@pytest.mark.parametrize("comparison,a,b,counts", [
+    ("TEP vs Lichtenstein", "TEP", "Lichtenstein", [9, 19]),
+    ("Drug A vs placebo", "Drug A", "Placebo", [9, 19]),  # placebo is no negation
+    ("Drug A vs sham", "Drug A", "Sham", [9, 19]),  # sham is no negation
+    ("Notch repair vs knot tying", "Notch repair", "Knot tying", [9, 19]),  # inside words
+    ("Nobel protocol vs Nordic protocol", "Nobel", "Nordic", [9, 19]),
+])
+def test_a_comparison_with_no_negation_keeps_its_squares(comparison, a, b, counts):
+    w = _pct_pair(a, b, comparison)
+    [it] = out_of_100(w, REFS)
+    assert [c for c, _, _ in it.arms] == counts
+    assert [r.problem for g in compare(w, REFS) for r in g.rows] == [None]
 
 
 # ---------- a named difference counts only where it names the row (fourth check F2) ----------
