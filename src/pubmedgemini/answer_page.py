@@ -557,6 +557,16 @@ def arm_side(arm: str | None, comparison: str | None) -> int | None:
     return 0 if score > 0 else 1 if score < 0 else None
 
 
+def names_one_side(text: str, comparison: str | None) -> bool:
+    """`text` holds words of exactly one side of a two-sided comparison (the same words as
+    `arm_side`): "MD in TEP group" under "TEP vs Lichtenstein" (fourth check F5)."""
+    sides = comparison_sides(comparison)
+    if sides is None:
+        return False
+    words = set(_words(_key(text)))
+    return bool(words & sides[0]) != bool(words & sides[1])
+
+
 @dataclass(frozen=True)
 class NumGroup:
     outcome: int  # index of the writer's outcome
@@ -585,6 +595,12 @@ def study_of(w: WrittenAnswer, pmid: str) -> Study | None:
         if rust_trim(s.pmid) == rust_trim(pmid):
             return s
     return None
+
+
+def comparison_of(w: WrittenAnswer, pmid: str) -> str | None:
+    """The comparison of `pmid`'s trials-table row, if the writer gave one."""
+    s = study_of(w, pmid)
+    return s.comparison if s is not None else None
 
 
 def arm_lines(o: Outcome, comparison_of,
@@ -673,6 +689,9 @@ def draw_problem(n: Number, kind: Literal["ratio", "diff", "percent"],
 
 RATIO_ON_DIFF = "the label names a difference but the unit is a ratio"
 NO_WIDTH = "the interval has no width"
+# A difference row whose label names one side of its study's comparison: one arm's value, not
+# the difference between them (fourth check F5).
+ONE_ARM_LABEL = "the label names one arm"
 
 
 # ---------- numbers drawn nowhere (review M3) ----------
@@ -1002,6 +1021,8 @@ def forest(w: WrittenAnswer, refs: Mapping[str, int]) -> Forest:
             if fk is not None:
                 found.append((fk, n, o, (g.outcome, j)))
     problems = [draw_problem(n, kind, refs)  # type: ignore[arg-type]
+                or (ONE_ARM_LABEL if kind == "diff" and names_one_side(
+                    n.label, comparison_of(w, n.pmid)) else None)
                 for kind, n, _, _ in found]
     drawn_ratios = [(n.ci_low, n.ci_high) for (kind, n, _, _), p in zip(found, problems,
                                                                        strict=True)
@@ -1102,8 +1123,7 @@ def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -
         return LABEL_DIFF
     # Squares need positive evidence of which arm is which (fourth check F1): each arm text
     # matches one side of the study's two-sided comparison, the two arms opposite sides.
-    s = study_of(w, g.pmid)
-    comparison = s.comparison if s is not None else None
+    comparison = comparison_of(w, g.pmid)
     if comparison_sides(comparison) is None:
         return NO_SIDES
     if sorted(arm_side(n.arm, comparison) for n in nums  # type: ignore[type-var]

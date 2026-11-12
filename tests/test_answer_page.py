@@ -1570,3 +1570,32 @@ def test_an_interval_of_no_width_is_listed(n, kind):
     assert [(r.drawn, r.problem) for r in getattr(f, kind)] == [(False, NO_WIDTH)]
     assert f.ratio_axis is None
     assert shown_at(w, REFS) == every_number(w)
+
+
+# ---------- a difference whose label names one arm is listed (fourth check F5) ----------
+
+ONE_ARM_LABEL = "the label names one arm"
+
+
+@pytest.mark.parametrize("n", [
+    num("MD in TEP group", 4.2, "days", None, lo=3.0, hi=5.0),
+    num("Difference: recurrence in TEP arm", 2.0, "%", None, lo=1.0, hi=3.0),
+    num("Mean difference, Lichtenstein", 2.0, None, None, lo=1.0, hi=3.0),
+    num("Risk difference for ＴＥＰ", 2.0, "%", None, lo=1.0, hi=3.0),
+])
+def test_a_difference_whose_label_names_one_arm_is_listed(n):
+    w = written([outcome("Stay", [n])], [study("1", TEP_VS_L)])
+    [d] = forest(w, REFS).diffs
+    assert (d.drawn, d.problem) == (False, ONE_ARM_LABEL)
+    assert shown_at(w, REFS) == every_number(w)
+
+
+@pytest.mark.parametrize("label,comparison", [
+    ("Difference (TEP minus Lichtenstein)", TEP_VS_L), ("MD in pain", TEP_VS_L),
+    ("MD in TEP group", None), ("MD in TEP group", "TEP vs TAPP vs Lichtenstein"),
+    ("Mean difference, TEP vs Lichtenstein", TEP_VS_L)])
+def test_a_difference_naming_both_arms_or_neither_is_drawn(label, comparison):
+    studies = [study("1", comparison)] if comparison is not None else []
+    w = written([outcome("Stay", [num(label, 4.2, "days", None, lo=3.0, hi=5.0)])], studies)
+    [d] = forest(w, REFS).diffs
+    assert d.drawn
