@@ -2,6 +2,7 @@
 (Incisive `runs/mod.rs`, `migrations/0005_runs.sql`, `agent/mod.rs` `add_line`, `clip`,
 `agent/team.rs` `run` for the stop lines and outcomes)."""
 
+import dataclasses
 import json
 import logging
 import threading
@@ -48,6 +49,7 @@ from pubmedgemini.runs import (
     get_answer,
     get_run,
     list_runs,
+    save_answer,
     save_list,
     set_running,
     stop_unfinished,
@@ -882,3 +884,44 @@ def test_an_f2_run_without_an_answer_reads_as_before(run_app):
     v = run_app.view(rid)
     assert not v.has_answer and v.empty_reason is None and end_message(v) == NO_EVIDENCE
     assert run_app.answer(rid) is None
+
+
+C0_KEPT = "".join(chr(c) for c in range(1, 32))
+
+
+def test_a_nul_in_the_writers_reply_is_removed_and_the_answer_stored(run_app):  # review M4
+    from writer_fakes import fixture_part, json_reply, remap
+
+    outcomes = remap(fixture_part("outcomes"))
+    first = outcomes["outcomes"][0]
+    first["effect_text"] = "a\x00b" + C0_KEPT + "c"
+    first["numbers"][0]["label"] = "\x00pain\x00"
+    first["numbers"][0]["arm"] = "TEP\x00"
+    trials = remap(fixture_part("trials"))
+    trials["studies"][0]["appraisal"] = "x\x00y"
+    reply = json_reply(outcomes)
+    assert "\\u0000" in json.dumps(reply)  # the JSON escape reaches the writer's reader
+    rid = run_app.start(writer=run_parts() | {"OUTCOMES": [reply],
+                                              "TRIALS": [json_reply(trials)]})
+    v, a = run_app.view(rid), run_app.answer(rid)
+    assert (v.status, v.error_kind) == ("done", None) and v.has_answer
+    o = a.answer.outcomes[0]
+    assert o.effect_text == "ab" + C0_KEPT + "c"  # Incisive removes NUL only
+    assert (o.numbers[0].label, o.numbers[0].arm) == ("pain", "TEP")
+    assert a.answer.studies[0].appraisal == "xy"
+
+
+def test_save_answer_removes_nul_at_any_depth(run_app):  # review M4
+    from test_answer_page import hernia
+
+    body = hernia()
+    body.answer.outcomes[0].numbers[0] = dataclasses.replace(
+        body.answer.outcomes[0].numbers[0], p="<0.0\x0001")
+    body.answer.bottom_line = dataclasses.replace(body.answer.bottom_line, text="b\x00" + C0_KEPT)
+    body.notes.append("n\x00")
+    rid = create_run(run_app.pool, run_app.owner_id, "q", MODEL)
+    set_running(run_app.pool, rid)
+    assert save_answer(run_app.pool, rid, body, "parts") is not None
+    got = run_app.answer(rid)
+    assert got.answer.outcomes[0].numbers[0].p == "<0.001"
+    assert got.answer.bottom_line.text == "b" + C0_KEPT and got.notes[-1] == "n"

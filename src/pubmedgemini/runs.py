@@ -36,7 +36,7 @@ from psycopg_pool import ConnectionPool
 from pubmedgemini.deid import BlockedIdentifiers, check_question
 from pubmedgemini.lit.cache import get_for_display
 from pubmedgemini.lit.paper import Paper
-from pubmedgemini.lit.text import clean_text
+from pubmedgemini.lit.text import clean_json, clean_text
 from pubmedgemini.researcher.loop import SearchEntry, SeenPaper
 from pubmedgemini.researcher.studylist import Validated
 from pubmedgemini.writer.answer import AnswerBody, body_from_json, body_to_json
@@ -369,8 +369,15 @@ def save_answer(pool: ConnectionPool, run_id: UUID, body: AnswerBody,
                 written: str | None) -> int | None:
     """Stores the run's answer (one row per run; a second write replaces the first), only
     while the run is still running. Returns the document's size in UTF-8 bytes for the log,
-    or None when nothing was stored (the run was stopped by a restart meanwhile)."""
-    doc = body_to_json(body)
+    or None when nothing was stored (the run was stopped by a restart meanwhile).
+
+    Every string, at any depth, keys too, goes through `clean_json` first: a NUL (the
+    writer can spell one as the JSON escape \\u0000) cannot be stored in Postgres JSONB, so
+    it is removed, as Incisive removes it before Postgres (`chat/service.rs`, "Postgres text
+    cannot hold NUL"); a lone surrogate becomes U+FFFD. Other control characters are kept:
+    JSONB stores them and Incisive's writer path has no rule for them (`agent/llm.rs`,
+    `agent/answer_v3.rs`, `agent/writer_v3.rs`: none, checked at commit 12630f7)."""
+    doc = clean_json(body_to_json(body))
     size = len(json.dumps(doc, ensure_ascii=False).encode("utf-8", "surrogatepass"))
     with pool.connection() as conn:
         cur = conn.execute(
