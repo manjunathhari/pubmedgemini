@@ -175,7 +175,10 @@ def test_draw_checks_refuse_and_say_why(n, problem):  # Review Focus 2
 
 def test_draw_problem_order_and_kinds():
     assert draw_problem(ratio(0.5, 0.2, 0.9, pmid=" 1 "), "ratio", REFS) is None
-    assert draw_problem(num("d", 0.0, lo=0.0, hi=0.0), "diff", REFS) is None
+    # An interval of no width is listed (fourth check F4; it was drawn).
+    assert draw_problem(num("d", 0.0, lo=0.0, hi=0.0), "diff", REFS) == \
+        "the interval has no width"
+    assert draw_problem(num("d", 0.0, lo=-1.0, hi=1.0), "diff", REFS) is None
     assert draw_problem(num("d", 1.0, lo=2.0, hi=0.5), "diff", REFS) == \
         "the interval is reversed"
     assert draw_problem(num("p", 140.0, "%", "a"), "percent", REFS) == \
@@ -1229,8 +1232,10 @@ def test_a_named_measure_without_an_arm_is_drawn_and_named_in_its_aria():
 @pytest.mark.parametrize("v,lo,hi,labels", [
     (0.002, 0.001, 0.003, ("−0.001", "0", "+0.003")),
     (-0.003, -0.006, 0.0005, ("−0.006", "0", "+0.002")),
-    (0.004, 0.004, 0.004, ("−0.001", "0", "+0.004")),
-    (5.0, 5.0, 5.0, ("−1", "0", "+5")),
+    # (0.004 and 5.0 with no width are listed since the fourth check, F4: now in
+    # test_an_interval_of_no_width_is_listed)
+    (0.004, 0.003, 0.004, ("−0.001", "0", "+0.004")),
+    (5.0, 4.5, 5.0, ("−1", "0", "+5")),
     (0.33, -0.03, 0.7, ("−0.2", "0", "+0.8")),
     (-4.74, -6.78, -2.7, ("−8", "0", "+2")),
     (-120.0, -120.0, 80.0, ("−150", "0", "+100")),
@@ -1242,10 +1247,11 @@ def test_difference_axis_labels_take_their_precision_from_the_step(v, lo, hi, la
     assert 0 < d.null < 100  # 0 is never at an edge (X16)
 
 
-def test_a_tiny_point_interval_whose_axis_would_put_0_at_an_edge_is_not_drawn():
-    # 1e-9 (1e-9 to 1e-9): at the axis's 9-decimal rounding its lower edge is 0, so no axis
-    # keeps 0 off the edge (X16): listed, not drawn on a wrong scale.
-    [d] = forest(answer_with(num("Risk difference", 1e-9, None, None, lo=1e-9, hi=1e-9)),
+def test_a_tiny_interval_whose_axis_would_put_0_at_an_edge_is_not_drawn():
+    # 5e-10 (5e-10 to 1e-9): at the axis's 9-decimal rounding its lower edge is 0, so no axis
+    # keeps 0 off the edge (X16): listed, not drawn on a wrong scale. (The point interval
+    # 1e-9 to 1e-9 is listed with "no width" since the fourth check, F4.)
+    [d] = forest(answer_with(num("Risk difference", 5e-10, None, None, lo=5e-10, hi=1e-9)),
                  REFS).diffs
     assert (d.drawn, d.problem) == (False, "the interval is too narrow to draw")
 
@@ -1524,3 +1530,43 @@ def test_a_pair_labelled_as_a_difference_is_a_text_row_not_squares(label):
 def test_a_pair_whose_label_only_mentions_a_difference_keeps_its_squares():
     w = _pct_pair("TEP", "Lichtenstein", label="Pain, difference not significant")
     assert [[c for c, _, _ in it.arms] for it in out_of_100(w, REFS)] == [[9, 19]]
+
+
+# ---------- a ratio labelled as a difference, and an interval of no width (fourth check F4) ----
+
+RATIO_ON_DIFF = "the label names a difference but the unit is a ratio"
+NO_WIDTH = "the interval has no width"
+
+
+@pytest.mark.parametrize("label,unit", [("Mean difference in pain", "RR"), ("Risk difference", "OR"),
+                                        ("MD, days", "HR"), ("Difference in recurrence", "RR"),
+                                        ("Recurrence, risk difference", "RR")])
+def test_a_ratio_whose_label_names_a_difference_is_listed(label, unit):
+    w = answer_with(num(label, 0.8, unit, None, lo=0.6, hi=0.95))
+    f = forest(w, REFS)
+    assert [(r.drawn, r.problem) for r in f.ratios] == [(False, RATIO_ON_DIFF)]
+    assert f.diffs == [] and f.ratio_axis is None
+    assert shown_at(w, REFS) == every_number(w)
+
+
+@pytest.mark.parametrize("label", ["Seroma", "Recurrence (no significant difference)",
+                                   "Chronic pain, TEP vs Lichtenstein"])
+def test_a_ratio_whose_label_does_not_name_a_difference_is_drawn(label):
+    [r] = forest(answer_with(num(label, 0.8, "RR", None, lo=0.6, hi=0.95)), REFS).ratios
+    assert r.drawn
+
+
+@pytest.mark.parametrize("n,kind", [
+    (num("Seroma", 1.0, "RR", None, lo=1.0, hi=1.0), "ratios"),
+    (num("Seroma", 0.5, "HR", None, lo=0.5, hi=0.5), "ratios"),
+    (num("Risk difference", 0.004, None, None, lo=0.004, hi=0.004), "diffs"),
+    (num("Mean difference in pain", 5.0, None, None, lo=5.0, hi=5.0), "diffs"),
+    (num("MD", 0.0, "days", None, lo=0.0, hi=0.0), "diffs"),
+    (num("Risk difference", 1e-9, None, None, lo=1e-9, hi=1e-9), "diffs"),
+])
+def test_an_interval_of_no_width_is_listed(n, kind):
+    w = answer_with(n)
+    f = forest(w, REFS)
+    assert [(r.drawn, r.problem) for r in getattr(f, kind)] == [(False, NO_WIDTH)]
+    assert f.ratio_axis is None
+    assert shown_at(w, REFS) == every_number(w)

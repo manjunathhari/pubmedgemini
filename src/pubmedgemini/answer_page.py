@@ -657,13 +657,22 @@ def draw_problem(n: Number, kind: Literal["ratio", "diff", "percent"],
         return None
     lo, hi = n.ci_low, n.ci_high
     assert lo is not None and hi is not None
+    # A ratio whose label names a difference is not clearly either (fourth check F4).
+    if kind == "ratio" and label_measure(n.label) is not None:
+        return RATIO_ON_DIFF
     if kind == "ratio" and not (n.value > 0 and lo > 0 and hi > 0):
         return "a ratio must be above 0"
+    if lo == hi:  # a point drawn as an interval (fourth check F4)
+        return NO_WIDTH
     if lo > hi:
         return "the interval is reversed"
     if not lo <= n.value <= hi:
         return "the estimate is outside its interval"
     return None
+
+
+RATIO_ON_DIFF = "the label names a difference but the unit is a ratio"
+NO_WIDTH = "the interval has no width"
 
 
 # ---------- numbers drawn nowhere (review M3) ----------
