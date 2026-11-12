@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from test_answer_page import hernia
+from test_answer_page import PMIDS, hernia, num, outcome
 from test_ask_page import HAPPY_RUN, OWNER, QUESTION, RUN_NOT_FOUND, H, ask_env, insert_run
 
 from pubmedgemini.runs import (
@@ -283,3 +283,19 @@ def test_the_page_never_changes_the_stored_answer(env, answer_url):
     before = env.one("SELECT body FROM answers WHERE run_id = %s", (rid,))
     page(env, answer_url)
     assert env.one("SELECT body FROM answers WHERE run_id = %s", (rid,)) == copy.deepcopy(before)
+
+
+def _with_numbers(*numbers):
+    body = copy.deepcopy(hernia())
+    body.answer.outcomes.append(outcome("Odd numbers", list(numbers)))
+    return body
+
+
+def test_numbers_not_drawn_are_listed_inside_their_outcome(env):  # review M3
+    t = page(env, store(env, _with_numbers(num("Seroma", 0.4, "RR", pmid=PMIDS[0]))))
+    last = t[t.rindex('<details class="oc"'):]
+    last = last[:last.index("</details>")]
+    assert "<span class=\"meta\">1 number</span>" in last
+    assert ('<p><b>Seroma</b> <span class="mono">RR 0.4</span></p><p class="muted">'
+            'TEP vs Lichtenstein meta-analysis [<a href="#ref-1">1</a>] · '
+            'Not drawn: no interval.</p>') in last

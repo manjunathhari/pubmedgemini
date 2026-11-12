@@ -273,6 +273,16 @@ def chart_kind(nums: Sequence[Number]) -> Kind:
     return "text"
 
 
+def forest_kind(n: Number) -> Literal["ratio", "diff"] | None:
+    """The forest's kind of a number (Incisive `forest_rows`: a ratio or a difference with
+    both CI bounds), or None when it is not a forest row."""
+    if not has_ci(n):
+        return None
+    if is_ratio(n):
+        return "ratio"
+    return "diff" if is_diff(n) else None
+
+
 def _words(s: str) -> list[str]:
     return [w.lower() for w in re.split(r"[^\w]|_", s) if len(w.encode("utf-8")) > 1]
 
@@ -386,6 +396,73 @@ def draw_problem(n: Number, kind: Literal["ratio", "diff", "percent"],
     return None
 
 
+# ---------- numbers drawn nowhere (review M3) ----------
+
+# A ratio the writer did not mark with the unit exactly RR, OR or HR ("aHR", "rr", "RR" in
+# the label). Only the reason given changes; what is drawn does not.
+_RATIO_UNIT = re.compile(r"(?i)a?(?:rr|or|hr)")
+_RATIO_ABBR = re.compile(r"\ba?(?:RR|OR|HR)\b")
+_RATIO_WORDS = re.compile(r"(?i)\b(?:risk|odds|hazard|rate) ratio\b|\brelative risk\b")
+
+
+def _looks_ratio(n: Number) -> bool:
+    u = rust_trim(n.unit) if n.unit is not None else ""
+    return bool(_RATIO_UNIT.fullmatch(u) or _RATIO_ABBR.search(n.label)
+                or _RATIO_WORDS.search(f"{n.label} {u}"))
+
+
+def listed_problem(n: Number, group: Sequence[Number]) -> str:
+    """Why a number that is neither a forest row nor in a pair is not drawn."""
+    if not is_ratio(n) and _looks_ratio(n):
+        return "unit not RR, OR or HR"
+    if (is_ratio(n) or is_diff(n)) and not has_ci(n):
+        return "no interval"
+    if len(group) == 1:
+        return "not marked as a ratio or a difference" if has_ci(n) else "single arm"
+    if any(is_ratio(x) or is_diff(x) or _looks_ratio(x) for x in group):
+        return "the group mixes kinds"
+    return "its arms are not distinct"
+
+
+def _opt_bound(x: float | None) -> str:
+    return "not given" if x is None else fmt_value(x)
+
+
+@dataclass(frozen=True)
+class ListedNumber:
+    label: str
+    value_text: str
+    sub_pieces: list[Piece]
+    problem: str
+    at: tuple[int, int]  # (outcome, number)
+
+
+def listed_numbers(w: WrittenAnswer, refs: Mapping[str, int]) -> dict[int, list[ListedNumber]]:
+    """By outcome, the numbers no forest row and no "Compare the arms" row shows, as text
+    with the reason (flag, never delete: every number the writer gave is on the page)."""
+    out: dict[int, list[ListedNumber]] = {}
+    for g in all_groups(w):
+        if g.kind == "pair":
+            continue
+        o = w.outcomes[g.outcome]
+        group = g.nums(w)
+        for j in g.numbers:
+            n = o.numbers[j]
+            if forest_kind(n) is not None:
+                continue
+            value = with_unit(n.value, n.unit)
+            if n.ci_low is not None or n.ci_high is not None:
+                value += f" ({_opt_bound(n.ci_low)} to {_opt_bound(n.ci_high)})"
+            sub = study_pieces(w, n.pmid, refs)
+            arm = rust_trim(n.arm) if n.arm is not None else ""
+            p = p_label(n.p)
+            sub += [("text", f" · {x}") for x in (arm, p or "") if x]
+            out.setdefault(g.outcome, []).append(ListedNumber(
+                rust_trim(n.label) or o.outcome, value, sub, listed_problem(n, group),
+                (g.outcome, j)))
+    return out
+
+
 # ---------- the forest ----------
 
 LADDER = (0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50)
@@ -482,6 +559,7 @@ class ForestRow:
     null: float = 0
     scale: Axis | None = None
     aria: str = ""
+    at: tuple[int, int] = (-1, -1)  # (outcome, number)
 
     @property
     def sub(self) -> str:
@@ -508,16 +586,18 @@ def study_pieces(w: WrittenAnswer, pmid: str, refs: Mapping[str, int]) -> list[P
 def forest(w: WrittenAnswer, refs: Mapping[str, int]) -> Forest:
     """Every ratio or difference with both CI bounds (Incisive `forest_rows`), ratios then
     differences, each in group order; drawn only when the checks pass."""
-    found: list[tuple[str, Number, Outcome]] = []
+    found: list[tuple[str, Number, Outcome, tuple[int, int]]] = []
     for g in all_groups(w):
         o = w.outcomes[g.outcome]
         for j in g.numbers:
             n = o.numbers[j]
-            if has_ci(n) and (is_ratio(n) or is_diff(n)):
-                found.append(("ratio" if is_ratio(n) else "diff", n, o))
-    problems = [draw_problem(n, kind, refs) for kind, n, _ in found]  # type: ignore[arg-type]
-    drawn_ratios = [(n.ci_low, n.ci_high) for (kind, n, _), p in zip(found, problems,
-                                                                    strict=True)
+            fk = forest_kind(n)
+            if fk is not None:
+                found.append((fk, n, o, (g.outcome, j)))
+    problems = [draw_problem(n, kind, refs)  # type: ignore[arg-type]
+                for kind, n, _, _ in found]
+    drawn_ratios = [(n.ci_low, n.ci_high) for (kind, n, _, _), p in zip(found, problems,
+                                                                       strict=True)
                     if kind == "ratio" and p is None]
     r_axis = None
     if drawn_ratios:
@@ -525,7 +605,7 @@ def forest(w: WrittenAnswer, refs: Mapping[str, int]) -> Forest:
         r_axis = Axis(lo, hi, _log_pos(1, lo, hi), fmt_axis(lo), "1", fmt_axis(hi))
     ratios: list[ForestRow] = []
     diffs: list[ForestRow] = []
-    for (kind, n, o), problem in zip(found, problems, strict=True):
+    for (kind, n, o, at), problem in zip(found, problems, strict=True):
         label = rust_trim(n.label) or o.outcome
         sub = study_pieces(w, n.pmid, refs)
         extra = [x for x in (rust_trim(n.arm) if n.arm else "",
@@ -533,7 +613,7 @@ def forest(w: WrittenAnswer, refs: Mapping[str, int]) -> Forest:
         text = ratio_estimate(n) if kind == "ratio" else diff_estimate(n)
         if problem is not None:
             sub += [("text", f" · {x}") for x in extra]
-            row = ForestRow(label, text, sub, False, problem)
+            row = ForestRow(label, text, sub, False, problem, at=at)
         else:
             lo_v, hi_v = n.ci_low, n.ci_high
             assert lo_v is not None and hi_v is not None
@@ -564,7 +644,7 @@ def forest(w: WrittenAnswer, refs: Mapping[str, int]) -> Forest:
                 extra.append(PAST_SCALE)
             sub += [("text", f" · {x}") for x in extra]
             row = ForestRow(label, text, sub, True, None, left, width,
-                            _pos(kind, n.value, scale), scale.null, scale, aria)
+                            _pos(kind, n.value, scale), scale.null, scale, aria, at)
         (ratios if kind == "ratio" else diffs).append(row)
     return Forest(ratios, diffs, r_axis)
 
@@ -635,7 +715,7 @@ class CompareRow:
     values_text: str
     study_pieces: list[Piece]
     p_text: str | None
-
+    at: tuple[tuple[int, int], ...] = ()  # (outcome, number) of each value
 
 @dataclass(frozen=True)
 class CompareGroup:
@@ -655,7 +735,8 @@ def compare(w: WrittenAnswer, refs: Mapping[str, int]) -> list[CompareGroup]:
         nums = g.nums(w)
         row = CompareRow(g.label, w.outcomes[g.outcome].certainty,
                          " vs ".join(with_unit(n.value, n.unit) for n in nums),
-                         study_pieces(w, g.pmid, refs), g.p_text(w))
+                         study_pieces(w, g.pmid, refs), g.p_text(w),
+                         tuple((g.outcome, j) for j in g.numbers))
         for k, _label, rows in out:
             if k == key:
                 rows.append(row)
@@ -685,17 +766,20 @@ class OutcomeCard:
     evidence_pieces: list[Piece]
     effect_paragraphs: list[list[Piece]]
     why_pieces: list[Piece]
+    listed: list[ListedNumber] = field(default_factory=list)  # numbers drawn nowhere else
 
 
 def outcome_cards(w: WrittenAnswer, refs: Mapping[str, int]) -> list[OutcomeCard]:
+    listed = listed_numbers(w, refs)
     return [OutcomeCard(o.outcome, o.certainty, pill_class(o.certainty),
                         EVIDENCE_LABELS.get(o.evidence_type),
                         count_noun(len(o.numbers), "number", "numbers"),
                         first_sentence(o.effect_text),
                         cite_pieces(rust_trim(_SPACES.sub(" ", o.rct_evidence)), refs),
                         paragraphs(o.effect_text, refs),
-                        cite_pieces(rust_trim(_SPACES.sub(" ", o.why)), refs))
-            for o in w.outcomes]
+                        cite_pieces(rust_trim(_SPACES.sub(" ", o.why)), refs),
+                        listed.get(i, []))
+            for i, o in enumerate(w.outcomes)]
 
 
 # ---------- the fold that keeps a pair level (X14) ----------

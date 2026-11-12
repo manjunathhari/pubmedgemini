@@ -484,3 +484,66 @@ def test_fold_puts_a_group_heading_inside_only_when_the_group_starts_there():
 def test_fold_is_deterministic():
     assert fold_pair(forest_panel(HERNIA), outcomes_panel(HERNIA)) == \
         fold_pair(forest_panel(hernia()), outcomes_panel(hernia()))
+
+
+# ---------- every number is on the page (review M3) ----------
+
+def shown_at(w, refs) -> set[tuple[int, int]]:
+    """Every (outcome, number) the page shows: forest rows, compare rows, listed numbers."""
+    f = forest(w, refs)
+    at = {r.at for r in f.ratios + f.diffs}
+    at |= {x for g in compare(w, refs) for r in g.rows for x in r.at}
+    at |= {x.at for c in outcome_cards(w, refs) for x in c.listed}
+    return at
+
+
+def every_number(w) -> set[tuple[int, int]]:
+    return {(i, j) for i, o in enumerate(w.outcomes) for j in range(len(o.numbers))}
+
+
+@pytest.mark.parametrize("n,problem", [
+    (num("Seroma", 0.4, "RR"), "no interval"),
+    (num("Seroma", 0.4, "aHR", lo=0.2, hi=0.8), "unit not RR, OR or HR"),
+    (num("Seroma", 0.4, "rr", lo=0.2, hi=0.8), "unit not RR, OR or HR"),
+    (num("Seroma RR", 0.4, None, lo=0.2, hi=0.8), "unit not RR, OR or HR"),
+    (num("Hospital stay", -4.7, "days", lo=-6.8, hi=-2.7),
+     "not marked as a ratio or a difference"),
+    (num("Seroma", 9.4, "%", "TEP"), "single arm"),
+    (num("Mean difference in stay", -1.0, "days"), "no interval"),
+])
+def test_a_number_drawn_nowhere_is_listed_in_its_outcome(n, problem):
+    w = answer_with(n)
+    [c] = outcome_cards(w, REFS)
+    assert [(x.problem, x.at) for x in c.listed] == [(problem, (0, 0))]
+    assert shown_at(w, REFS) == every_number(w)
+
+
+def test_a_group_mixing_kinds_lists_every_number_not_drawn():
+    w = answer_with(num("Pain", 9.4, "%", "TEP"), num("Pain", 0.5, "RR", "L"))
+    [c] = outcome_cards(w, REFS)
+    assert [(x.at, x.problem) for x in c.listed] == [((0, 0), "the group mixes kinds"),
+                                                     ((0, 1), "no interval")]
+    assert shown_at(w, REFS) == every_number(w)
+
+
+def test_a_listed_number_reads_as_text():
+    w = answer_with(num("Seroma", 0.4, "aHR", "TEP", lo=0.2, p="0.03"))
+    [x] = outcome_cards(w, REFS)[0].listed
+    assert (x.label, x.value_text) == ("Seroma", "0.4 aHR (0.2 to not given)")
+    assert pieces_text(x.sub_pieces) == "PMID 1 [1] · TEP · p 0.03"
+    assert x.problem == "unit not RR, OR or HR"
+
+
+def test_numbers_drawn_elsewhere_are_not_listed_again():
+    w = answer_with(ratio(0.4, 0.2, 0.8), num("Pain", 9.4, "%", "TEP"),
+                    num("Pain", 18.8, "%", "L"))
+    assert outcome_cards(w, REFS)[0].listed == []
+    assert shown_at(w, REFS) == every_number(w)
+
+
+def test_every_hernia_number_is_on_the_page_and_the_counts_match():
+    w = HERNIA.answer
+    assert shown_at(w, HERNIA_REFS) == every_number(w)
+    for i, c in enumerate(outcome_cards(w, HERNIA_REFS)):
+        on_page = {j for o, j in shown_at(w, HERNIA_REFS) if o == i}
+        assert c.n_numbers.split()[0] == str(len(on_page)), c.title

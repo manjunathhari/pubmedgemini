@@ -28,6 +28,7 @@ answer_page.py; model text is only ever escaped text here (autoescape, no |safe)
 <details class="oc"><summary><span class="t">{{ c.title }}</span><span class="pill {{ c.pill }}">{{ c.certainty }}</span><span class="meta">{% if c.evidence_label %}<span class="tag">{{ c.evidence_label }}</span> {% endif %}{{ c.n_numbers }}</span><span class="s">{{ c.first_sentence }}</span></summary><div class="body">
 {%- if c.evidence_pieces %}<p class="muted">Evidence: {{ pieces(c.evidence_pieces) }}</p>{% endif -%}
 {%- for para in c.effect_paragraphs %}<p>{{ pieces(para) }}</p>{% endfor -%}
+{%- for x in c.listed %}<p><b>{{ x.label }}</b> <span class="mono">{{ x.value_text }}</span></p><p class="muted">{{ pieces(x.sub_pieces) }} · Not drawn: {{ x.problem }}.</p>{% endfor -%}
 {%- if c.why_pieces %}<p class="muted">Why this certainty: {{ pieces(c.why_pieces) }}</p>{% endif -%}
 </div></details>
 {%- endmacro -%}
