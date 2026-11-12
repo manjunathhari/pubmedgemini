@@ -161,3 +161,17 @@ def cut_off(word: str = "outcomes") -> dict:
     """A reply cut off by its output limit (a readable part, but MAX_TOKENS: never read)."""
     return json_reply(fixture_part(word) if word != ONE_PIECE else fixture("whole.json"),
                       finish="MAX_TOKENS", out=12_000)
+
+
+def leak_parts(outcome: str = "oq3 groin pain", effect: str = "vq4 fewer patients",
+               arm: str = "uq2 TEP", bottom: str = "tq1 laparoscopic is better") -> dict:
+    """`run_parts` whose model-written texts carry markers (for the leak tests): the first
+    outcome's name and effect text, an arm, the bottom line."""
+    outcomes = remap(fixture_part("outcomes"))
+    first = outcomes["outcomes"][0]
+    first["outcome"] = outcome
+    first["effect_text"] = f"{effect} [{RUN_PMIDS['90000001']}]."
+    first["numbers"][3]["arm"] = arm
+    summary = remap(fixture_part("summary"))
+    summary["bottom_line"]["text"] = f"{bottom} [{RUN_PMIDS['90000001']}]."
+    return run_parts() | {"OUTCOMES": [json_reply(outcomes)], "SUMMARY": [json_reply(summary)]}

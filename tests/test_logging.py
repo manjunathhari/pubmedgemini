@@ -553,9 +553,10 @@ APP_LINE = (r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} (?:INFO|WARNING|ERROR) "
             r"pubmedgemini(?:\.[a-z_.]+)? (?P<msg>.*)")
 
 
-def _run_question_under_uvicorn(db_url: str, mode: str) -> tuple[str, str, str]:
+def _run_question_under_uvicorn(db_url: str, mode: str) -> tuple[str, str, str, str]:
     """Starts `ask_app:build` under Uvicorn, asks LEAK_QUESTION, waits for the run page to
-    stop refreshing, opens the home page, stops the server. Returns (run page, home, stderr)."""
+    stop refreshing, opens the home page and the answer page, stops the server. Returns (run
+    page, home, stderr, answer page)."""
     import os
     import subprocess
     import sys
@@ -606,10 +607,11 @@ def _run_question_under_uvicorn(db_url: str, mode: str) -> tuple[str, str, str]:
             assert time.monotonic() < deadline, "the run did not finish"
             time.sleep(0.2)
         home = httpx.get(f"{base}/", headers=h, timeout=10).text
+        answer = httpx.get(page_url + "/answer", headers=h, timeout=10).text
     finally:
         proc.terminate()
         out, err = proc.communicate(timeout=10)
-    return page, home, err + out
+    return page, home, err + out, answer
 
 
 def _assert_stderr_fixed(err: str) -> list[str]:
@@ -629,11 +631,21 @@ def _assert_stderr_fixed(err: str) -> list[str]:
 
 
 def test_a_full_run_under_uvicorn_logs_fixed_lines_only(db_url):
-    page, home, err = _run_question_under_uvicorn(db_url, "happy")
+    page, home, err, answer = _run_question_under_uvicorn(db_url, "happy")
     assert "Answer ready" in page and "wq6 because" in page and "zq7 does mesh" in home
+    # F3: the writer's marked texts reached the answer page, and no log line.
+    for shown in ("oq3 groin pain", "vq4 fewer patients", "uq2 TEP", "tq1 laparoscopic",
+                  "rq6 Efficacy of TEP"):
+        assert shown in answer, shown
     msgs = _assert_stderr_fixed(err)
-    for leak in (*LEAKS, "Traceback", "Exception in"):
+    for leak in (*LEAKS, *WRITER_LEAKS, "Traceback", "Exception in"):
         assert leak not in err, leak
+    import re
+
+    assert sum(bool(re.fullmatch(rf"answer stored run_id={UUID} bytes=\d+ written=parts", m))
+               for m in msgs) == 1
+    assert sum(m.startswith("writer part=") for m in msgs) == 4
+    assert "request method=GET route=/runs/{run_id}/answer status=200" in msgs
     assert sum(m.startswith("run kind=finished ") and m.endswith(" status=done error_kind=none")
                for m in msgs) == 1
     assert sum(m.startswith("ask kind=started run_id=") for m in msgs) == 1
@@ -644,10 +656,185 @@ def test_a_full_run_under_uvicorn_logs_fixed_lines_only(db_url):
 def test_unexpected_error_in_a_run_under_uvicorn_is_one_fixed_line(db_url):
     """The first Gemini request raises an unexpected error whose text holds the request body
     (so the question): one fixed line, the run failed with the plain message, no traceback."""
-    page, _home, err = _run_question_under_uvicorn(db_url, "crash")
+    page, _home, err, _answer = _run_question_under_uvicorn(db_url, "crash")
     assert "Something went wrong. Please try again in a minute." in page
     msgs = _assert_stderr_fixed(err)
     assert err.count("run kind=internal error=RuntimeError") == 1, err
     assert sum(m.endswith(" status=done error_kind=none") for m in msgs) == 0
     for leak in (*LEAKS, "Traceback", "Exception in", "unexpected failure", "contents"):
         assert leak not in err, leak
+
+
+# ---------- F3: the writer's prompt, replies and the answer (plan Task 9) ----------
+
+# Markers in every writer-side text: the question (zq7), the abstract (aq5), a reference
+# title (rq6, from the fetched record), the outcome name (oq3), the effect text (vq4), an arm
+# (uq2), the bottom line (tq1); plus the prompt's own fixed words and Gemini's key (gk-q7).
+WRITER_LEAKS = ("zq7", "aq5", "oq3", "vq4", "uq2", "tq1", "rq6", "gk-q7", "SECTION TO WRITE",
+                "<source", "Write the answer now", "inguinal", "BACKGROUND", "https://",
+                "STUDIES SELECTED", "Researcher's reason", "Chronic postoperative",
+                "Lichtenstein", "Consistency check")
+
+
+def marked_upstream():
+    """The recorded literature fixtures with the selected RCT's title and abstract marked."""
+    import httpx
+    from lit_fakes import (
+        EUTILS_HOST,
+        EUTILS_PATH,
+        FakeUpstream,
+        europepmc_routes,
+        fixture,
+        pubmed_routes,
+    )
+
+    old_title = b"Laparoscopic mesh placement during inguinal hernia repair"
+    routes = pubmed_routes() | europepmc_routes()
+    routes[(EUTILS_HOST, EUTILS_PATH + "esummary.fcgi")] = httpx.Response(
+        200, content=fixture("esummary.json").replace(old_title, b"rq6 Efficacy of TEP"),
+        headers={"content-type": "application/json"})
+    routes[(EUTILS_HOST, EUTILS_PATH + "efetch.fcgi")] = httpx.Response(
+        200, content=fixture("efetch.xml").replace(old_title, b"rq6 Efficacy of TEP").replace(
+            b"There are several modifications", b"aq5 There are several modifications"),
+        headers={"content-type": "text/xml"})
+    return FakeUpstream(routes)
+
+
+def test_nothing_of_the_writer_is_logged_in_a_full_run(db_url, caplog, app_debug):
+    import re
+
+    from test_ask_page import H, ask_env
+    from writer_fakes import PartsGemini, leak_parts
+
+    caplog.set_level(logging.DEBUG)
+    writer = PartsGemini(leak_parts())
+    with ask_env(db_url, marked_upstream(), leak_script(), key="gk-q7", writer=writer) as env:
+        app_debug()
+        r = env.ask(LEAK_QUESTION)
+        run_page = env.run_page(r.headers["location"]).text
+        answer = env.c.get(r.headers["location"] + "/answer", headers=H).text
+        status = env.one("SELECT status FROM runs")
+    # The marked texts were really there: sent to the writer, shown on the answer page.
+    sent = " ".join(b["contents"][0]["parts"][0]["text"] for b in writer.sent)
+    for marker in ("zq7", "aq5", "rq6", "SECTION TO WRITE", "<source"):
+        assert marker in sent, marker
+    for shown in ("oq3 groin pain", "vq4 fewer patients", "uq2 TEP", "tq1 laparoscopic",
+                  "rq6 Efficacy of TEP"):
+        assert shown in answer, shown
+    assert status == "done" and "Read the answer" in run_page
+    for leak in (*LEAKS, *WRITER_LEAKS):
+        assert leak not in caplog.text, leak
+    msgs = _app_messages(caplog)
+    assert_app_lines_fixed(msgs)
+    assert any(re.fullmatch(r"gemini step=writer_outcomes attempt=1 status=ok finish=stop "
+                            r"prompt_tokens=\d+ output_tokens=\d+ thought_tokens=\d+ "
+                            r"latency_ms=\d+", m) for m in msgs)
+    assert any(re.fullmatch(r"writer done merged=true outcomes=\d+ numbers=\d+ studies=\d+ "
+                            r"labels_defaulted=\d+", m) for m in msgs)
+    assert any(re.fullmatch(rf"answer stored run_id={UUID} bytes=\d+ written=parts", m)
+               for m in msgs)
+    assert sum(m.startswith("writer part=") for m in msgs) == 4
+    assert "request method=GET route=/runs/{run_id}/answer status=200" in msgs
+
+
+def test_failed_writer_logs_kinds_only(db_url, caplog, app_debug):
+    from gemini_fakes import error
+    from test_ask_page import ask_env
+    from writer_fakes import ONE_PIECE, PartsGemini, leak_parts, text_reply
+
+    caplog.set_level(logging.DEBUG)
+    bad = [text_reply("vq4 unreadable oq3 text"), text_reply("vq4 again tq1")]
+    writer = PartsGemini({w: list(bad) for w in ("TRIALS", "OUTCOMES", "CONTEXT", "SUMMARY",
+                                                 ONE_PIECE)})
+    with ask_env(db_url, marked_upstream(), leak_script(), key="gk-q7", writer=writer) as env:
+        app_debug()
+        env.ask(LEAK_QUESTION)
+        assert env.rows("SELECT status, error_kind FROM runs") == [("partial",
+                                                                    "writer_unreadable")]
+    msgs = _app_messages(caplog)
+    assert_app_lines_fixed(msgs)
+    assert any(m == "writer parts_failed parts=trials,outcomes,context,summary" for m in msgs)
+    assert sum(" outcome=unreadable category=" in m for m in msgs) == 10
+    for leak in (*LEAKS, *WRITER_LEAKS):
+        assert leak not in caplog.text, leak
+
+    caplog.clear()
+    refused = error(400, "INVALID_ARGUMENT", message="gm-q7 secret vq4 text")
+    writer = PartsGemini(leak_parts() | {"TRIALS": [refused], ONE_PIECE: [refused]})
+    with ask_env(db_url, marked_upstream(), leak_script(), key="gk-q7", writer=writer) as env:
+        app_debug()
+        env.ask(LEAK_QUESTION)
+        kind = env.rows("SELECT status, error_kind FROM runs ORDER BY created_at DESC "
+                        "LIMIT 1")[0]
+    assert kind == ("failed", "request_refused")
+    msgs = _app_messages(caplog)
+    assert not any(m.startswith("run kind=internal") for m in msgs)
+    for leak in (*LEAKS, *WRITER_LEAKS, "secret"):
+        assert leak not in caplog.text, leak
+    assert_app_lines_fixed(_app_messages(caplog))
+
+
+def test_answer_text_is_only_in_answers_body(migrated_pool):
+    with migrated_pool.connection() as conn:
+        cols = conn.execute(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = %s ORDER BY ordinal_position",
+            ("answers",)).fetchall()
+        calls = {c for (c,) in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' "
+            "AND table_name = 'model_calls' AND data_type IN ('text', 'character varying', "
+            "'jsonb', 'json')")}
+    assert cols == [("run_id", "uuid"), ("version", "smallint"), ("body", "jsonb"),
+                    ("written", "text"), ("created_at", "timestamp with time zone")]
+    assert calls == {"model", "step", "status_kind"}  # unchanged by F3
+
+
+@pytest.mark.parametrize("case", ["unreadable", "call", "fatal", "hard_stop", "cap"])
+def test_the_writers_errors_carry_no_context(migrated_pool, case):
+    """Coordinator ruling 7 (12 Nov 2026): a writer failure is raised outside any `except`
+    block, so no exception text (Google's message, a reply) rides along on it."""
+    from gemini_fakes import FAKE_KEY, error
+    from lit_fakes import FakeClock
+    from pydantic import SecretStr
+    from writer_fakes import ONE_PIECE, PartsGemini, run_parts, text_reply
+
+    from pubmedgemini.gemini.caller import ModelCaller
+    from pubmedgemini.gemini.client import GeminiClient
+    from pubmedgemini.gemini.quota import GeminiPacer
+    from pubmedgemini.researcher.loop import Timing
+    from pubmedgemini.writer.prompts import writer_user
+    from pubmedgemini.writer.write import write_quick
+
+    bad = [text_reply("vq4 no")] * 2
+    scripts = {
+        "unreadable": {w: list(bad) for w in ("TRIALS", "OUTCOMES", "CONTEXT", "SUMMARY",
+                                              ONE_PIECE)},
+        "call": run_parts() | {"TRIALS": [error(400, "X", message="gm-q7 vq4")],
+                               ONE_PIECE: [error(400, "X", message="gm-q7 vq4")]},
+        "fatal": run_parts() | {"TRIALS": [error(402, "X", message="gm-q7 vq4 billing")]},
+        "hard_stop": run_parts(),
+        "cap": run_parts(),
+    }
+    clock = FakeClock()
+    g = PartsGemini(scripts[case])
+    client = GeminiClient(SecretStr(FAKE_KEY), "gemini-3.5-flash-lite", g.transport,
+                          clock=clock.now)
+    caller = ModelCaller(client, GeminiPacer(1000, 250_000, clock.now, clock.sleep),
+                         migrated_pool, "gemini-3.5-flash-lite", sleep=clock.sleep,
+                         clock=clock.now, jitter=lambda: 0.5)
+    if case == "cap":
+        caller.run_cap = 2
+    timing = Timing.quick(clock.t - (430 if case == "hard_stop" else 0))
+
+    class P:
+        def line(self, kind, text):
+            pass
+
+    with pytest.raises(Exception) as e:
+        write_quick(writer_user("zq7 q", [], [], []), caller=caller, run_id=None,
+                    timing=timing, progress=P(), clock=clock.now)
+    err = e.value
+    assert type(err).__name__ in ("WriteFailure", "FatalModelError", "HardStop",
+                                  "RunCapReached"), type(err)
+    assert err.__cause__ is None and err.__context__ is None
+    assert "vq4" not in str(err) and "gm-q7" not in str(err) and "zq7" not in str(err)
