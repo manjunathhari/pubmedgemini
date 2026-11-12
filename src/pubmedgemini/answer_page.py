@@ -9,7 +9,7 @@ Ports of Incisive (commit 12630f7, `crates/incisive-app/src/`):
 | `is_ratio`, `is_diff`, `has_ci`, `chart_kind` | `answer_page.rs` (the same names) |
 | `arm_lines`, `_sides`, `_words`, `_arm_score` | `agent/answer_v3.rs` `arm_lines`, `sides`, `words`, `arm_score` |
 | `NumGroup`, `all_groups`, `study_of` | `answer_page.rs` `NumGroup`, `outcome_groups`, `all_groups`, `study_of` |
-| `normalise_comparison`, `compare` | `answer_page.rs` `normalise_comparison`, `comparison_groups` |
+| `normalise_comparison`, `compare` | `answer_page.rs` `normalise_comparison`, `comparison_groups`; arm names `app/page.rs` `compare_view` (`PairBar.arm`) |
 | `out_of_100_groups`, `out_of_100_count` | `answer_page.rs` `out_of_100` (two arms only here: plan X20), `out_of_100_count` |
 | `normalise_p`, `p_label`, `fmt_value`, `fmt_axis`, `with_unit`, `ratio_estimate`, `diff_estimate`, `study_short`, `strip_citations`, `first_sentence` | `answer_page.rs` (the same names) |
 | `forest` rows | `answer_page.rs` `forest_rows` (every ratio or difference with both CI bounds) |
@@ -17,7 +17,7 @@ Ports of Incisive (commit 12630f7, `crates/incisive-app/src/`):
 | `NO_NUMBERS` | `app/page.rs` `no_numbers_view` |
 | `PAIRS` | `answer_page.rs` `PAIRS` |
 
-Defined here for the frozen mock (`docs/mocks/f3-answer-page-v3.html`; F3 plan Task 7): the
+Defined here for the frozen mock (`docs/mocks/f3-answer-page-v4.html`; F3 plan Task 7): the
 draw checks (D3a), the ratio axis from the data (D3b), the difference axis that never puts 0
 at an edge (X16), the out-of-100 sentence (X21), the pills and the fold that keeps the two
 cards of a pair level (X14). Rounding is Rust's `f64::round` (half away from zero).
@@ -288,6 +288,17 @@ def forest_kind(n: Number) -> Literal["ratio", "diff"] | None:
     return "diff" if is_diff(n) else None
 
 
+def arm_name(n: Number) -> str:
+    """The arm name the writer gave for this number, trimmed ("" when none)."""
+    return rust_trim(n.arm) if n.arm is not None else ""
+
+
+def compared(w: WrittenAnswer, g: "NumGroup") -> bool:
+    """A pair group "Compare the arms" shows: every value has its own arm name (review H1,
+    owner decision d23: an arm is never inferred from position or from the heading)."""
+    return g.kind == "pair" and all(arm_name(n) for n in g.nums(w))
+
+
 def _words(s: str) -> list[str]:
     return [w.lower() for w in re.split(r"[^\w]|_", s) if len(w.encode("utf-8")) > 1]
 
@@ -426,8 +437,11 @@ def _looks_ratio(n: Number) -> bool:
                 or _RATIO_WORDS.search(f"{n.label} {u}"))
 
 
-def listed_problem(n: Number, group: Sequence[Number]) -> str:
-    """Why a number that is neither a forest row nor in a pair is not drawn."""
+def listed_problem(n: Number, group: Sequence[Number], pair: bool = False) -> str:
+    """Why a number that is neither a forest row nor a "Compare the arms" value is not drawn.
+    `pair`: its group is a pair left out of "Compare the arms" for an arm with no name."""
+    if pair:
+        return "the other arm is not named" if arm_name(n) else "arm not named"
     if not is_ratio(n) and _looks_ratio(n):
         return "unit not RR, OR or HR"
     if (is_ratio(n) or is_diff(n)) and not has_ci(n):
@@ -457,7 +471,7 @@ def listed_numbers(w: WrittenAnswer, refs: Mapping[str, int]) -> dict[int, list[
     with the reason (flag, never delete: every number the writer gave is on the page)."""
     out: dict[int, list[ListedNumber]] = {}
     for g in all_groups(w):
-        if g.kind == "pair":
+        if compared(w, g):
             continue
         o = w.outcomes[g.outcome]
         group = g.nums(w)
@@ -473,7 +487,8 @@ def listed_numbers(w: WrittenAnswer, refs: Mapping[str, int]) -> dict[int, list[
             p = p_label(n.p)
             sub += [("text", f" · {x}") for x in (arm, p or "") if x]
             out.setdefault(g.outcome, []).append(ListedNumber(
-                rust_trim(n.label) or o.outcome, value, sub, listed_problem(n, group),
+                rust_trim(n.label) or o.outcome, value, sub,
+                listed_problem(n, group, g.kind == "pair"),
                 (g.outcome, j)))
     return out
 
@@ -807,19 +822,23 @@ class CompareGroup:
 
 
 def compare(w: WrittenAnswer, refs: Mapping[str, int]) -> list[CompareGroup]:
-    """Paired groups by their study's comparison, first-appearance order (text only)."""
+    """Paired groups by their study's comparison, first-appearance order (text only). Each
+    value is shown after the arm name the writer gave for that number ("TEP 9.4% vs
+    Lichtenstein 18.8%", Incisive `app/page.rs` `compare_view`, `PairBar.arm`); a pair with
+    an arm not named is listed in its outcome instead (review H1)."""
     out: list[tuple[str, str, list[CompareRow]]] = []
     groups = all_groups(w)
     squares = {id(g) for g in out_of_100_groups(w, groups)}
     for g in groups:
-        if g.kind != "pair":
+        if not compared(w, g):
             continue
         s = study_of(w, g.pmid)
         label = rust_trim(s.comparison) if s is not None and rust_trim(s.comparison) else "Other"
         key = normalise_comparison(label)
         nums = g.nums(w)
         row = CompareRow(g.label, w.outcomes[g.outcome].certainty,
-                         " vs ".join(with_unit(n.value, n.unit) for n in nums),
+                         " vs ".join(f"{arm_name(n)} {with_unit(n.value, n.unit)}"
+                                     for n in nums),
                          study_pieces(w, g.pmid, refs), g.p_text(w),
                          tuple((g.outcome, j) for j in g.numbers),
                          out_of_100_problem(w, g, refs) if id(g) in squares else None)

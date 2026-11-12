@@ -111,7 +111,7 @@ Rules carried over from Incisive, unchanged:
 
 ## 6. The page
 
-Rewritten 12 Nov 2026 for the answer page the owner froze that day (mock version 3, `docs/mocks/f3-answer-page-v3.html`). The earlier ruling (10 Nov: "strip the UI, keep the words", a plain list with no bars, no dot grid) is superseded by the frozen mock. Build plan: `docs/superpowers/plans/2026-11-12-f3-writer.md`.
+Rewritten 12 Nov 2026 for the answer page the owner froze that day (mock version 3, `docs/mocks/f3-answer-page-v3.html`, kept as history), now version 4 (`docs/mocks/f3-answer-page-v4.html`, 12 Nov 2026: arm names inside the compare rows' values, and long numbers may wrap). The earlier ruling (10 Nov: "strip the UI, keep the words", a plain list with no bars, no dot grid) is superseded by the frozen mock. Build plan: `docs/superpowers/plans/2026-11-12-f3-writer.md`.
 
 - **Ask page:** a question box, the "Free runs left today" line, the privacy line, and a list of past runs.
 - **While a run works:** the run page shows the step lines as plain text, for example "Researcher: 5 searches so far (turn 2 of 8)" and "Writer: writing the answer from 10 studies (10 with an abstract)", and refreshes itself with a meta refresh. When the answer is stored, the run page links to it ("Read the answer"); the run page itself keeps the step lines, the study list and the search trail.
@@ -124,7 +124,7 @@ Rewritten 12 Nov 2026 for the answer page the owner froze that day (mock version
      - Outcomes card: one closed `<details>` per outcome (all closed): its name, certainty pill, evidence label, number count and first sentence; opened, its evidence, effect text and "Why this certainty".
   4. **Counselling dashboard:** two cards side by side, **Out of 100 people like those in the trials** (left) and **Compare the arms** (right).
      - Out of 100: every two-arm outcome given in percentages, one under another: a sentence ("Chronic pain at 5 years: 9.4% with TEP vs 18.8% with Lichtenstein [4]. Certainty for this outcome: Moderate."), then each arm's count of 100 (rounded half up, as Incisive) with a 10 × 10 grid of squares.
-     - Compare the arms: the arm-by-arm results grouped by each study's comparison, each with its certainty, values, study and p.
+     - Compare the arms: the arm-by-arm results grouped by each study's comparison, each with its certainty, values, study and p. Each value follows the arm name the writer gave for that number ("TEP 9.4% vs Lichtenstein 18.8%", as Incisive's page); a value with no arm name is not shown as a pair but listed in its outcome with "Not drawn: arm not named." (owner decision d23, 12 Nov 2026).
   4a. **Conflicting evidence**, **Applicability** (case mix, India and cost, training) and **What would change this answer**, each only when written.
   5. **The trials:** one entry per trial with its reference number, label, design, size, setting, comparison, key results and limitations.
   5a. **Other notable findings** (the writer's, then the code's merge notes) and the **Search trail**, each only when there is any.
@@ -189,7 +189,7 @@ Each stage is a small batch on its own branch and pull request, signed off by th
 | **F0** | Repo skeleton, Postgres, Google sign-in gate, CI, deploy to the VPS | A page loads behind sign-in at the web address |
 | **F1** | The four search tools, no model: type a question, see PubMed and Europe PMC results as plain text | Useful on its own at ₹0 |
 | **F2** | Gemini layer with limits, the researcher loop and the study list | Picks look sensible on the four benchmark questions |
-| **F3** | Writer in four parts and the answer page (frozen mock v3, §6) | A full answer is on the page |
+| **F3** | Writer in four parts and the answer page (frozen mock v4, §6) | A full answer is on the page |
 | **F4** | Citation check, number check, number completion, empty-list retry | Matches Incisive's checks |
 | **F5** | Side by side with Incisive Quick on the benchmarks: quality and time | The owner judges the gap |
 

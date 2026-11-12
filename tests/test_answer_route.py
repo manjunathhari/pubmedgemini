@@ -1,4 +1,4 @@
-"""Task 8 (F3): the answer page as the frozen mock (`docs/mocks/f3-answer-page-v3.html`), and
+"""Task 8 (F3): the answer page as the frozen mock (`docs/mocks/f3-answer-page-v4.html`), and
 the run page's link to it.
 
 The page tests store the hand-written hernia answer (`test_answer_page.hernia`: the mock's
@@ -159,7 +159,8 @@ def test_trials_and_references(env, answer_url):
 def test_compare_rows_are_text(env, answer_url):
     t = page(env, answer_url)
     assert ('<div class="row"><b>Chronic pain at 5 years</b><span class="pill mo">Moderate'
-            '</span><span class="mono">9.4% vs 18.8%</span><span></span><span class="muted">'
+            '</span><span class="mono">TEP 9.4% vs Lichtenstein 18.8%</span><span></span>'
+            '<span class="muted">'
             'Swedish trial [<a href="#ref-4">4</a>] · p &lt;0.001</span></div>') in t
     assert '<p class="eyebrow">TAPP vs Lichtenstein</p>' in t
 
@@ -328,5 +329,16 @@ def test_a_pair_failing_a_check_shows_its_reason_in_compare(env):  # review L8
     t = page(env, store(env, _with_numbers(num("Seroma", 140.0, "%", "TEP", PMIDS[0]),
                                            num("Seroma", 20.0, "%", "L", PMIDS[0]))))
     [row] = _rows_of(t, "Seroma")
-    assert "<span class=\"mono\">140% vs 20%</span>" in row
+    assert "<span class=\"mono\">TEP 140% vs L 20%</span>" in row
     assert '<span class="muted">Not drawn: a percentage must be from 0 to 100.</span>' in row
+
+
+def test_compare_rows_name_each_arm_with_its_value(env):  # review H1 (d23), the reviewer's case
+    t = page(env, store(env, _with_numbers(num("Groin pain", 18.8, "%", "Open repair", PMIDS[0]),
+                                           num("Groin pain", 9.4, "%", "Laparoscopic repair",
+                                               PMIDS[0]))))
+    [row] = _rows_of(t, "Groin pain")
+    assert '<span class="mono">Open repair 18.8% vs Laparoscopic repair 9.4%</span>' in row
+    assert "18.8% vs 9.4%" not in t.replace("Open repair 18.8% vs Laparoscopic repair 9.4%", "")
+    for r in re.findall(r'<div class="row">.*?</div>', t):  # no bare "x% vs y%" anywhere
+        assert not re.search(r'<span class="mono">[\d.]+%? vs', r), r

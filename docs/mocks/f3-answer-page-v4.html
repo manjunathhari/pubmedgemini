@@ -1,0 +1,123 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pubmedgemini answer (example)</title>
+<style>
+:root{--bg:#f4f3ef;--card:#fff;--fg:#14181f;--muted:#5b6270;--rule:#dcd9d2;--link:#0b4aa2;--a:#1f5fd0;--b:#b45a09;--off:#e3e5ea;
+--vl-bg:#f8dedb;--vl:#9a2c25;--lo-bg:#f7e9cc;--lo:#855600;--mo-bg:#dfe9f7;--mo:#234a85;--hi-bg:#dcefe4;--hi:#1d6645}
+@media (prefers-color-scheme:dark){:root{--bg:#121418;--card:#1c1f25;--fg:#e9eaed;--muted:#a4aab5;--rule:#353a44;--link:#8ab4f8;--a:#7fa8f5;--b:#e8a25a;--off:#30343c;
+--vl-bg:#40211e;--vl:#f0a29b;--lo-bg:#3a2f16;--lo:#e5bd6b;--mo-bg:#26324a;--mo:#9db6ea;--hi-bg:#1c3429;--hi:#7ccba5}}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;padding:16px;max-width:1100px;margin-inline:auto}
+h1{font-size:1.15rem;margin:0 0 4px}h2{font-size:1.25rem;margin:26px 0 0}h3{font-size:1.05rem;margin:0 0 6px}
+p{margin:6px 0}a{color:var(--link)}.muted{color:var(--muted);font-size:.86rem;margin:2px 0}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.84rem;white-space:nowrap}
+.ex{border:1px dashed var(--rule);padding:6px 10px;font-size:.85rem;color:var(--muted);margin-bottom:14px;border-radius:6px}
+.card{background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:16px;min-width:0}
+.two{display:grid;gap:14px;grid-template-columns:minmax(0,1fr);margin-top:10px}
+@media (min-width:700px){.two{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:stretch}}
+.eyebrow{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:14px 0 6px}
+.ci{margin:0 0 14px}.ci .lab{margin:0;display:flex;flex-wrap:wrap;gap:2px 10px;justify-content:space-between}
+.track{position:relative;height:22px;margin-top:2px;border-bottom:1px solid var(--rule)}
+.track .span{position:absolute;top:10px;height:2px;background:var(--fg)}
+.track .est{position:absolute;top:3px;width:5px;height:16px;margin-left:-2px;background:var(--fg);border-radius:1px}
+.track .null{position:absolute;top:0;height:22px;border-left:1px dashed var(--muted)}
+.scale{position:relative;height:16px;font-size:.72rem;color:var(--muted)}
+.scale span{position:absolute;transform:translateX(-50%);white-space:nowrap}.scale .l{left:0;transform:none}.scale .r{right:0;left:auto;transform:none}
+.pill{font-size:.74rem;font-weight:600;padding:2px 9px;border-radius:999px;white-space:nowrap}
+.vl{background:var(--vl-bg);color:var(--vl)}.lo{background:var(--lo-bg);color:var(--lo)}.mo{background:var(--mo-bg);color:var(--mo)}.hi{background:var(--hi-bg);color:var(--hi)}
+.head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+details.oc{border:1px solid var(--rule);border-radius:10px;padding:10px 12px;margin-top:8px}
+details.oc summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;align-items:start}
+details.oc summary::-webkit-details-marker{display:none}
+details.oc .t{font-weight:600}details.oc .meta,details.oc .s{grid-column:1/-1;font-size:.86rem;color:var(--muted)}details.oc .s{color:var(--fg)}
+details.oc .tag{border:1px solid var(--rule);border-radius:5px;padding:0 6px;font-size:.76rem}
+details.oc summary::after{content:"open";grid-column:1/-1;font-size:.76rem;color:var(--link)}details.oc[open] summary::after{content:"close"}
+details.oc .body{border-top:1px solid var(--rule);margin-top:8px;padding-top:6px;font-size:.92rem}
+.arms{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0 4px}
+.big{font-size:1.9rem;font-weight:700;line-height:1}.A .big{color:var(--a)}.B .big{color:var(--b)}
+.dots{display:grid;grid-template-columns:repeat(10,1fr);gap:2px;margin-top:6px;max-width:150px}
+.dots i{aspect-ratio:1;background:var(--off);border-radius:2px}.A .dots i.on{background:var(--a)}.B .dots i.on{background:var(--b)}
+.cp{border-top:1px solid var(--rule);padding-top:10px;margin-top:12px}.cp:first-of-type{border-top:0;padding-top:0;margin-top:6px}
+.row{border:1px solid var(--rule);border-radius:10px;padding:9px 12px;margin-top:8px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px}
+.row b{font-weight:600}.row .muted{grid-column:1/-1}
+.two>.card{display:flex;flex-direction:column}details.more{margin-top:auto;padding-top:8px}details.more>summary{cursor:pointer;color:var(--link);font-size:.9rem;padding:8px 0 0;list-style:none;border-top:1px solid var(--rule)}details.more>summary::-webkit-details-marker{display:none}details.more[open]>summary .a{display:none}details.more:not([open])>summary .b{display:none}
+.ci .lab .mono,.row .mono{white-space:normal;overflow-wrap:anywhere}
+</style></head><body>
+<div class="ex">Example only. The numbers are from the hernia question, to show the layout. The real page is filled by the app from checked numbers.</div>
+<p><a href="#">Home</a></p>
+<h1>In adults having inguinal hernia repair, does laparoscopic repair (TEP or TAPP) cause less chronic pain than open Lichtenstein repair?</h1>
+<p class="muted">Decision support. The clinician decides.</p>
+
+<div class="card" style="margin-top:12px">
+<h3>Bottom line</h3>
+<p>Laparoscopic repair reduces chronic postoperative pain compared with Lichtenstein repair [1, 2, 3]. The absolute benefit is mainly in mild pain [4]. One long-term trial found no difference at about 8 years [7].</p>
+<p><span class="pill mo">Moderate certainty</span> Consistent direction across overlapping meta-analyses, but pain definitions vary and trials are open-label.</p>
+<p><b>Default choice:</b> Offer TEP or TAPP when a surgeon experienced in it is available [1, 2]. Lichtenstein remains a sound repair when laparoscopic expertise is lacking [5].</p>
+</div>
+
+<h2>Why this conclusion</h2>
+<p class="muted">Every outcome, its numbers and how sure we can be</p>
+<div class="two">
+<section class="card">
+<h3>Every estimate with a 95% CI</h3>
+<p class="muted">Ratios on a log scale (dashed mark at 1); differences centred on 0. A line crossing the mark is compatible with no difference.</p>
+<p class="eyebrow">Ratios (RR · OR · HR)</p>
+<div class="ci"><p class="lab"><b>Chronic pain, TEP vs Lichtenstein</b> <span class="mono">RR 0.38 (0.28–0.51)</span></p><p class="muted">TEP vs Lichtenstein MA 2025 [1] · 27 RCTs</p>
+<div class="track" role="img" aria-label="Risk ratio 0.38, interval 0.28 to 0.51, below 1"><div class="span" style="left:34.4%;width:20%"></div><div class="est" style="left:44.6%"></div><div class="null" style="left:76.9%"></div></div>
+<div class="scale"><span class="l">0.1</span><span style="left:76.9%">1</span><span class="r">2</span></div></div>
+<div class="ci"><p class="lab"><b>Chronic pain, TAPP vs Lichtenstein</b> <span class="mono">RR 0.36 (0.15–0.81)</span></p><p class="muted">Network MA 2021 [2] · 35 RCTs</p>
+<div class="track" role="img" aria-label="Risk ratio 0.36, interval 0.15 to 0.81, below 1"><div class="span" style="left:13.5%;width:56.3%"></div><div class="est" style="left:42.8%"></div><div class="null" style="left:76.9%"></div></div>
+<div class="scale"><span class="l">0.1</span><span style="left:76.9%">1</span><span class="r">2</span></div></div>
+<div class="ci"><p class="lab"><b>Recurrence, TEP vs Lichtenstein</b> <span class="mono">RR 1.03 (0.62–1.72)</span></p><p class="muted">TEP vs Lichtenstein MA 2025 [1]</p>
+<div class="track" role="img" aria-label="Risk ratio 1.03, interval 0.62 to 1.72, crossing 1"><div class="span" style="left:60.9%;width:34.1%"></div><div class="est" style="left:77.9%"></div><div class="null" style="left:76.9%"></div></div>
+<div class="scale"><span class="l">0.1</span><span style="left:76.9%">1</span><span class="r">2</span></div></div>
+<div class="ci"><p class="lab"><b>Wound infection, TEP vs Lichtenstein</b> <span class="mono">RR 0.48 (0.31–0.75)</span></p><p class="muted">TEP vs Lichtenstein MA 2025 [1]</p>
+<div class="track" role="img" aria-label="Risk ratio 0.48, interval 0.31 to 0.75, below 1"><div class="span" style="left:37.8%;width:29.5%"></div><div class="est" style="left:52.4%"></div><div class="null" style="left:76.9%"></div></div>
+<div class="scale"><span class="l">0.1</span><span style="left:76.9%">1</span><span class="r">2</span></div></div>
+<p class="eyebrow">Differences</p>
+<div class="ci"><p class="lab"><b>Return to daily activities</b> <span class="mono">MD −4.74 (−6.78 to −2.70)</span></p><p class="muted">TEP vs Lichtenstein MA 2025 [1] · days</p>
+<div class="track" role="img" aria-label="Mean difference minus 4.74 days, interval minus 6.78 to minus 2.70, below 0"><div class="span" style="left:12.2%;width:40.8%"></div><div class="est" style="left:32.6%"></div><div class="null" style="left:80%"></div></div>
+<div class="scale"><span class="l">−8</span><span style="left:80%">0</span><span class="r">+2</span></div></div>
+</section>
+<section class="card">
+<div class="head"><h3>Outcome by outcome</h3><span class="muted">6 outcomes · tap to open</span></div>
+<details class="oc" ><summary><span class="t">Chronic postoperative groin pain</span><span class="pill mo">Moderate</span><span class="meta"><span class="tag">RCTs and meta-analyses</span> 8 numbers</span><span class="s">Laparoscopic repair roughly halves to thirds the risk of any chronic groin pain compared with Lichtenstein.</span></summary><div class="body"><p>TEP vs Lichtenstein: RR 0.38 (95% CI 0.28–0.51) across 27 RCTs with 7,658 patients [1]. Network meta-analysis: RR 0.36 for TEP and for TAPP vs Lichtenstein [2]. At 5 years: 9.4% with TEP vs 18.8% with Lichtenstein (P &lt; 0.001) [4]. The exception is TEPLICH at about 8 years: 7.6% vs 6.7% [7].</p><p class='muted'>Why this certainty: consistent direction and large pooled effects; downgraded because one long-term trial found no difference and pain definitions vary.</p></div></details>
+<details class="oc" ><summary><span class="t">Moderate to severe chronic pain</span><span class="pill lo">Low</span><span class="meta"><span class="tag">RCTs</span> 3 numbers</span><span class="s">The absolute difference is much smaller for pain that matters: 1.9% with TEP vs 3.5% with Lichtenstein at 5 years (P = 0.092) [4].</span></summary><div class="body"><p>In TEPLICH, moderate to severe pain affected 3.8% with TEP vs 5.5% with Lichtenstein [7].</p></div></details>
+<details class="oc" ><summary><span class="t">Hernia recurrence</span><span class="pill mo">Moderate</span><span class="meta"><span class="tag">RCTs and meta-analyses</span> 6 numbers</span><span class="s">There is no overall difference in recurrence: RR 1.03 (95% CI 0.62–1.72) [1].</span></summary><div class="body"><p>The Swedish trial found 3.5% with TEP vs 1.2% with Lichtenstein; excluding one surgeon lowered the TEP rate to 2.4% [5].</p></div></details>
+<details class="oc" ><summary><span class="t">Cost</span><span class="pill vl">Very low</span><span class="meta"><span class="tag">one RCT</span> 0 numbers</span><span class="s">Operative costs were higher for TEP but total costs were comparable; no figures in the abstract [6].</span></summary><div class="body"><p>A single trial from a European setting.</p></div></details>
+<details class="more"><summary><span class="a">Show 2 more outcomes</span><span class="b">Show fewer</span></summary>
+<details class="oc"><summary><span class="t">Surgical wound infection</span><span class="pill mo">Moderate</span><span class="meta"><span class="tag">meta-analysis</span> 2 numbers</span><span class="s">Wound infection is less frequent after laparoscopic repair: RR 0.48 (95% CI 0.31–0.75) [1].</span></summary><div class="body"><p>TAPP vs Lichtenstein: RR 0.36 (95% CI 0.17–0.76) [3].</p></div></details>
+<details class="oc"><summary><span class="t">Return to work or daily activities</span><span class="pill mo">Moderate</span><span class="meta"><span class="tag">RCTs and meta-analyses</span> 3 numbers</span><span class="s">Return to activity is about 3 to 5 days faster after laparoscopic repair [1, 2].</span></summary><div class="body"><p>TEP vs Lichtenstein: MD −4.74 days (95% CI −6.78 to −2.70) [1].</p></div></details>
+</details></section>
+</div>
+
+<h2>Counselling dashboard</h2>
+<p class="muted">What it means for 100 patients like these, arm by arm</p>
+<div class="two">
+<section class="card">
+<p class="eyebrow" style="margin-top:0">Out of 100 patients</p>
+<h3>Out of 100 people like those in the trials</h3>
+<div class="cp"><p><b>Chronic pain at 5 years:</b> 9.4% with TEP vs 18.8% with Lichtenstein [4]. Certainty for this outcome: Moderate.</p>
+<div class="arms"><div class="A"><span class="big">9</span> <span class="muted">of 100 · TEP</span><div class="dots" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i></div></div><div class="B"><span class="big">19</span> <span class="muted">of 100 · Lichtenstein</span><div class="dots" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i></div></div></div></div>
+<div class="cp"><p><b>Moderate or severe pain at 5 years:</b> 1.9% with TEP vs 3.5% with Lichtenstein [4]. Certainty for this outcome: Low.</p>
+<div class="arms"><div class="A"><span class="big">2</span> <span class="muted">of 100 · TEP</span><div class="dots" aria-hidden="true"><i class="on"></i><i class="on"></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i></div></div><div class="B"><span class="big">4</span> <span class="muted">of 100 · Lichtenstein</span><div class="dots" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i></div></div></div></div>
+</section>
+<section class="card">
+<h3>Compare the arms</h3>
+<p class="muted">Side-by-side arm results, grouped by each study's comparison. Most have no confidence interval.</p>
+<p class="eyebrow">TEP vs Lichtenstein</p>
+<div class="row"><b>Chronic pain at 5 years</b><span class="pill mo">Moderate</span><span class="mono">TEP 9.4% vs Lichtenstein 18.8%</span><span></span><span class="muted">Swedish trial 2010 [4] · P &lt; 0.001</span></div>
+<div class="row"><b>Non-ignorable pain at about 8 years</b><span class="pill mo">Moderate</span><span class="mono">TEP 7.6% vs Lichtenstein 6.7%</span><span></span><span class="muted">TEPLICH 2024 [7] · no difference</span></div>
+<div class="row"><b>Recurrence at 5 years</b><span class="pill mo">Moderate</span><span class="mono">TEP 3.5% vs Lichtenstein 1.2%</span><span></span><span class="muted">Swedish trial 2009 [5] · P = 0.008</span></div>
+<p class="eyebrow">TAPP vs Lichtenstein</p>
+<div class="row"><b>Chronic pain at 52 months</b><span class="pill lo">Low</span><span class="mono">TAPP 15% vs Lichtenstein 31%</span><span></span><span class="muted">Three-arm RCT 2004 [8]</span></div>
+</section>
+</div>
+
+<h2>The trials</h2>
+<div class="card" style="margin-top:10px"><p><b>[1] TEP vs Lichtenstein meta-analysis, 2025, Hernia.</b> 27 RCTs, n = 7,658. Chronic pain RR 0.38; recurrence RR 1.03.</p>
+<p><b>[7] TEPLICH 8-year follow-up, 2024, Hernia.</b> n = 366. Non-ignorable pain 7.6% vs 6.7%.</p></div>
+<h2>References</h2>
+<p>[1] Efficacy of totally extraperitoneal endoscopic hernioplasty (TEP) versus Lichtenstein hernioplasty: a systematic review and meta-analysis. Hernia, 2025. <a href="#">PMID 40167793</a></p>
+<p class="muted">Searched PubMed and Europe PMC (free sources); written by gemini-3.5-flash-lite from the abstracts.</p>
+<p class="muted">Google may use what you type here, and its reviewers may read it (Gemini free tier). Do not type anything that identifies a patient.</p>
+</body></html>

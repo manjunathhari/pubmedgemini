@@ -2,7 +2,7 @@
 
 Hand-written replies in the shape of the writer's JSON (`writer/prompts.py` `writer_schema`),
 with the numbers of the frozen answer-page mock's hernia example
-(`docs/mocks/f3-answer-page-v3.html`). No live reply is recorded here.
+(`docs/mocks/f3-answer-page-v4.html`; v3 has the same numbers). No live reply is recorded here.
 
 - `whole.json`: one reply of the one-piece writer.
 - `trials.json`, `outcomes.json`, `context.json`, `summary.json`: the same reply cut into the

@@ -3,7 +3,7 @@
 Ported rules follow Incisive (commit 12630f7, `crates/incisive-app/src/answer_page.rs`,
 `agent/answer_v3.rs` `arm_lines`); the tests named after Incisive's are ported from it. New
 rules (the frozen mock's scales, draw checks and fold) are checked against the mock's own
-numbers (`docs/mocks/f3-answer-page-v3.html`).
+numbers (`docs/mocks/f3-answer-page-v4.html`).
 
 HERNIA is the hand-written hernia answer (`tests/fixtures/writer/whole.json`), which follows
 Incisive's rules; where the rules give rows the mock's example does not show, the mock's own
@@ -266,14 +266,14 @@ def test_out_of_100_needs_percentages_in_range():
                 [study("1", "TEP vs L")])
     assert out_of_100(w, REFS) == []
     rows = compare(w, REFS)
-    assert [r.values_text for g in rows for r in g.rows] == ["140% vs 20%"]
+    assert [r.values_text for g in rows for r in g.rows] == ["TEP 140% vs L 20%"]
 
 
 def test_three_arm_groups_stay_in_compare():  # X20
     w = written([outcome("Pain", [num("Pain", 1.0, "%", "a"), num("Pain", 2.0, "%", "b"),
                                   num("Pain", 3.0, "%", "c")])])
     assert out_of_100(w, REFS) == []
-    assert [r.values_text for g in compare(w, REFS) for r in g.rows] == ["1% vs 2% vs 3%"]
+    assert [r.values_text for g in compare(w, REFS) for r in g.rows] == ["a 1% vs b 2% vs c 3%"]
 
 
 def test_out_of_100_takes_two_arm_percent_groups_only():  # Incisive's test, two arms (X20)
@@ -314,7 +314,7 @@ def test_compare_rows_against_the_mock():
     assert g[0].label == "TEP vs Lichtenstein"
     r = g[0].rows[0]
     assert (r.label, r.certainty, r.values_text, r.p_text) == (
-        "Chronic pain at 5 years", "Moderate", "9.4% vs 18.8%", "p <0.001")
+        "Chronic pain at 5 years", "Moderate", "TEP 9.4% vs Lichtenstein 18.8%", "p <0.001")
     assert pieces_text(r.study_pieces) == "Swedish trial [4]"
     assert [x.label for x in g] == ["TEP vs Lichtenstein", "TAPP vs Lichtenstein"]
 
@@ -605,7 +605,7 @@ def test_both_arms_rounding_to_0_of_100_are_not_drawn_and_say_why():
     w = pct_pair(0.4, 0.2)
     assert out_of_100(w, REFS) == []
     [r] = [r for g in compare(w, REFS) for r in g.rows]
-    assert (r.values_text, r.problem) == ("0.4% vs 0.2%", "both arms round to 0 of 100")
+    assert (r.values_text, r.problem) == ("TEP 0.4% vs L 0.2%", "both arms round to 0 of 100")
 
 
 def test_one_arm_above_0_of_100_is_still_drawn_with_incisives_rounding():
@@ -637,3 +637,31 @@ def test_a_pair_dropped_from_out_of_100_shows_its_reason_in_compare():
     assert [(r.label, r.problem) for g in compare(w, REFS) for r in g.rows] == [
         ("Pain", "a percentage must be from 0 to 100"),
         ("Ache", "the estimate is outside its interval")]
+
+
+# ---------- compare the arms: each value with its own arm's name (review H1, d23) ----------
+
+def test_each_value_is_shown_with_its_own_arm_name():  # the reviewer's case
+    w = written([outcome("Pain", [num("Pain", 18.8, "%", "Open repair"),
+                                  num("Pain", 9.4, "%", "Laparoscopic repair")])],
+                [study("1", "TEP vs Lichtenstein")])
+    [r] = [r for g in compare(w, REFS) for r in g.rows]
+    assert r.values_text == "Open repair 18.8% vs Laparoscopic repair 9.4%"
+
+
+def test_rows_under_other_carry_arm_names_too():
+    w = written([outcome("Pain", [num("Pain", 2.0, None, "a", "33333"),
+                                  num("Pain", 1.0, None, "b", "33333")])])
+    [g] = compare(w, REFS)
+    assert (g.label, g.rows[0].values_text) == ("Other", "a 2 vs b 1")
+
+
+@pytest.mark.parametrize("blank", [None, "", "  "])
+def test_a_value_without_an_arm_name_is_listed_not_paired(blank):
+    w = written([outcome("Pain", [num("Pain", 9.4, "%", "TEP"), num("Pain", 18.8, "%", blank)])],
+                [study("1", "TEP vs Lichtenstein")])
+    assert compare(w, REFS) == []
+    [c] = outcome_cards(w, REFS)
+    assert [(x.at, x.problem) for x in c.listed] == [((0, 0), "the other arm is not named"),
+                                                     ((0, 1), "arm not named")]
+    assert shown_at(w, REFS) == every_number(w)
