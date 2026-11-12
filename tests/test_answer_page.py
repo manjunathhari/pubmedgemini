@@ -1502,3 +1502,25 @@ def test_a_named_difference_at_the_start_or_as_the_unit_is_drawn(n, term):
     assert difference_measure(n) == term
     [d] = forest(answer_with(n), REFS).diffs
     assert d.drawn
+
+
+# ---------- a pair whose label names a difference gets no squares (fourth check F3) ----------
+
+LABEL_DIFF = "the label names a difference, not a rate"
+
+
+@pytest.mark.parametrize("label", ["Risk difference", "Mean difference in pain", "MD in pain",
+                                   "Pain minus", "Recurrence, risk difference",
+                                   "Difference: recurrence"])
+def test_a_pair_labelled_as_a_difference_is_a_text_row_not_squares(label):
+    w = _pct_pair("TEP", "Lichtenstein", label=label)
+    assert out_of_100(w, REFS) == []
+    [r] = [r for g in compare(w, REFS) for r in g.rows]
+    assert (r.values_text, r.problem) == ("TEP 9.4% vs Lichtenstein 18.8%", LABEL_DIFF)
+    assert outcome_cards(w, REFS)[0].listed == []
+    assert shown_at(w, REFS) == every_number(w)
+
+
+def test_a_pair_whose_label_only_mentions_a_difference_keeps_its_squares():
+    w = _pct_pair("TEP", "Lichtenstein", label="Pain, difference not significant")
+    assert [[c for c, _, _ in it.arms] for it in out_of_100(w, REFS)] == [[9, 19]]

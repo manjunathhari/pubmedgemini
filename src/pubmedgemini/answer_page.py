@@ -419,6 +419,22 @@ def difference_measure(n: Number) -> str | None:
     m = _NAMED_DIFF.fullmatch(unit)
     if m:
         return _named(m)
+    term = label_measure(n.label)
+    if term is not None:
+        return term
+    if arm_kind(n) == "marker":
+        k = _key(n.arm or "")
+        return {"md": "MD", "smd": "SMD", "wmd": "WMD"}.get(k, k)
+    return None
+
+
+def label_measure(label: str) -> str | None:
+    """The difference measure the label alone names (`difference_measure` rules 0, 2 and 3),
+    or None. Also used to keep a pair (fourth check F3) and a ratio (F4) whose label names a
+    difference from being drawn as what its unit says."""
+    label = _display_key(label)
+    if _NEGATION.search(label):
+        return None
     m = _START_DIFF.match(label) or _END_DIFF.fullmatch(label)
     if m:
         return _named(m)
@@ -432,9 +448,6 @@ def difference_measure(n: Number) -> str | None:
             return "difference"
         if not proper:
             return m.group("abbr")
-    if arm_kind(n) == "marker":
-        k = _key(n.arm or "")
-        return {"md": "MD", "smd": "SMD", "wmd": "WMD"}.get(k, k)
     return None
 
 
@@ -1051,13 +1064,15 @@ class OutItem:
 
 
 ALL_ZERO = "both arms round to 0 of 100"
+LABEL_DIFF = "the label names a difference, not a rate"
 NO_SIDES = "the study's comparison does not name two sides"
 NOT_MATCHED = "its arms do not match the study's comparison"
 
 
 def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -> str | None:
     """Why a two-arm percent group is not drawn as squares (shown in "Compare the arms"), or
-    None. After the value checks: the study's comparison must split into two sides
+    None. After the value checks: the label must not name a difference (fourth check F3),
+    the study's comparison must split into two sides
     (`comparison_sides`) and the two arm texts match opposite sides (`arm_side`; fourth
     check F1, coordinator ruling option a). The counts keep Incisive's rounding; Incisive has no rule for both arms at 0
     (`answer_page.rs` `out_of_100`, `app/page.rs` `out_of_100_view`), so two empty grids
@@ -1072,6 +1087,10 @@ def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -
         _ = [fmt_value(n.value) for n in nums]  # the sentence's values
     except (ArithmeticError, ValueError):
         return NOT_PLACED
+    # A label that names a difference is no rate to draw as squares (fourth check F3), by
+    # either rule: the reason's (`labelled_difference`) or the drawing's (`label_measure`).
+    if any(labelled_difference(n) or label_measure(n.label) is not None for n in nums):
+        return LABEL_DIFF
     # Squares need positive evidence of which arm is which (fourth check F1): each arm text
     # matches one side of the study's two-sided comparison, the two arms opposite sides.
     s = study_of(w, g.pmid)
