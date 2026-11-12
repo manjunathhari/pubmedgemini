@@ -2130,7 +2130,7 @@ def test_r1_ratio_keeps_every_draw_check():
 
 # ---------- S1: group letters named by the comparison (owner decision N6, 12 Nov 2026) ----
 
-GROUP_CMP = "Short-course radiotherapy then chemotherapy (group A) vs chemoradiotherapy (group B)"
+GROUP_CMP = "Drug A then surgery (group A) vs surgery then drug A (group B)"
 
 
 @pytest.mark.parametrize("arm,side", [("Group A", 0), ("group b", 1), (" GROUP  A ", 0),
@@ -2219,10 +2219,11 @@ def test_s2_pair_gets_squares_only_with_the_words_in_the_comparison():
     w = _pct_pair("Experimental group", "Control group", comparison=EXP_CMP)
     [it] = out_of_100(w, REFS)
     assert [(a, s) for _, a, s in it.arms] == [("Experimental group", "A"), ("Control group", "B")]
-    # the real answer's shape: the comparison names the treatments only, so no squares
-    for a, b in [("Experimental group", "Standard of care group"), ("TNT group", "CRT group")]:
-        w = _pct_pair(a, b, comparison="Short-course radiotherapy then chemotherapy vs "
-                                       "long-course chemoradiotherapy")
+    # a comparison that names the treatments only (role words and abbreviations not in it):
+    # no squares
+    for a, b in [("Experimental group", "Standard of care group"), ("DAS group", "SA group")]:
+        w = _pct_pair(a, b, comparison="Drug A then surgery vs surgery then drug A",
+                      label="Example outcome at 3 years")
         assert out_of_100(w, REFS) == []
         [row] = [r for g in compare(w, REFS) for r in g.rows]
         assert row.problem == NOT_MATCHED

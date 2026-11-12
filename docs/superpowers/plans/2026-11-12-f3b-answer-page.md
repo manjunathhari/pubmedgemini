@@ -80,7 +80,7 @@ The Architect ran `f3w`'s own `answer_page.py`, unchanged, on the numbers, arms 
 
 Why the 4 pairs fall to text (Fact, `arm_side` returned None for both arms):
 - **"Experimental group" / "Standard of care group"** (1 pair): the trial's comparison line names the two treatments and contains neither "experimental" nor "standard".
-- **"TNT group" / "CRT group"** (2 pairs, one trial): abbreviations that are not in the comparison line, which spells the treatments out.
+- **Two abbreviated arm names** (2 pairs, one trial; shown here in made-up form as "DAS group" / "SA group"): abbreviations that are not in the comparison line, which spells the treatments out.
 - **"Group A" / "Group B"** (1 pair): the comparison line does name "(group A)" and "(group B)", but one-letter words are ignored by Incisive's `words` and "group" is on both sides, so neither arm scores.
 
 The 3 pairs that get squares are genuine: their arm texts share a word with exactly one side (for example a drug name on the left, "standard" on the right where the comparison itself says "standard").
@@ -93,11 +93,11 @@ What simple, safe rules would recover (Fact, the same run with each rule added):
 | **S1** Group letters: an arm "Group X" matches the side of the comparison that contains "(group X)" and the other side does not | +1 pair | 4 | Low: the comparison itself names the letter on one side |
 | **S2** "experimental" / "intervention" in the arm match the first side, "standard" / "control" / "standard of care" the second, **only when the comparison text itself contains that word on that side and not on the other** | +0 here | 4 (with S1) | Low; it did not help on this answer because the comparison did not use those words |
 | **S3** As S2 but without needing the word in the comparison (first side taken as the intervention, Incisive's `arm_lines` assumption) | +1 | 5 (with S1) | Medium: rests on the writer always putting the intervention first; not suggested before F4's number check |
-| none | the "TNT"/"CRT" pairs | — | No safe rule: the abbreviations are not in the comparison |
+| none | the two abbreviated pairs | — | No safe rule: the abbreviations are not in the comparison |
 
 Honest picture: on this real answer, as frozen, the page draws **no CI line and 3 of 7 pairs as squares**; everything else is shown as text with its reason. With R1 and S1 it draws **2 CI lines and 4 of 7 pairs**. One real answer is small evidence (Estimate: other topics will differ); the manual sign-off below asks the owner to run the four benchmark questions and count again.
 
-One more thing seen on this answer (Fact): in one pair each arm carries its own p value against a historical control, not a p between the arms; "Compare the arms" prints both as written ("p .210 · p < .001"). The p values are the writer's; the page does not interpret them. Recorded for F4.
+One more thing seen on this answer (Fact): in one pair each arm carries its own p value against a historical control, not a p between the arms; "Compare the arms" prints both as written (in the form "p x · p y"). The p values are the writer's; the page does not interpret them. Recorded for F4.
 
 ## 3. The page
 
