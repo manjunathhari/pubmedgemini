@@ -785,3 +785,30 @@ def test_any_arithmetic_error_in_a_rows_derivation_lists_that_row_only(monkeypat
     assert [(r.drawn, r.problem) for r in f.diffs] == [
         (False, "the numbers could not be placed on a scale")]
     assert [r.drawn for r in f.ratios] == [True]
+
+
+# ---------- an arm named on a difference says so (re-check M-C, coordinator option a) ----------
+
+ARM_ON_DIFF = "an arm is named on a difference"
+
+
+@pytest.mark.parametrize("n", [
+    num("MD", -0.34, "points", "robotic", lo=-0.9, hi=0.2),  # Incisive's writer_v3.rs example
+    num("Mean difference in pain", -1.2, None, "TEP vs Lichtenstein", lo=-2.0, hi=-0.4),
+    num("Pain", -1.2, "MD", "TEP", lo=-2.0, hi=-0.4),
+    num("Robotic minus lap", 4.0, "min", "robotic", lo=1.0, hi=7.0),
+    num("Difference", 41.0, "percentage points", "POEM minus PD", lo=25.0, hi=57.0),
+])
+def test_an_arm_named_on_a_labelled_difference_is_listed_with_a_true_reason(n):
+    w = answer_with(n)
+    f = forest(w, REFS)
+    assert f.diffs == [] and f.ratios == []
+    assert [(x.at, x.problem) for x in outcome_cards(w, REFS)[0].listed] == [
+        ((0, 0), ARM_ON_DIFF)]
+
+
+@pytest.mark.parametrize("label", ["Recurrence (no significant difference)",
+                                   "Pain, difference not significant"])
+def test_a_number_not_labelled_as_a_difference_keeps_the_one_arm_reason(label):
+    w = answer_with(num(label, 2.1, "%", "TEP", lo=1.0, hi=3.5))
+    assert [x.problem for x in outcome_cards(w, REFS)[0].listed] == [ONE_ARM]

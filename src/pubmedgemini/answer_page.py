@@ -477,6 +477,8 @@ def listed_problem(n: Number, group: Sequence[Number], pair: bool = False) -> st
     `pair`: its group is a pair left out of "Compare the arms" for an arm with no name."""
     if pair:
         return "the other arm is not named" if arm_name(n) else "arm not named"
+    if names_an_arm(n) and labelled_difference(n):
+        return ARM_ON_DIFF
     if is_diff(n) and names_an_arm(n):
         return ONE_ARM_RATE
     if not is_ratio(n) and _looks_ratio(n):
@@ -491,6 +493,21 @@ def listed_problem(n: Number, group: Sequence[Number], pair: bool = False) -> st
 
 
 ONE_ARM_RATE = "one arm's rate, not a difference"
+# A number whose label or unit names a difference measure and which also carries an arm name:
+# not drawn (d24), and the reason says what is wrong (re-check M-C, coordinator option a).
+ARM_ON_DIFF = "an arm is named on a difference"
+
+# A difference measure named in a label or unit, as the measure (not "no significant
+# difference"): MD, SMD, WMD, a named kind of difference, "minus", or a label that is or
+# starts with "difference".
+_DIFF_MEASURE = re.compile(
+    r"\b[SW]?MD\b|\b(?:mean|risk|absolute|median|rate|weighted mean|standardi[sz]ed mean)"
+    rf"{_WS}+difference\b|\bminus\b|^{_WS}*difference\b", re.IGNORECASE)
+
+
+def labelled_difference(n: Number) -> bool:
+    """The label or the unit names a difference measure (`_DIFF_MEASURE`)."""
+    return any(_DIFF_MEASURE.search(t) for t in (n.label, n.unit or ""))
 
 
 def _opt_bound(x: float | None) -> str:
