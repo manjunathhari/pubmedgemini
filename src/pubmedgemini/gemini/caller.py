@@ -9,7 +9,8 @@ once, so the loop can wrap up instead of failing.
 
 A run sends at most RUN_ATTEMPTS attempts in all (owner decision, 11 Nov 2026: cap calls per
 run), counted here per run id over every step (turns, the list call, its nudge and the S3
-retry) and every retry, as the day count counts them. At the cap nothing more is sent for that
+retry, the writer's parts, their retries and the one-piece fallback) and every retry, as the
+day count counts them. At the cap nothing more is sent for that
 run: RunCapReached, and the run ends failed `run_call_cap`.
 
 Log lines hold the step, the attempt, the kind, the finish kind, token counts and latency

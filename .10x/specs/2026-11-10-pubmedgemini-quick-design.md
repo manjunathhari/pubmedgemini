@@ -40,7 +40,7 @@ Figures from a third-party page dated 19 Oct 2026 that cites Google AI Studio. G
 | Gemini Flash-Lite (free) | 10 | 250,000 | 500 |
 
 - The daily count resets at midnight Pacific time.
-- F2 (researcher only): a run makes at most 11 calls, 14 with retries; "Free runs left" shows 45 on a fresh day. F3 adds the writer: the new numbers are an owner decision (F3 plan, D1). Suggested (Incisive exactly): at most 21 calls a run, 24 with retries, 23 shown on a fresh day; a typical run uses about 13, so about 37 fit. To be set here when decided.
+- Calls a run (owner decision, 12 Nov 2026, F3 plan D1 option A, Incisive exactly): the researcher at most 11 (8 turns, the study list, its nudge, the S3 retry) and the writer at most 10 (four parts, one retry each, the one-piece fallback and its retry), so at most 21 calls a run and 24 attempts with retries (`gemini/quota.py` `RUN_CALLS`, `RUN_ATTEMPTS`). A question is started only when the day still has room for all 24, so a run admitted with one run left cannot pass the day's 500. "Free runs left" shows 23 on a fresh day; a typical run uses about 13, so about 37 fit (Estimate). F2 was 11, 14 and 45. F4 adds number completion (one call): 22, cap 25.
 - **Privacy:** Google may use free-tier prompts and replies, and human reviewers may read them. The page carries a standing line saying so, and asks the user not to type anything that identifies a patient.
 
 ## 4. Shape of the system
@@ -95,7 +95,7 @@ Rules carried over from Incisive, unchanged:
 - **References are built by code** from the selected PMIDs. The model never writes an author or year citation.
 - **Flag, never delete.** Checks mark problems. They do not remove content.
 - **No check may fail a run.**
-- **Early summary.** The summary part is shown as soon as it has been read and checked, before the other parts finish. (F3 plan D6: suggested for F4, where the checks are.)
+- **Early summary.** The summary part is shown as soon as it has been read and checked, before the other parts finish. (Owner decision 12 Nov 2026, F3 plan D6: built in F4, where the checks are.)
 - **One-piece fallback.** If a writer part fails twice, the answer is written in one call instead.
 - **Time.** As Incisive Quick: a time limit of 6 minutes (360 s); the research wraps up at 210 s (360 − 150, the writer's allowance) and the run is stopped hard at 420 s (360 + 60), ending "failed" with "This run ran out of time (7 minutes)." (corrected 11 Nov 2026 to match the code). The writer is not started with less than 150 seconds left; the run then ends "partial" with the references.
 
@@ -104,6 +104,8 @@ Rules carried over from Incisive, unchanged:
 **Owner-approved differences from Incisive's prompts:**
 
 - **Researcher search checklist** (owner approved 11 Nov 2026, "ok"). One block, the owner's wording word for word, is added to the researcher's system prompt between METHOD step 5 and SELECTION (`researcher/prompts.py` `SEARCH_CHECKLIST`): before it stops, the researcher checks it has run a broad trial search without outcome words, the same limited to the last five years, a five-year search for systematic reviews and meta-analyses, at least one Europe PMC search, a search for each key trial's name, acronym or registration number (selecting the newest follow-up as well as the primary report), and `find_related` on the two most important trials; a search with fewer than 40 results is re-run with fewer terms; a guideline is selected only when the question asks about practice recommendations. The five years are this year and the five before it in UTC, filled by code from the run's date (`from_year:to_year[dp]`, 2021:2026 in 2026). Incisive's words are unchanged around it; the study-list prompt, tool texts, turn and call caps are unchanged. Why: in the four real runs of 11 Nov the model searched too little (4 to 6 searches, narrow queries, Europe PMC in one run of four, older trials), and on the hernia question Incisive Quick with the same prompts found 10 studies against our 7, 3 of them in common.
+
+**Owner decisions for F3 (12 Nov 2026, every suggested option of the F3 plan):** D1 Incisive's call budget (§3); D2 the four parts on four threads, their starts spaced by the pacer, in whatever order the threads reach it (no ordering gate; Incisive starts all four at once); D3 a number is drawn only when the app's simple checks pass (its study is in the list, the numbers are finite, a ratio is above 0, low ≤ estimate ≤ high, percentages 0 to 100), else shown as text with the reason; the log scale runs from the data, never past Incisive's 0.05 to 50; D4 a citation to a study outside the list is shown as "[not in the study list]"; D5 the writer's other fields are shown (§6); D6 early summary in F4; D7 Gemini's default field order; D8 Incisive's prompt words kept; D9 the run fails when the selected studies' records cannot be fetched (Incisive); D10 a wait that would pass the hard stop during the writer ends the run partial; D11 out of 100 for two-arm outcomes only. A reply Gemini blocks is a failed call, not read and not retried (Incisive), recorded with the error kind `refused`.
 
 **On every answer** (bottom of the page, the frozen mock's words; corrected 12 Nov 2026): "Searched PubMed and Europe PMC (free sources); written by <model name> from the abstracts."
 
@@ -114,21 +116,24 @@ Rewritten 12 Nov 2026 for the answer page the owner froze that day (mock version
 - **Ask page:** a question box, the "Free runs left today" line, the privacy line, and a list of past runs.
 - **While a run works:** the run page shows the step lines as plain text, for example "Researcher: 5 searches so far (turn 2 of 8)" and "Writer: writing the answer from 10 studies (10 with an abstract)", and refreshes itself with a meta refresh. When the answer is stored, the run page links to it ("Read the answer"); the run page itself keeps the step lines, the study list and the search trail.
 - **Answer page** (`/runs/<id>/answer`), in the mock's order and layout:
-  1. **Header:** a link home, the question, "Decision support. The clinician decides."
-  2. **Bottom-line card:** the bottom line, its certainty as a coloured pill with the reason, and "Default choice".
+  1. **Header:** a link home and to the run page ("Steps and studies"), the question, "Decision support. The clinician decides."
+  1a. **At a glance** (when written): the verdict, the key numbers and the main caveat.
+  2. **Bottom-line card:** the bottom line, its certainty as a coloured pill with the reason, "Default choice", and "Who may benefit", "Counselling" and "Cost per case" when written. With no written answer: the end message instead, and the references below.
   3. **Why this conclusion:** two cards side by side, **Every estimate with a 95% CI** (left) and **Outcome by outcome** (right).
      - CI card: ratios (RR, OR, HR) first, on one log scale with a dashed mark at 1; then differences, each on its own scale with a dashed mark at 0. Each row: a thin line for the interval, a short bar for the estimate, the scale's end labels and the mark's label. A result without an interval is not in this card. A number that fails the code checks is listed as text with the reason ("Not drawn: …"), never drawn and never hidden.
      - Outcomes card: one closed `<details>` per outcome (all closed): its name, certainty pill, evidence label, number count and first sentence; opened, its evidence, effect text and "Why this certainty".
   4. **Counselling dashboard:** two cards side by side, **Out of 100 people like those in the trials** (left) and **Compare the arms** (right).
      - Out of 100: every two-arm outcome given in percentages, one under another: a sentence ("Chronic pain at 5 years: 9.4% with TEP vs 18.8% with Lichtenstein [4]. Certainty for this outcome: Moderate."), then each arm's count of 100 (rounded half up, as Incisive) with a 10 × 10 grid of squares.
      - Compare the arms: the arm-by-arm results grouped by each study's comparison, each with its certainty, values, study and p.
+  4a. **Conflicting evidence**, **Applicability** (case mix, India and cost, training) and **What would change this answer**, each only when written.
   5. **The trials:** one entry per trial with its reference number, label, design, size, setting, comparison, key results and limitations.
+  5a. **Other notable findings** (the writer's, then the code's merge notes) and the **Search trail**, each only when there is any.
   6. **References:** numbered by code in the researcher's order, each a link to PubMed.
   7. The model line, "Searched PubMed and Europe PMC (free sources); written by <model name> from the abstracts.", and the privacy line.
 - **Layout rules:** two columns from 700 px wide, stacked on phones (16 px side margin, no sideways scrolling); the two cards of a pair are the same height; the longer card's extra items fold behind "Show N more …" (a `<details>`) at its bottom, by a fixed rule in code; light and dark by the system setting. **No JavaScript.**
 - **The model draws nothing:** every line, bar, square, pill and fold is computed by code from the stored numbers.
 - **Differences from Incisive's page the owner accepted (12 Nov 2026):** no All / Observational filter on the CI card; no Clinician / Patient switch; the out-of-100 outcomes are listed one under another instead of chosen one at a time.
-- **Still open (F3 plan, "Needs the owner"):** where the writer's other fields go (At a glance, the rest of Clinical practice, Conflicting evidence, Applicability, What would change this answer, Other notable findings, Search trail: D5); what may be drawn before F4's checks (D3); how a citation to a study outside the list is shown before F4 (D4).
+- **Decided 12 Nov 2026** (F3 plan D3, D4, D5): the writer's other fields are placed as 1a, 2, 4a and 5a above; a number is drawn only when the code checks pass (§5); a citation outside the study list reads "[not in the study list]" and nothing is removed. The mock fixes the layout and the drawing, not the number of rows: where Incisive's rules give more rows than the mock's example (more out-of-100 items, more comparisons), they are all shown and the fold keeps the pair level. With no structured numbers at all, Incisive's note replaces the CI card; a pair with one empty card shows the other alone at full width.
 - **Not carried over:** the chat button, the introduction panel, the progress panel's styling, the CI filter, tabs, pop-up study cards and "Copy as text".
 - **Untraced numbers** (F4) carry the words "not traced" beside them.
 
@@ -148,11 +153,11 @@ Tables as built (F0 to F2; brought in line with the migrations on 11 Nov 2026):
 | `run_seen` | The papers the model saw in this run: PMID, title, journal, year | `0004_runs.sql` |
 | `run_papers` | Which papers a run selected (with the design label and why), only considered (with the reason) or flagged as a possible contradiction (with the note) | `0004_runs.sql` |
 
-Planned for F3, not built yet:
+Added in F3:
 
-| Table | Holds |
-|---|---|
-| `answers` | One row per finished run (done or partial): the answer as JSON in the shape of Incisive's `AnswerV3` (Quick fields only; the question stays in `runs.question`), with code-built references, the integrity counts and, from F4, the number-check results. Migration `0005_answers.sql` (F3 plan Task 1) |
+| Table | Holds | Migration |
+|---|---|---|
+| `answers` | One row per run that reached its end (done or partial): the answer as JSON in the shape of Incisive's `AnswerV3` (Quick fields only; the question stays in `runs.question`), with code-built references, the integrity counts and, from F4, the number-check results; an empty answer carries its end message. Stored only while the run is still running, so a run a restart stopped has none. Failed runs and runs from before F3 have no row | `0005_answers.sql` |
 
 - Changed from the section shown in chat: there is no `extractions` table, because Incisive Quick has no separate extraction step. The number-check results live inside the answer, as in Incisive.
 - Table changes are numbered SQL files in `migrations/`, applied in order at start-up.
@@ -168,7 +173,10 @@ Planned for F3, not built yet:
 | PubMed or Europe PMC is down | The researcher carries on with the other | "Europe PMC could not be reached; searched PubMed only" |
 | No papers found | Ends the run "done" | "No relevant evidence found." |
 | App restarts mid-run | Marks the run "stopped" | "This run was stopped. Run again?" |
-| Out of time before the writer | Ends "partial" | The references, with a line saying the answer could not be written in time |
+| Out of time before the writer, or a wait for the free limit that would pass the hard stop during it | Ends "partial" (`writer_time`) | "Not enough of the time limit was left to write the answer. The studies found are listed below; please ask again." with the references |
+| The writer's answer is cut off, or unreadable, after its retries and the one-piece fallback | Ends "partial" (`writer_truncated`, `writer_unreadable`) | Incisive's message ("The answer was longer than the writer's output limit…" / "The writer's answer could not be read…") with the references |
+| The selected studies' records cannot be fetched | Ends "failed" (`lit`); the study list is kept on the run page | "The selected studies' records could not be fetched, so no answer could be written." |
+| A writer call fails (Gemini busy after its retries, a refused request, a blocked reply) | Ends "failed" with its kind | "Gemini could not be reached or refused the request. Please try again in a minute." |
 | Database down, or start-up work (migrations, owner row) failed | `/healthz` answers 503 `database_unreachable` or `not_ready` (200 `ok` when ready); retries start-up at most every 5 s | "The database could not be reached..." or "The app could not finish starting..." |
 | A deploy's new version is not healthy, or the deploy is interrupted | `infra/deploy.sh` restores the previous `.env` and `compose.yaml` and starts the previous version | The previous version; the GitHub deploy shows as failed |
 

@@ -511,7 +511,8 @@ docker compose logs app | grep -c 'gemini api_key=true'
 ```
 
 11. Open `https://<APP_HOST>`. The home page now shows "Ask a question" with a
-question box, "Free runs left today: about 45" and the line "Google may use
+question box, "Free runs left today: about 23" (on a fresh day; 45 before F3)
+and the line "Google may use
 what you type here, and its reviewers may read it (Gemini free tier). Do not
 type anything that identifies a patient." Below it, "Key-word search" works as
 before.
