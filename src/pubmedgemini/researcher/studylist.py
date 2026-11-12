@@ -5,7 +5,7 @@ Ports of Incisive (commit 12630f7, `crates/incisive-app/src/`):
 | Here | Incisive |
 |---|---|
 | `study_list_schema` | `agent/researcher.rs` `study_list_schema` (verbatim) |
-| `read_study_list` | `agent/llm.rs` `read_structured`, `parse_strict`, `answer_shaped`, `parse_reply`, plus serde's typed reading of `StudyList` |
+| `read_study_list` | `agent/llm.rs` `read_structured` (in `gemini/structured.py` since F3), plus serde's typed reading of `StudyList` |
 | `validate` | `agent/researcher.rs` `validate_capped`, `clean_pmid`, `clip_chars` |
 | `is_empty_list` | `agent/researcher.rs` `is_empty_list` |
 | `seen_pmids` | `agent/researcher.rs` `seen_pmids`, `PMID_FIELD` |
@@ -17,28 +17,27 @@ Differences (plan, "Differences from Incisive"): `considered_not_selected` is va
 the colon because F1's JSON has one.
 """
 
-import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from pubmedgemini.gemini.client import Reply
+from pubmedgemini.gemini.structured import (
+    Unreadable,
+    UnreadableCategory,
+    read_structured,
+    rust_trim,
+)
 from pubmedgemini.lit.text import clean_text
+
+__all__ = ["Unreadable", "UnreadableCategory", "rust_trim"]  # re-exported (moved in F3)
 
 DESIGNS = ("RCT", "SR_MA", "other")
 MAX_SELECTED = 10
 MAX_NOTE = 500  # characters of a why, a reason or a contradiction note
 MAX_CONTRADICTIONS = 10
 MAX_CONSIDERED = 30  # ours (Estimate): Incisive does not keep this list
-
-# Rust's `trim` and `\s`: Unicode White_Space (Python's strip() also removes U+001C..U+001F).
-_WHITE_SPACE = "\t\n\x0b\x0c\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006" \
-    "\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
-
-
-def rust_trim(s: str) -> str:
-    return s.strip(_WHITE_SPACE)
 
 
 def study_list_schema() -> dict:
@@ -82,65 +81,6 @@ def study_list_schema() -> dict:
 
 
 # ---------- reading the reply ----------
-
-UnreadableCategory = Literal["truncated", "syntax", "shape"]
-
-
-class Unreadable(Exception):
-    """The reply holds no usable study list. `category` only: never the reply's text."""
-
-    def __init__(self, category: UnreadableCategory) -> None:
-        super().__init__(category)
-        self.category = category
-
-
-class _Obj(dict):
-    """A JSON object that remembers keys it saw twice (serde refuses a duplicate field)."""
-
-    dups: frozenset = frozenset()
-
-
-def _pairs(pairs: list[tuple[str, Any]]) -> _Obj:
-    out = _Obj()
-    dups = set()
-    for k, v in pairs:
-        if k in out:
-            dups.add(k)
-        out[k] = v
-    out.dups = frozenset(dups)
-    return out
-
-
-def _no_constant(name: str) -> Any:
-    raise ValueError("not JSON")  # NaN and Infinity are not JSON (serde refuses them)
-
-
-_DECODER = json.JSONDecoder(object_pairs_hook=_pairs, parse_constant=_no_constant)
-
-
-def _has_lone_surrogate(v: Any) -> bool:
-    """serde_json refuses an unpaired surrogate escape; Python decodes it to a lone one."""
-    stack = [v]
-    while stack:
-        x = stack.pop()
-        if isinstance(x, str):
-            if any("\ud800" <= ch <= "\udfff" for ch in x):
-                return True
-        elif isinstance(x, dict):
-            stack.extend(x.keys())
-            stack.extend(x.values())
-        elif isinstance(x, list):
-            stack.extend(x)
-    return False
-
-
-def _loads(s: str) -> Any:
-    """One whole JSON value, read as serde_json would; ValueError otherwise."""
-    v = _DECODER.decode(s)
-    if _has_lone_surrogate(v):
-        raise ValueError("lone surrogate")
-    return v
-
 
 _FIELDS = {
     "searches": (("query", str), ("source", str), ("hits", int)),
@@ -186,82 +126,10 @@ def _as_study_list(v: Any) -> dict | None:
     return out
 
 
-def _parse_strict(text: str) -> dict | None:
-    """The whole reply is one value, optionally inside a single code fence."""
-    body = rust_trim(text)
-    if body.startswith("```"):
-        rest = rust_trim(body[3:].removeprefix("json"))
-        if not rest.endswith("```"):
-            return None
-        body = rust_trim(rest[:-3])
-    try:
-        return _as_study_list(_loads(body))
-    except (ValueError, RecursionError):
-        return None
-
-
-def _answer_shaped(v: Any) -> bool:
-    """A non-empty object, or an array holding at least one object."""
-    if isinstance(v, dict):
-        return bool(v)
-    if isinstance(v, list):
-        return any(isinstance(x, dict) for x in v)
-    return False
-
-
-def _cut_off(e: json.JSONDecodeError) -> bool:
-    """serde's `is_eof`: the value ran into the end of the text."""
-    return e.pos >= len(e.doc) or e.msg.startswith("Unterminated string")
-
-
-def _parse_reply(text: str) -> dict | None:
-    """Strict first; else exactly one answer-shaped, typed value among the complete top-level
-    values found in the text (more than one, or none, is None)."""
-    strict = _parse_strict(text)
-    if strict is not None:
-        return strict
-    found: list[dict] = []
-    skip_until = 0
-    for i, ch in enumerate(text):
-        if i < skip_until or ch not in "{[":
-            continue
-        try:
-            v, end = _DECODER.raw_decode(text, i)
-        except json.JSONDecodeError as e:
-            if _cut_off(e):
-                break
-            continue
-        except (ValueError, RecursionError):
-            continue
-        skip_until = end
-        if _has_lone_surrogate(v):
-            continue
-        if _answer_shaped(v):
-            t = _as_study_list(v)
-            if t is not None:
-                found.append(t)
-    return found[0] if len(found) == 1 else None
-
-
-def _fault(text: str) -> UnreadableCategory:
-    """Incisive `text_fault`: not JSON at all is `syntax`; JSON of the wrong shape, or no
-    single study list in the text, is `shape`."""
-    try:
-        _loads(rust_trim(text))
-    except (ValueError, RecursionError):
-        return "syntax"
-    return "shape"
-
-
 def read_study_list(reply: Reply) -> dict:
     """The study list in `reply`, typed. A reply cut off by the token limit is never read.
     Raises Unreadable."""
-    if reply.finish == "MAX_TOKENS":
-        raise Unreadable("truncated")
-    got = _parse_reply(reply.text)
-    if got is None:
-        raise Unreadable(_fault(reply.text))
-    return got
+    return read_structured(reply, _as_study_list)
 
 
 # ---------- the checks ----------
