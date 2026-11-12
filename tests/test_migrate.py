@@ -278,3 +278,66 @@ def test_good_rows_are_accepted_and_cascade_on_delete(migrated_pool, owner_id):
                 for t in ("run_steps", "run_searches", "run_seen", "run_papers")]
         kept = conn.execute("SELECT run_id FROM model_calls WHERE id = %s", (call_id,)).fetchone()
     assert left == [0, 0, 0, 0] and kept == (None,)  # the day count keeps the call
+
+
+# ---------- F3 tables (0005_answers.sql) ----------
+
+
+def test_constraint_names_are_the_defaults(migrated_pool):
+    names = {r[0] for r in pool_rows(migrated_pool, "SELECT conname FROM pg_constraint")}
+    assert {"run_steps_kind_check", "model_calls_step_check"} <= names
+
+
+def test_answers_table_exists_and_cascades(migrated_pool, owner_id):
+    rid = insert_run(migrated_pool, owner_id, status="done")
+    pool_exec(migrated_pool,
+              "INSERT INTO answers (run_id, body, written) VALUES (%s, '{}'::jsonb, 'parts')", (rid,))
+    assert pool_one(migrated_pool, "SELECT version FROM answers WHERE run_id = %s", (rid,)) == 3
+    pool_exec(migrated_pool, "DELETE FROM runs WHERE id = %s", (rid,))
+    assert pool_one(migrated_pool, "SELECT count(*) FROM answers") == 0
+
+
+def test_answers_written_may_be_null(migrated_pool, owner_id):
+    rid = insert_run(migrated_pool, owner_id, status="partial")
+    pool_exec(migrated_pool, "INSERT INTO answers (run_id, body) VALUES (%s, '{}'::jsonb)", (rid,))
+    pool_exec(migrated_pool, "UPDATE answers SET written = 'one_piece' WHERE run_id = %s", (rid,))
+
+
+@pytest.mark.parametrize("sql", [
+    "INSERT INTO answers (run_id, body, written) VALUES (%s, '[]'::jsonb, 'parts')",
+    "INSERT INTO answers (run_id, body, written) VALUES (%s, '{}'::jsonb, 'half')",
+    "INSERT INTO answers (run_id, version, body, written) VALUES (%s, 2, '{}'::jsonb, 'parts')",
+])
+def test_answers_checks_refuse_bad_rows(migrated_pool, owner_id, sql):
+    rid = insert_run(migrated_pool, owner_id, status="done")
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pool_exec(migrated_pool, sql, (rid,))
+
+
+def insert_call(pool, step: str) -> None:
+    pool_exec(pool, "INSERT INTO model_calls (model, step, attempt, status_kind) "
+                    "VALUES ('m', %s, 1, 'ok')", (step,))
+
+
+def insert_step(pool, run_id, seq: int, kind: str) -> None:
+    pool_exec(pool, "INSERT INTO run_steps (run_id, seq, kind, line) VALUES (%s, %s, %s, 'l')",
+              (run_id, seq, kind))
+
+
+WRITER_STEPS = (
+    "writer_trials", "writer_outcomes", "writer_context", "writer_summary",
+    "writer_trials_retry", "writer_outcomes_retry", "writer_context_retry",
+    "writer_summary_retry", "writer_one_piece", "writer_one_piece_retry",
+)
+
+
+def test_writer_steps_and_kinds_are_allowed(migrated_pool, owner_id):
+    for step in ("researcher", "study_list", "study_list_nudge", "study_list_retry", *WRITER_STEPS):
+        insert_call(migrated_pool, step)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        insert_call(migrated_pool, "writer")
+    rid = insert_run(migrated_pool, owner_id, status="done")
+    for seq, kind in enumerate(("search", "note", "present", "write", "check"), start=1):
+        insert_step(migrated_pool, rid, seq, kind)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        insert_step(migrated_pool, rid, 9, "draw")
