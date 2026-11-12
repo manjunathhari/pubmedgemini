@@ -290,7 +290,7 @@ def test_out_of_100_takes_two_arm_percent_groups_only():  # Incisive's test, two
         outcome("One arm", [p(44.0, "POEM")]),
         outcome("With a difference", [p(44.0, "POEM"), p(30.0, "LHM"),
                                       p(14.0, "risk difference")]),
-    ])
+    ], [study("1", "POEM vs LHM")])  # squares need the study's two sides (fourth check F1)
     assert [it.label for it in out_of_100(w, REFS)] == ["Relief"]
 
 
@@ -696,15 +696,19 @@ def test_a_row_whose_derivation_raises_is_listed_and_logged(monkeypatch, caplog)
 # ---------- out of 100: both arms round to 0 (review L7) ----------
 
 def pct_pair(a, b, label="Mesh infection"):
-    return written([outcome(label, [num(label, a, "%", "TEP"), num(label, b, "%", "L")])],
-                   [study("1", "TEP vs L")])
+    # "Lichtenstein", not "L": a one-letter arm matches no side of a comparison (Incisive's
+    # `words` drop one-byte words), so it never gets squares (fourth check F1).
+    return written([outcome(label, [num(label, a, "%", "TEP"),
+                                    num(label, b, "%", "Lichtenstein")])],
+                   [study("1", "TEP vs Lichtenstein")])
 
 
 def test_both_arms_rounding_to_0_of_100_are_not_drawn_and_say_why():
     w = pct_pair(0.4, 0.2)
     assert out_of_100(w, REFS) == []
     [r] = [r for g in compare(w, REFS) for r in g.rows]
-    assert (r.values_text, r.problem) == ("TEP 0.4% vs L 0.2%", "both arms round to 0 of 100")
+    assert (r.values_text, r.problem) == ("TEP 0.4% vs Lichtenstein 0.2%",
+                                          "both arms round to 0 of 100")
 
 
 def test_one_arm_above_0_of_100_is_still_drawn_with_incisives_rounding():
@@ -1072,7 +1076,9 @@ OTHER_COMPARISON_ARM = "the other arm's text reads as a comparison, not an arm"
     ("Mean difference.", "comparison"), ("Differences", "comparison"),
     ("MD Anderson protocol", "name"), ("Md. Ali technique", "name"), ("TEP", "name"),
     ("Robotic TAPP", "name"), ("Lichtenstein", "name"), ("Versius robot", "name"),
-    ("Minusinsk protocol", "name"), ("Relative risk group", "name"), ("ＴＥＰ", "name"),
+    ("Minusinsk protocol", "name"), ("ＴＥＰ", "name"),
+    # "relative risk" reads as a comparison since the fourth check (F1); it was a name.
+    ("Relative risk group", "comparison"),
 ])
 def test_each_arm_text_has_one_kind(arm, kind):
     from pubmedgemini.answer_page import arm_kind
@@ -1358,3 +1364,93 @@ def _strings(x, seen=None):
     elif dataclasses.is_dataclass(x) and not isinstance(x, type):
         for f in dataclasses.fields(x):
             yield from _strings(getattr(x, f.name))
+
+
+# ---------- squares need arms that match the study's two sides (fourth check F1) ----------
+
+NOT_MATCHED = "its arms do not match the study's comparison"
+NO_SIDES = "the study's comparison does not name two sides"
+TEP_VS_L = "TEP vs Lichtenstein"
+
+
+def _pct_pair(a, b, comparison=TEP_VS_L, label="Chronic pain", va=9.4, vb=18.8):
+    studies = [study("1", comparison)] if comparison is not None else []
+    return written([outcome("Pain", [num(label, va, "%", a), num(label, vb, "%", b)])], studies)
+
+
+F1_COMPARISON_ARMS = ["Δ", "absolute risk reduction", "ARR 5%", "RRR", "delta", "Diff",
+                      "mean diff", "TEP – Lichtenstein", "TEP − Lichtenstein",
+                      "TEP - Lichtenstein", "TEP/Lichtenstein", "TEP v Lichtenstein",
+                      "TEP v. Lichtenstein", "TEP > Lichtenstein", "TEP < Lichtenstein",
+                      "NNT 12", "relative risk", "pooled", "overall", "both groups", "OR",
+                      "HR", "RR", "odds", "hazard", "ratio", "total", "all patients",
+                      "combined", "change", "increase", "∆"]
+
+
+@pytest.mark.parametrize("arm", F1_COMPARISON_ARMS)
+def test_a_comparison_arm_text_is_never_paired_even_as_text(arm):  # fourth check F1
+    from pubmedgemini.answer_page import arm_kind
+
+    assert arm_kind(num("Pain", 1.0, "%", arm)) == "comparison"
+    w = _pct_pair("TEP", arm)
+    assert out_of_100(w, REFS) == [] and compare(w, REFS) == []
+    assert [x.problem for x in outcome_cards(w, REFS)[0].listed] == [OTHER_COMPARISON_ARM,
+                                                                     COMPARISON_ARM]
+    w = _pct_pair(arm, "Lichtenstein")
+    assert out_of_100(w, REFS) == [] and compare(w, REFS) == []
+    assert shown_at(w, REFS) == every_number(w)
+
+
+@pytest.mark.parametrize("arm", ["or", "TEP or open", "Ordinary care", "Hrs group", "Drainage",
+                                 "R-TAPP", "TEP (n=665)", "Lichtenstein group", "diferencia"])
+def test_words_inside_names_and_lower_case_or_are_not_comparisons(arm):
+    from pubmedgemini.answer_page import arm_kind
+
+    assert arm_kind(num("Pain", 1.0, "%", arm)) == "name"
+
+
+@pytest.mark.parametrize("a,b", [("diferencia", "Lichtenstein"), ("TEP at 1 y", "TEP at 5 y"),
+                                 ("Laparoscopic repair", "Open repair"), ("TEP", "TEP group"),
+                                 ("Lichtenstein", "Lichtenstein (open)"), ("TAPP", "Lichtenstein")])
+def test_arms_that_do_not_match_opposite_sides_get_no_squares(a, b):  # fourth check F1
+    w = _pct_pair(a, b)
+    assert out_of_100(w, REFS) == []
+    [r] = [r for g in compare(w, REFS) for r in g.rows]
+    assert r.problem == NOT_MATCHED
+    assert r.values_text == f"{a} 9.4% vs {b} 18.8%"  # still a named text row
+    assert outcome_cards(w, REFS)[0].listed == []
+    assert shown_at(w, REFS) == every_number(w)
+
+
+@pytest.mark.parametrize("comparison", [None, "", "TEP and Lichtenstein", "TEP vs TAPP vs Lichtenstein",
+                                        "TEP vs ", "Hernia repair"])
+def test_no_two_sided_comparison_means_no_squares(comparison):
+    w = _pct_pair("TEP", "Lichtenstein", comparison)
+    assert out_of_100(w, REFS) == []
+    [r] = [r for g in compare(w, REFS) for r in g.rows]
+    assert (r.values_text, r.problem) == ("TEP 9.4% vs Lichtenstein 18.8%", NO_SIDES)
+
+
+@pytest.mark.parametrize("a,b,counts", [
+    ("TEP", "Lichtenstein", [9, 19]), ("Lichtenstein", "TEP", [9, 19]),
+    ("TEP (n=665)", "Lichtenstein group", [9, 19]), ("tep", "LICHTENSTEIN", [9, 19]),
+    ("ＴＥＰ", "Lichtenstein\u200b", [9, 19])])
+def test_arms_on_opposite_sides_draw_squares(a, b, counts):
+    w = _pct_pair(a, b)
+    [it] = out_of_100(w, REFS)
+    assert sorted(c for c, _, _ in it.arms) == counts
+    assert [r.problem for g in compare(w, REFS) for r in g.rows] == [None]
+
+
+def test_the_genuine_pair_still_draws_9_and_19():
+    [it] = out_of_100(_pct_pair("TEP", "Lichtenstein"), REFS)
+    assert it.arms == [(9, "TEP", "A"), (19, "Lichtenstein", "B")]
+
+
+def test_the_hernia_squares_are_unchanged():
+    items = out_of_100(HERNIA.answer, HERNIA_REFS)
+    assert [(it.label, [c for c, _, _ in it.arms]) for it in items] == [
+        ("Chronic pain at 5 years", [9, 19]), ("Non-ignorable pain at about 8 years", [8, 7]),
+        ("Chronic pain at 52 months", [15, 31]), ("Moderate or severe pain at 5 years", [2, 4]),
+        ("Recurrence at 5 years", [4, 1])]
+    assert all(r.problem is None for g in compare(HERNIA.answer, HERNIA_REFS) for r in g.rows)

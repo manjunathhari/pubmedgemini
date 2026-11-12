@@ -282,6 +282,17 @@ _MEASURE_ARMS = DIFF_MARKERS | {"arr", "rd", "ard", "nnt", "nnh"}
 _COMPARISON_WORDS = re.compile(
     r"(?<!\w)(?:differences?|minus|versus|vs\.?|compared with|compared to|relative to)(?!\w)")
 _PUNCT = re.compile(r"[^\w\s]|_")
+# More of what makes an arm text a comparison or a summary, not an arm (fourth check F1), on
+# the case-folded key: operator punctuation between words (a spaced hyphen, en dash or minus
+# sign, "/", ">", "<", a lone "v" or "v."), the delta or increment sign anywhere, and these words or
+# abbreviations as whole words: diff, delta, reduction, increase, change, ARR, RRR, ARD, NNT,
+# NNH, RR, HR, relative risk, odds, hazard, ratio, pooled, overall, total, both, all patients,
+# combined. OR counts only as a whole upper-case token (`_UPPER_OR`): "TEP or open" is a name.
+_COMPARISON_MORE = re.compile(
+    r"\s[-\u2013\u2212]\s|[/<>\u03b4\u0394\u2206]|(?<!\w)v\.?(?!\w)"
+    r"|(?<!\w)(?:diffs?|delta|reductions?|increases?|changes?|arr|rrr|ard|nnt|nnh|rr|hr"
+    r"|relative risk|odds|hazards?|ratios?|pooled|overall|total|both|all patients|combined)(?!\w)")
+_UPPER_OR = re.compile(r"(?<!\w)OR(?!\w)")
 
 ArmKind = Literal["none", "marker", "comparison", "name"]
 
@@ -308,7 +319,9 @@ def arm_kind(n: Number) -> ArmKind:
     - "marker": the whole key is one of `DIFF_MARKERS` (Incisive puts the measure in `arm`:
       the number has no arm and the marker names its measure);
     - "comparison": the key with punctuation removed is one of `_MEASURE_ARMS`, or the key
-      contains, as a whole word, one of `_COMPARISON_WORDS`;
+      contains, as a whole word, one of `_COMPARISON_WORDS`, or it matches `_COMPARISON_MORE`
+      (operator punctuation, the delta sign, ARR, NNT, RR, pooled, both and the like), or the
+      text holds OR as a whole upper-case token (fourth check F1);
     - "name": anything else, a plain arm name ("TEP", "MD Anderson protocol").
 
     Only a "name" may be paired (Compare the arms, Out of 100); a "comparison" is never
@@ -320,7 +333,8 @@ def arm_kind(n: Number) -> ArmKind:
     if k in DIFF_MARKERS:
         return "marker"
     if (rust_trim(_SPACES.sub(" ", _PUNCT.sub("", k))) in _MEASURE_ARMS
-            or _COMPARISON_WORDS.search(k)):
+            or _COMPARISON_WORDS.search(k) or _COMPARISON_MORE.search(k)
+            or _UPPER_OR.search(_display_key(n.arm or ""))):
         return "comparison"
     return "name"
 
@@ -480,6 +494,39 @@ def _arm_score(arm: str, comparison: str) -> int:
         return 0
     left, right = (_words(x) for x in sides)
     return sum(int(w in left) - int(w in right) for w in _words(arm))
+
+
+# The separators that split a study's comparison into its two sides (Incisive `sides`), on
+# the key; a comparison is two-sided only when exactly one of them splits it into two parts
+# that both hold a word (fourth check F1).
+_SIDE_SEP = re.compile(r" (?:vs\.?|versus|compared with) ")
+
+
+def comparison_sides(comparison: str | None) -> tuple[set[str], set[str]] | None:
+    """The words only the left side, and only the right side, of a two-sided comparison
+    holds ("TEP vs Lichtenstein": {"tep"}, {"lichtenstein"}), on the key and Incisive's
+    `words`; None when there is no comparison or it does not split into exactly two sides."""
+    if comparison is None:
+        return None
+    parts = _SIDE_SEP.split(_key(comparison))
+    if len(parts) != 2:
+        return None
+    left, right = (set(_words(x)) for x in parts)
+    if not left or not right:
+        return None
+    return left - right, right - left
+
+
+def arm_side(arm: str | None, comparison: str | None) -> int | None:
+    """Which side of the comparison an arm text matches: 0 (left), 1 (right) or None (no
+    two-sided comparison, or a tie or zero score). The score is `_arm_score`'s token overlap
+    (each word on the left only +1, on the right only -1) on the key (fourth check F1)."""
+    sides = comparison_sides(comparison)
+    if sides is None or arm is None:
+        return None
+    left, right = sides
+    score = sum(int(w in left) - int(w in right) for w in _words(_key(arm)))
+    return 0 if score > 0 else 1 if score < 0 else None
 
 
 @dataclass(frozen=True)
@@ -989,11 +1036,15 @@ class OutItem:
 
 
 ALL_ZERO = "both arms round to 0 of 100"
+NO_SIDES = "the study's comparison does not name two sides"
+NOT_MATCHED = "its arms do not match the study's comparison"
 
 
 def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -> str | None:
     """Why a two-arm percent group is not drawn as squares (shown in "Compare the arms"), or
-    None. The counts keep Incisive's rounding; Incisive has no rule for both arms at 0
+    None. After the value checks: the study's comparison must split into two sides
+    (`comparison_sides`) and the two arm texts match opposite sides (`arm_side`; fourth
+    check F1, coordinator ruling option a). The counts keep Incisive's rounding; Incisive has no rule for both arms at 0
     (`answer_page.rs` `out_of_100`, `app/page.rs` `out_of_100_view`), so two empty grids
     are not drawn (review L7)."""
     nums = g.nums(w)
@@ -1006,6 +1057,15 @@ def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -
         _ = [fmt_value(n.value) for n in nums]  # the sentence's values
     except (ArithmeticError, ValueError):
         return NOT_PLACED
+    # Squares need positive evidence of which arm is which (fourth check F1): each arm text
+    # matches one side of the study's two-sided comparison, the two arms opposite sides.
+    s = study_of(w, g.pmid)
+    comparison = s.comparison if s is not None else None
+    if comparison_sides(comparison) is None:
+        return NO_SIDES
+    if sorted(arm_side(n.arm, comparison) for n in nums  # type: ignore[type-var]
+              if arm_side(n.arm, comparison) is not None) != [0, 1]:
+        return NOT_MATCHED
     if all(c == 0 for c in counts):
         return ALL_ZERO
     return None
