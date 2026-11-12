@@ -925,8 +925,16 @@ def labelled_difference(n: Number) -> bool:
     return any(_DIFF_MEASURE.search(t) for t in (n.label, n.unit or ""))
 
 
-def _opt_bound(x: float | None) -> str:
-    return "not given" if x is None else fmt_value(x)
+def _interval_text(lo: float | None, hi: float | None) -> str:
+    """A listed number's interval as the live page and mock v6 print it: " (lo to hi)", or
+    one end alone " (CI from lo)" / " (CI to hi)", or "" when neither is given."""
+    if lo is not None and hi is not None:
+        return f" ({fmt_value(lo)} to {fmt_value(hi)})"
+    if lo is not None:
+        return f" (CI from {fmt_value(lo)})"
+    if hi is not None:
+        return f" (CI to {fmt_value(hi)})"
+    return ""
 
 
 @dataclass(frozen=True)
@@ -954,9 +962,7 @@ def listed_numbers(w: WrittenAnswer, refs: Mapping[str, int]) -> dict[int, list[
                 continue
             if in_compare:
                 continue  # shown in "Compare the arms" (and Out of 100): never "Not drawn" (L2)
-            value = with_unit(n.value, n.unit)
-            if n.ci_low is not None or n.ci_high is not None:
-                value += f" ({_opt_bound(n.ci_low)} to {_opt_bound(n.ci_high)})"
+            value = with_unit(n.value, n.unit) + _interval_text(n.ci_low, n.ci_high)
             sub = study_pieces(w, n.pmid, refs)
             arm = rust_trim(n.arm) if n.arm is not None else ""
             p = p_label(n.p)

@@ -664,7 +664,7 @@ def test_a_group_mixing_kinds_lists_every_number_not_drawn():
 def test_a_listed_number_reads_as_text():
     w = answer_with(num("Seroma", 0.4, "aHR", "TEP", lo=0.2, p="0.03"))
     [x] = outcome_cards(w, REFS)[0].listed
-    assert (x.label, x.value_text) == ("Seroma", "0.4 aHR (0.2 to not given)")
+    assert (x.label, x.value_text) == ("Seroma", "0.4 aHR (CI from 0.2)")
     assert pieces_text(x.sub_pieces) == "PMID 1 [1] · TEP · p 0.03"
     assert x.problem == "unit not RR, OR or HR"
 
@@ -2109,7 +2109,7 @@ def test_one_sided_ratio_listed_no_interval():
     assert forest(w, REFS).ratios == []
     [c] = outcome_cards(w, REFS)
     assert [(x.value_text, x.problem) for x in c.listed] == [
-        ("0.7 (not given to 1.2)", "no interval"), ("0.7 (0.5 to not given)", "no interval")]
+        ("0.7 (CI to 1.2)", "no interval"), ("0.7 (CI from 0.5)", "no interval")]
 
 
 def test_r1_ratio_keeps_every_draw_check():

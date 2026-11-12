@@ -890,12 +890,13 @@ def _num_page(env, **n):
 
 def test_a_lone_ci_end_is_shown(env):
     # F3b: listed under its outcome as f3-writer's derivation writes it (ported unchanged:
-    # `listed_numbers`, "not given" for the missing end)
+    # `listed_numbers`; one end alone reads "(CI from x)" / "(CI to x)" as mock v6 and the
+    # live page on main do: Coordinator ruling on review wording)
     def shown(page):
         return re.search(r'<b>L</b> <span class="num">([^<]*)</span>', page).group(1)
 
-    assert shown(_num_page(env, ci_low=0.5)) == "1 (0.5 to not given)"
-    assert shown(_num_page(env, ci_high=2.5)) == "1 (not given to 2.5)"
+    assert shown(_num_page(env, ci_low=0.5)) == "1 (CI from 0.5)"
+    assert shown(_num_page(env, ci_high=2.5)) == "1 (CI to 2.5)"
     assert shown(_num_page(env, ci_low=0.5, ci_high=3.0)) == "1 (0.5 to 3)"
 
 
