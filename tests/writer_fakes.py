@@ -14,6 +14,12 @@ read and move it at once. Neither sleeps or reaches the network.
 
 Task 7 adds a whole run's Gemini: `RunGemini` (F2's FakeGemini for the researcher, a RoutedFake
 for the writer) and the writer replies it serves by default (`whole_answer`, `good_parts`).
+
+F3c: a request with the Introduction's system prompt goes to RunGemini's own `intro` queue (by
+default every Introduction gets `INTRO_REPLY`), so the researcher's script and the writer's
+queues are served exactly as before. `inline_intro` writes the Introduction at once, inside
+`run_one`, before the research (as InlineStarter does for runs), so a test's attempt counts
+are fixed: the Introduction's attempt is always the run's first.
 """
 
 import json
@@ -23,12 +29,14 @@ from collections.abc import Callable, Sequence
 import httpx
 from gemini_fakes import FakeGemini, reply
 
+from pubmedgemini import intro
 from pubmedgemini.gemini.client import GEMINI_HOST
 from pubmedgemini.writer.prompts import SECTION_HEAD, SYSTEM, Section
 
 Step = httpx.Response | dict | Callable[[httpx.Request], httpx.Response]
 ONE_PIECE = "one_piece"
 F2 = "f2"
+INTRO = "intro"
 
 
 def route_of(body: dict) -> str:
@@ -38,6 +46,8 @@ def route_of(body: dict) -> str:
         user = body["contents"][0]["parts"][0]["text"]
     except (KeyError, IndexError, TypeError):
         return F2
+    if system.startswith(intro.PROMPT):
+        return INTRO
     for s in Section.ALL:
         if f"{SECTION_HEAD}{s.name.upper()}\n" in user:
             return s.name
@@ -165,6 +175,23 @@ def good_parts(w: dict | None = None, copies: int = 1) -> dict[str, list[Step]]:
     return {s.name: [part_reply(s, w)] * copies for s in Section.ALL}
 
 
+INTRO_TEXT = "Made-up introduction, paragraph one.\n\nMade-up paragraph two."
+
+
+def intro_reply(text: str = INTRO_TEXT, finish: str = "STOP") -> dict:
+    return reply([{"text": text}], finish=finish, out=111)
+
+
+def inline_intro(run_id, question, *, caller, pool, clock) -> threading.Thread:
+    """`intro.start_intro` for tests: writes the Introduction at once, then returns a thread
+    that has already ended."""
+    intro.write_intro(run_id, question, caller=caller, pool=pool, clock=clock)
+    t = threading.Thread(target=lambda: None, name="intro")
+    t.start()
+    t.join()
+    return t
+
+
 class RunGemini(FakeGemini):
     """A whole run's Gemini: F2's FakeGemini serves the researcher's calls (in order, every
     model turn sent back checked) and a RoutedFake the writer's parts and one piece, by route.
@@ -172,10 +199,28 @@ class RunGemini(FakeGemini):
     the writer's queues and requests."""
 
     def __init__(self, script: Sequence[Step], parts: dict[str, Sequence[Step]] | None = None,
-                 one_piece: Sequence[Step] = ()) -> None:
+                 one_piece: Sequence[Step] = (), intro: Sequence[Step] | None = None) -> None:
         super().__init__(script)
         self.writer = RoutedFake(good_parts(copies=8) if parts is None else parts, one_piece)
+        self._intro_lock = threading.Lock()
+        self._intro_steps = None if intro is None else list(intro)
+        self.intro_sent: list[dict] = []
         self.transport = httpx.MockTransport(self._route)
+
+    def _intro(self, request: httpx.Request, body: dict) -> httpx.Response:
+        with self._intro_lock:
+            self.intro_sent.append(body)
+            if self._intro_steps is None:
+                step: Step = intro_reply()
+            elif not self._intro_steps:
+                raise AssertionError("RunGemini: no Introduction reply left")
+            else:
+                step = self._intro_steps.pop(0)
+        if callable(step) and not isinstance(step, httpx.Response):
+            return step(request)
+        if isinstance(step, dict):
+            return httpx.Response(200, json=step)
+        return httpx.Response(step.status_code, headers=step.headers, content=step.content)
 
     def _route(self, request: httpx.Request) -> httpx.Response:
         if request.url.host == GEMINI_HOST:
@@ -183,6 +228,8 @@ class RunGemini(FakeGemini):
                 body = json.loads(request.content)
             except ValueError:
                 body = None
+            if isinstance(body, dict) and route_of(body) == INTRO:
+                return self._intro(request, body)
             if isinstance(body, dict) and route_of(body) != F2:
                 return self.writer._handle(request)
         return self._handle(request)

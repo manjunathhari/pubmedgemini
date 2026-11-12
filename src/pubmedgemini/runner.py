@@ -28,11 +28,22 @@ with the run's final status and the closing line `Answer ready`, in one transact
 
 A run that a restart marked `stopped` meanwhile keeps that status: nothing is stored over it.
 
+F3c: right after `set_running` the run starts its Introduction (`intro.start_intro`) on its own
+daemon thread and never waits for it while it works; it can neither fail nor change the run
+(every failure ends its own row `failed`). Its one attempt counts in the run's RUN_ATTEMPTS.
+`run_one` joins it, at most TIME_LIMIT_SECONDS + 5 s, after the run's status is stored and
+before the run's attempt count is forgotten, so nothing is sent for the run after `forget`.
+The writer's `on_part` is an `EarlyStore`: the summary and context parts, citation-checked as
+the final answer is, stored while the run works (`runs.store_early`), deleted on a withdraw;
+`finish_run` and `finish_with_answer` delete it when the run ends.
+
 A run is a plain function on one daemon thread (the writer adds four part threads of its
 own): every client below is synchronous, and the POST that starts it never waits for it. Logs
 hold run ids, counts and fixed kinds only; an exception is logged by its class name only.
 """
 
+import copy
+import json
 import logging
 import threading
 import time
@@ -46,6 +57,8 @@ from psycopg_pool import ConnectionPool
 
 from pubmedgemini.gemini.caller import ModelCaller, RunCapReached
 from pubmedgemini.gemini.structured import rust_trim
+from pubmedgemini.intro import TIME_LIMIT_SECONDS as INTRO_TIME_LIMIT
+from pubmedgemini.intro import start_intro as start_intro_thread
 from pubmedgemini.lit.tools import LitTools, ToolFailed
 from pubmedgemini.researcher.loop import (
     WAITING_LINE,
@@ -71,11 +84,13 @@ from pubmedgemini.runs import (
     add_search,
     add_seen,
     add_step,
+    clear_early,
     finish_run,
     finish_with_answer,
     question_of,
     save_list,
     set_running,
+    store_early,
 )
 from pubmedgemini.writer.answer import (
     AnswerV3,
@@ -87,9 +102,9 @@ from pubmedgemini.writer.answer import (
     plural,
     references_from,
 )
-from pubmedgemini.writer.parts import WriterFailed, write_parts
+from pubmedgemini.writer.parts import PartEvent, WriterFailed, write_parts
 from pubmedgemini.writer.prompts import StudyInput, writer_user
-from pubmedgemini.writer.read import design_class, evidence_types, merge_checks
+from pubmedgemini.writer.read import design_class, early_answer, evidence_types, merge_checks
 
 log = logging.getLogger("pubmedgemini.runner")
 
@@ -205,6 +220,62 @@ class _Answer:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     references: list[ReferenceV3] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+
+
+class EarlyStore:
+    """The writer's `on_part` (F3c): the early summary (Incisive `team.rs:798-870`
+    `early_body`, `store_early`). On `summary` or `context` the part is kept and the answer
+    holding the parts so far (`early_answer`) gets the same citation check, against the same
+    fetched studies, as the final answer; the key numbers of At a glance are held back (O3),
+    and the body is stored while the run works. On `withdraw` (a part failed for good) the row
+    is deleted and nothing more is stored. Called under the writer's lock, so a delete is never
+    overtaken by an earlier store. Every error is caught and logged by its class; the run goes
+    on. Nothing of the text is logged."""
+
+    def __init__(self, pool: ConnectionPool, run_id: UUID, a: "_Answer",
+                 selected: list[str]) -> None:
+        self._pool = pool
+        self._run_id = run_id
+        self._a = a
+        self._selected = list(selected)
+        self._parts: dict[str, dict] = {}
+        self._withdrawn = False
+
+    def body(self) -> dict:
+        written = early_answer(copy.deepcopy(self._parts.get("summary")),
+                               copy.deepcopy(self._parts.get("context")))
+        check_citations(written, self._selected, IntegrityV3())
+        if written.at_a_glance is not None:
+            written.at_a_glance.key_numbers = []  # O3 (b): shown with the full answer only
+        a = self._a
+        answer = AnswerV3(question=a.question, created_at=a.created_at, answer=written,
+                          empty_reason=None, references=a.references, searches=a.searches,
+                          integrity=IntegrityV3(), stopped_early=a.stopped_early, elapsed_s=0,
+                          notes=[]).to_body()
+        return {"summary": "summary" in self._parts, "context": "context" in self._parts,
+                "answer": answer}
+
+    def __call__(self, ev: PartEvent) -> None:
+        kind, part = ev
+        try:
+            if kind == "withdraw":
+                self._withdrawn = True
+                clear_early(self._pool, self._run_id)
+                log.info("run kind=early_withdrawn run_id=%s", self._run_id)
+                return
+            if self._withdrawn or kind not in ("summary", "context") or part is None:
+                return
+            self._parts[kind] = part
+            body = self.body()
+            size = len(json.dumps(body, ensure_ascii=False).encode("utf-8", errors="replace"))
+            if store_early(self._pool, self._run_id, body):
+                log.info("run kind=early_stored run_id=%s summary=%s context=%s bytes=%d",
+                         self._run_id, str(body["summary"]).lower(),
+                         str(body["context"]).lower(), size)
+            else:
+                log.info("run kind=early_not_stored error=NotRunning")
+        except Exception as e:  # noqa: BLE001 - the early summary never fails a run
+            log.warning("run kind=early_not_stored error=%s", type(e).__name__)
 
 
 class _Run:
@@ -330,7 +401,9 @@ class _Run:
         try:
             written, defaulted, merged = write_parts(
                 user, caller=self.caller, run_id=self.run_id, timing=self.timing,
-                on_wait=self.on_wait, progress=self.progress, on_part=None, clock=self.clock)
+                on_wait=self.on_wait, progress=self.progress,
+                on_part=EarlyStore(self.pool, self.run_id, a, [s.pmid for s in studies]),
+                clock=self.clock)
         except WriterFailed as e:
             failure, kind = e.failure, e.kind
         else:
@@ -369,8 +442,11 @@ def run_one(
     caller: ModelCaller,
     model: str,
     clock: Callable[[], float] = time.monotonic,
+    start_intro: Callable[..., threading.Thread] = start_intro_thread,
 ) -> None:
-    """Runs one queued run to its end (see the module doc). Never raises."""
+    """Runs one queued run to its end (see the module doc). Never raises. `start_intro`
+    starts the Introduction (tests pass one that writes it at once)."""
+    intro: threading.Thread | None = None
     try:
         question = question_of(pool, run_id)
         if question is None:
@@ -378,8 +454,14 @@ def run_one(
             return
         set_running(pool, run_id)
         log.info("run kind=running run_id=%s model=%s", run_id, model)
+        run = _Run(run_id, question, pool, tools, caller, clock)
         try:
-            _Run(run_id, question, pool, tools, caller, clock).go()
+            intro = start_intro(run_id, question, caller=caller, pool=pool, clock=clock)
+        except Exception as e:  # noqa: BLE001 - no Introduction; the run goes on
+            log.warning("run kind=intro_not_started run_id=%s error=%s", run_id,
+                        type(e).__name__)
+        try:
+            run.go()
         except FatalModelError as e:
             _failed(pool, run_id, e.kind)
         except HardStop:
@@ -395,4 +477,7 @@ def run_one(
         except Exception:  # noqa: BLE001
             log.error("run kind=not_finished run_id=%s", run_id)
     finally:
+        if intro is not None:
+            # Its own deadline ends it by then; nothing can be sent for the run after this.
+            intro.join(INTRO_TIME_LIMIT + 5)
         caller.forget(run_id)  # the run's attempt count is no longer needed

@@ -398,6 +398,13 @@ APP_LINE_PATTERNS = [
     r"researcher s3 outcome=(?:empty|not_made) seen=\d+ rounds=\d+",
     *WRITER_LINE_PATTERNS,
     r"answer_page kind=row_not_derived rows=\d+",  # F3b: the answer page's one line
+    # F3c: the Introduction and the early summary (fixed words, ids, kinds and counts).
+    rf"run kind=intro run_id={UUID} status=(?:done|failed) reason={K} output_tokens=\d+",
+    rf"run kind=intro_not_started run_id={UUID} error=\w+",
+    (rf"run kind=early_stored run_id={UUID} summary=(?:true|false) context=(?:true|false) "
+     r"bytes=\d+"),
+    rf"run kind=early_withdrawn run_id={UUID}",
+    r"run kind=early_not_stored error=\w+",
     r"run page answer kind=(?:not_quick|invalid|unserialisable)",
 ]
 

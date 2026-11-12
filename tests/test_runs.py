@@ -13,9 +13,9 @@ import httpx
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from gemini_fakes import FAKE_KEY, FakeGemini, call, error, reply
+from gemini_fakes import FAKE_KEY, call, error, reply
 from pydantic import SecretStr
-from writer_fakes import LockedClock, RunGemini
+from writer_fakes import LockedClock, RunGemini, inline_intro
 
 from pubmedgemini.config import Settings
 from pubmedgemini.gemini.caller import ModelCaller
@@ -97,26 +97,31 @@ class RunApp:
         self.tools = make_tools(pool, upstream)
         self.gemini = None
 
-    def caller(self, script, clock, parts=None, one_piece=()):
+    def caller(self, script, clock, parts=None, one_piece=(), intro=None):
         # The researcher's calls in order (F2's FakeGemini); the writer's parts and one piece
         # by route, on its four threads (RoutedFake); by default every part answers at once.
-        self.gemini = RunGemini(script, parts, one_piece)
+        # F3c: the Introduction by its own route; by default it answers at once.
+        self.gemini = RunGemini(script, parts, one_piece, intro)
         client = GeminiClient(SecretStr(FAKE_KEY), MODEL, self.gemini.transport, clock=clock.now)
         pacer = GeminiPacer(1000, 250_000, clock.now, clock.sleep)
         self.model_caller = ModelCaller(client, pacer, self.pool, MODEL, sleep=clock.sleep,
                                         clock=clock.now, jitter=lambda: 0.5)
         return self.model_caller
 
-    def runner(self, script, tools=None, parts=None, one_piece=()):
+    def runner(self, script, tools=None, parts=None, one_piece=(), intro=None,
+               start_intro=inline_intro):
         clock = self.clock = LockedClock()  # read and moved by the writer's four threads too
-        caller = self.caller(script, clock, parts, one_piece)
+        caller = self.caller(script, clock, parts, one_piece, intro)
         lit = tools or self.tools
+        # F3c: by default the Introduction is written at once, before the research (so its
+        # attempt is always the run's first); a test may pass the real thread starter.
         return lambda rid: run_one(rid, pool=self.pool, tools=lit, caller=caller, model=MODEL,
-                                   clock=clock.now)
+                                   clock=clock.now, start_intro=start_intro)
 
-    def start(self, question=QUESTION, script=HAPPY_RUN, tools=None, parts=None, one_piece=()):
+    def start(self, question=QUESTION, script=HAPPY_RUN, tools=None, parts=None, one_piece=(),
+              intro=None, start_intro=inline_intro):
         rid = create_run(self.pool, self.owner_id, question, MODEL)
-        InlineStarter(self.runner(script, tools, parts, one_piece)).start(rid)
+        InlineStarter(self.runner(script, tools, parts, one_piece, intro, start_intro)).start(rid)
         return rid
 
     def view(self, rid):
@@ -161,7 +166,8 @@ def test_a_full_run_writes_lines_trail_and_list(run_app):
 def test_every_model_call_of_the_run_is_counted_against_it(run_app):
     rid = run_app.start()
     n = rows(run_app.pool, "SELECT count(*) FROM model_calls WHERE run_id = %s", (rid,))[0][0]
-    assert n == 13  # 8 turns and the list (9), then the writer's four parts (F3a Task 7)
+    # The Introduction (F3c), 8 turns and the list (9), then the writer's four parts (F3a)
+    assert n == 14
 
 
 def test_lines_are_stored_as_the_run_goes(run_app):
@@ -270,7 +276,7 @@ def test_start_up_logs_whether_a_key_is_set(db_url, caplog):
 def test_app_runs_a_question_with_the_inline_starter(db_url, upstream):
     settings = Settings(app_env="dev", database_url=db_url, owner_email=OWNER,
                         gemini_api_key=FAKE_KEY)
-    g = FakeGemini([END, EMPTY])
+    g = RunGemini([END, EMPTY])  # F3c: the Introduction, on its own thread, by its route
     starter = InlineStarter()
     app = create_app(settings, lit_transport=upstream.transport, ncbi_gap_seconds=0,
                      gemini_transport=g.transport, gemini_sleep=lambda s: None,
@@ -284,6 +290,7 @@ def test_app_runs_a_question_with_the_inline_starter(db_url, upstream):
         v = get_run(pool, rid, uid)
     assert v.status == "done" and len(g.sent) == 2 and starter.started == [rid]
     assert g.sent[0].headers["x-goog-api-key"] == FAKE_KEY
+    assert len(g.intro_sent) == 1 and v.intro is not None  # the real thread, joined
 
 
 # ---------- reading runs ----------
@@ -480,8 +487,9 @@ def test_a_busy_gemini_reaches_the_cap_and_fails_the_run(run_app, caplog):
     assert (v.status, v.error_kind) == ("failed", "run_call_cap")
     assert v.stop_reason is None and v.rounds is None and v.finished_at is not None
     assert calls_of(run_app.pool, rid) == RUN_ATTEMPTS == 26
-    assert len(run_app.gemini.sent) == RUN_ATTEMPTS
-    assert len(run_app.gemini.script) == 1  # nothing sent after the cap
+    # F3c: the Introduction's attempt is one of the 26; the researcher sent the other 25.
+    assert len(run_app.gemini.sent) == RUN_ATTEMPTS - 1 and len(run_app.gemini.intro_sent) == 1
+    assert len(run_app.gemini.script) == 2  # nothing sent after the cap
     assert end_message(v) is None  # the page words it from the kind
     assert f"run kind=finished run_id={rid} status=failed error_kind=run_call_cap" in [
         r.getMessage() for r in caplog.records]
@@ -506,7 +514,8 @@ def test_the_runs_attempt_count_is_forgotten_when_the_run_ends(run_app, monkeypa
 
     held.clear()
     done = run_app.start(script=ELEVEN)
-    assert held == [{done: 15}] and run_app.model_caller._sent == {}  # 11 + the 4 parts
+    # the Introduction (F3c), 11 and the 4 parts
+    assert held == [{done: 16}] and run_app.model_caller._sent == {}
 
     monkeypatch.setattr(runner_mod, "research", lambda *a, **k: 1 / 0)
     run_app.start(script=[])
@@ -514,21 +523,23 @@ def test_the_runs_attempt_count_is_forgotten_when_the_run_ends(run_app, monkeypa
 
 
 def test_the_researchers_most_calls_and_the_writer_are_unaffected(run_app):
-    # F3a: the researcher's eleven calls, then the writer's four parts: 15.
+    # F3a: the researcher's eleven calls, then the writer's four parts: 15; with the
+    # Introduction (F3c) 16.
     rid = run_app.start(script=ELEVEN)
     v = run_app.view(rid)
     assert (v.status, v.error_kind, v.stop_reason) == ("done", None, "turn_cap")
     assert [p.pmid for p in v.selected] == [ID2, ID1]
     assert "Researcher: the study list came back empty; selecting again" in v.lines
-    assert calls_of(run_app.pool, rid) == 15 and run_app.gemini.script == []
+    assert calls_of(run_app.pool, rid) == 16 and run_app.gemini.script == []
     assert run_app.gemini.writer.count() == 4
 
 
-def test_fifteen_calls_with_eleven_retries_still_finish(run_app):
-    # Exactly the cap: the researcher's eleven calls, 11 transport retries spread over them
-    # (two before each of the first five calls, one before the sixth), and the writer's four.
+def test_sixteen_calls_with_ten_retries_still_finish(run_app):
+    # Exactly the cap: the Introduction (F3c), the researcher's eleven calls, 10 transport
+    # retries spread over them (two before each of the first five calls), and the writer's
+    # four. With 11 retries the cap is reached: test_the_intro_is_one_of_the_26_and_the_cap_holds.
     script = []
-    for n, item in zip([2] * 5 + [1] + [0] * 5, ELEVEN, strict=True):
+    for n, item in zip([2] * 5 + [0] * 6, ELEVEN, strict=True):
         script += [BUSY[0]] * n + [item]
     rid = run_app.start(script=script)
     v = run_app.view(rid)
@@ -537,9 +548,9 @@ def test_fifteen_calls_with_eleven_retries_still_finish(run_app):
 
 
 def test_the_s3_retry_counts_toward_the_cap(run_app):
-    # 25 attempts in 7 turns (21), the list call (2) and the nudge (2): S3's first attempt is
-    # the 26th, its retry would be the 27th.
-    script = (BUSY + [SEARCH]) * 6 + BUSY + [END] + [BUSY[0], reply([{"text": "no"}]),
+    # The Introduction (F3c), 20 attempts in 7 turns, the list call (2) and the nudge (2):
+    # S3's first attempt is the 26th, its retry would be the 27th.
+    script = (BUSY + [SEARCH]) * 6 + [BUSY[0], END] + [BUSY[0], reply([{"text": "no"}]),
                                                       BUSY[0], EMPTY, BUSY[0], LIST_OK]
     rid = run_app.start(script=script)
     v = run_app.view(rid)
@@ -548,9 +559,9 @@ def test_the_s3_retry_counts_toward_the_cap(run_app):
 
 
 def test_the_nudge_counts_toward_the_cap(run_app):
-    # 21 attempts in 7 turns, three for the list call: the nudge's first attempt is the 25th
-    # and its second the 26th; its third would be the 27th.
-    script = (BUSY + [SEARCH]) * 6 + BUSY + [END] + BUSY + [reply([{"text": "no"}])] + BUSY + [
+    # The Introduction (F3c), 20 attempts in 7 turns, three for the list call: the nudge's
+    # first attempt is the 25th and its second the 26th; its third would be the 27th.
+    script = (BUSY + [SEARCH]) * 6 + [BUSY[0], END] + BUSY + [reply([{"text": "no"}])] + BUSY + [
         LIST_OK]
     rid = run_app.start(script=script)
     v = run_app.view(rid)
@@ -869,13 +880,13 @@ def test_a_full_run_writes_and_stores_a_valid_answer(run_app):
     assert run_app.gemini.writer.count() == 4 and run_app.gemini.writer.count("one_piece") == 0
 
 
-def test_a_normal_run_makes_thirteen_model_calls(run_app):
+def test_a_normal_run_makes_fourteen_model_calls(run_app):  # F3c: with the Introduction
     rid = run_app.start()
     steps = rows(run_app.pool, "SELECT step, count(*) FROM model_calls WHERE run_id = %s "
                                "GROUP BY step ORDER BY step", (rid,))
-    assert steps == [("researcher", 8), ("study_list", 1), ("writer_context", 1),
+    assert steps == [("intro", 1), ("researcher", 8), ("study_list", 1), ("writer_context", 1),
                      ("writer_outcomes", 1), ("writer_summary", 1), ("writer_trials", 1)]
-    assert calls_of(run_app.pool, rid) == 13
+    assert calls_of(run_app.pool, rid) == 14
 
 
 def test_the_writer_is_given_the_fetched_records_and_the_notes(run_app):
@@ -980,8 +991,9 @@ def test_no_time_for_the_writer_ends_partial_with_references(run_app, migrated_p
 
 
 def test_cap_in_the_writer_fails_the_run_and_keeps_the_study_list(run_app):
-    # 23 attempts in research: seven turns after two 503s each (21), the eighth and the list.
-    script = (BUSY + [SEARCH]) * 7 + [SEARCH, LIST_OK]  # 3 left for the writer's four parts
+    # The Introduction (F3c), then 22 attempts in research: six turns after two 503s each
+    # (18), one after one 503 (2), the eighth and the list: 3 left for the writer's four parts.
+    script = (BUSY + [SEARCH]) * 6 + [BUSY[0], SEARCH] + [SEARCH, LIST_OK]
     rid = run_app.start(script=script)
     v = run_app.view(rid)
     assert (v.status, v.error_kind) == ("failed", "run_call_cap")
@@ -1404,3 +1416,322 @@ def test_start_up_clears_early_and_fails_pending_intros(run_app):
     assert dict(rows(run_app.pool, "SELECT run_id, status || '/' || coalesce(reason, '') "
                                    "FROM run_intros")) == {a: "failed/stale", b: "done/"}
     assert run_app.view(b).intro == "Kept." and run_app.view(b).early is None
+
+
+# ---------- F3c Task 3: the run writes the Introduction and stores the early summary ----------
+
+
+def intro_row(pool, rid):
+    got = rows(pool, "SELECT status, reason, text FROM run_intros WHERE run_id = %s", (rid,))
+    return got[0] if got else None
+
+
+def steps_of(pool, rid):
+    return [s for (s,) in rows(pool, "SELECT step FROM model_calls WHERE run_id = %s "
+                                     "ORDER BY id", (rid,))]
+
+
+def wait_for(cond, seconds=10.0):
+    import time
+
+    end = time.monotonic() + seconds
+    while not cond():
+        assert time.monotonic() < end, "timed out"
+        time.sleep(0.01)
+
+
+def test_full_run_has_an_introduction_and_14_attempts(run_app):
+    from writer_fakes import INTRO_TEXT
+
+    rid = run_app.start()
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("done", None) and v.answer is not None
+    assert intro_row(run_app.pool, rid) == ("done", None, INTRO_TEXT)
+    assert v.intro == INTRO_TEXT
+    steps = steps_of(run_app.pool, rid)
+    assert len(steps) == 14 and steps.count("intro") == 1 and steps[0] == "intro"
+    # the model saw the question only, as data (no studies, no search results)
+    (body,) = run_app.gemini.intro_sent
+    assert body["contents"] == [{"role": "user", "parts": [
+        {"text": f'<source id="question">\n{QUESTION}\n</source>'}]}]
+
+
+def test_the_intro_runs_on_its_own_thread_and_the_run_never_waits_for_it(run_app):
+    """The real starter: the Introduction's reply is held until the run has stored its answer;
+    the run is done by then, and the Introduction still ends `done` (the join)."""
+    from writer_fakes import intro_reply
+
+    seen = []
+
+    def held(request):
+        wait_for(lambda: rows(run_app.pool, "SELECT count(*) FROM answers")[0][0] == 1)
+        seen.append(rows(run_app.pool, "SELECT status FROM runs")[0][0])
+        return httpx.Response(200, json=intro_reply())
+
+    from pubmedgemini.intro import start_intro
+
+    rid = run_app.start(intro=[held], start_intro=start_intro)
+    assert seen == ["done"]
+    assert intro_row(run_app.pool, rid)[0] == "done"
+    assert run_app.model_caller._sent == {}  # forgotten only after the Introduction ended
+    assert len(steps_of(run_app.pool, rid)) == 14
+
+
+def _blocked():
+    return {"promptFeedback": {"blockReason": "SAFETY"}, "usageMetadata": {}}
+
+
+@pytest.mark.parametrize("case,reason", [
+    ("503", "api"), ("429_long_wait", "api"), ("max_tokens", "truncated"),
+    ("blocked", "refused"), ("db_refuses", "store"), ("raises", "internal"),
+])
+def test_intro_failure_never_fails_the_run(run_app, monkeypatch, case, reason):
+    from gemini_fakes import RETRY_INFO
+    from writer_fakes import intro_reply
+
+    import pubmedgemini.intro as intro_mod
+
+    steps = {
+        "503": [error(503, "UNAVAILABLE")],
+        "429_long_wait": [error(429, "RESOURCE_EXHAUSTED", [RETRY_INFO("300s")])],
+        "max_tokens": [intro_reply(finish="MAX_TOKENS")],
+        "blocked": [_blocked()],
+        "db_refuses": [intro_reply("x" * 20000)],  # over the column's CHECK
+        "raises": [intro_reply()],
+    }[case]
+    if case == "raises":
+        def boom(*a, **k):
+            raise RuntimeError("made-up")
+        monkeypatch.setattr(intro_mod, "_call", boom)
+    rid = run_app.start(intro=steps)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("done", None) and v.answer is not None
+    assert v.lines[-1] == "Answer ready" and v.intro is None
+    row = intro_row(run_app.pool, rid)
+    if case == "db_refuses":
+        assert row == ("pending", None, None)  # refused; start-up fails it `stale`
+    else:
+        assert row == ("failed", reason, None)
+    assert len(run_app.gemini.intro_sent) == (0 if case == "raises" else 1)
+    assert 300.0 not in run_app.clock.slept  # a long asked wait is never waited
+
+
+def test_a_failing_intro_starter_never_fails_the_run(run_app, caplog):
+    def broken(*a, **k):
+        raise RuntimeError("made-up")
+
+    caplog.set_level(logging.INFO)
+    rid = run_app.start(start_intro=broken)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("done", None) and v.answer is not None
+    assert f"run kind=intro_not_started run_id={rid} error=RuntimeError" in [
+        r.getMessage() for r in caplog.records]
+
+
+def test_intro_cap_reached_leaves_the_run_alone(run_app):
+    """The run uses all 26 attempts (the eleven calls, 11 transport retries, the four parts:
+    done without an Introduction). The Introduction, held until then, is the one refused: it
+    sends nothing, ends `failed` `cap`, and the run's outcome is as without it."""
+    from pubmedgemini.intro import start_intro
+
+    script = []
+    for n, item in zip([2] * 5 + [1] + [0] * 5, ELEVEN, strict=True):
+        script += [BUSY[0]] * n + [item]
+
+    def late(run_id, question, *, caller, pool, clock):
+        def go():
+            wait_for(lambda: caller._sent.get(run_id, 0) >= RUN_ATTEMPTS)
+            from pubmedgemini.intro import write_intro
+            write_intro(run_id, question, caller=caller, pool=pool, clock=clock)
+
+        t = threading.Thread(target=go, daemon=True, name="intro")
+        t.start()
+        return t
+
+    assert start_intro  # the real one is the default in run_one; this test holds it back
+    rid = run_app.start(script=script, start_intro=late)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("done", None) and v.answer is not None
+    assert intro_row(run_app.pool, rid) == ("failed", "cap", None)
+    assert run_app.gemini.intro_sent == [] and calls_of(run_app.pool, rid) == RUN_ATTEMPTS
+    assert "intro" not in steps_of(run_app.pool, rid)
+
+
+def test_the_intro_is_one_of_the_26_and_the_cap_holds(run_app):
+    """With the Introduction first, a run of the eleven calls and the four parts has ten
+    transport retries to spare (26 = 1 + 11 + 4 + 10); an eleventh retry reaches the cap."""
+    def script_with(retries):
+        out = []
+        for n, item in zip([2] * 5 + [retries - 10] + [0] * 5, ELEVEN, strict=True):
+            out += [BUSY[0]] * n + [item]
+        return out
+
+    done = run_app.start(script=script_with(10))
+    assert (run_app.view(done).status, calls_of(run_app.pool, done)) == ("done", RUN_ATTEMPTS)
+    capped = run_app.start(script=script_with(11))
+    v = run_app.view(capped)
+    assert (v.status, v.error_kind) == ("failed", "run_call_cap")
+    assert calls_of(run_app.pool, capped) == RUN_ATTEMPTS
+    assert steps_of(run_app.pool, capped).count("intro") == 1
+
+
+def test_a_run_admitted_with_one_run_left_never_passes_the_day(run_app):
+    """The free runs' arithmetic (Review Focus 4): a run is admitted only with room for
+    RUN_ATTEMPTS; with the Introduction it still sends at most RUN_ATTEMPTS, so the day's
+    count never passes GEMINI_RPD. 21 on a fresh day of 500 is unchanged."""
+    from pubmedgemini.gemini.quota import calls_today, runs_left_for
+
+    rpd = 500
+    with run_app.pool.connection() as conn:
+        conn.execute("INSERT INTO model_calls (model, step, attempt, status_kind) "
+                     "SELECT %s, 'researcher', 1, 'ok' FROM generate_series(1, %s)",
+                     (MODEL, rpd - RUN_ATTEMPTS))
+    assert runs_left_for(rpd, calls_today(run_app.pool, MODEL)) == 1
+    rid = run_app.start(script=BUSY_RUN)  # every attempt it can make
+    assert steps_of(run_app.pool, rid)[0] == "intro"
+    assert calls_of(run_app.pool, rid) == RUN_ATTEMPTS
+    assert calls_today(run_app.pool, MODEL) == rpd
+    assert runs_left_for(rpd, rpd) == 0 and runs_left_for(500, 0) == 21
+
+
+def test_the_intro_keeps_the_shared_pacing(run_app, monkeypatch):
+    """At 10 a minute every attempt of the run, the Introduction's on its own thread
+    included, starts at least 6 s after the one before."""
+    from pubmedgemini.intro import start_intro
+
+    starts = []
+    real = GeminiPacer.wait
+
+    def spy(self, estimated, deadline):
+        ok = real(self, estimated, deadline)
+        if ok:
+            starts.append(self._last_start)
+        return ok
+
+    monkeypatch.setattr(GeminiPacer, "wait", spy)
+    run_app_runner = run_app.runner(HAPPY_RUN, start_intro=start_intro)
+    run_app.model_caller._pacer = GeminiPacer(10, 250_000, run_app.clock.now,
+                                              run_app.clock.sleep)
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    InlineStarter(run_app_runner).start(rid)
+    assert run_app.view(rid).status == "done"
+    assert len(starts) == 14
+    gaps = [b - a for a, b in zip(sorted(starts), sorted(starts)[1:])]
+    assert min(gaps) >= 6.0 - 1e-9, gaps
+
+
+def _summary_citing(ids):
+    from writer_fakes import good_parts, part_reply, whole_answer
+
+    parts = good_parts()
+    parts["summary"] = [part_reply(Section.SUMMARY, whole_answer("w", ids))]
+    return parts
+
+
+def _spy_early(monkeypatch):
+    import pubmedgemini.runner as runner_mod
+
+    stored = []
+    real = runner_mod.store_early
+
+    def spy(pool, run_id, body):
+        stored.append(json.loads(json.dumps(body)))
+        return real(pool, run_id, body)
+
+    monkeypatch.setattr(runner_mod, "store_early", spy)
+    return stored
+
+
+def test_early_summary_is_citation_checked(run_app, monkeypatch):
+    from pubmedgemini.writer.answer import read_body
+
+    stored = _spy_early(monkeypatch)
+    rid = run_app.start(parts=_summary_citing((ID2, "99999999")))
+    v = run_app.view(rid)
+    assert v.status == "done"
+    early = [b for b in stored if b["summary"]]
+    assert early, "no early summary was stored"
+    text = read_body(early[-1]["answer"]).answer.bottom_line.text
+    assert ID2 in text and "99999999" not in text
+    assert text == answer_of(v).answer.bottom_line.text  # the final answer's, same reply
+    # no outcomes or trials early, and the key numbers are held back (O3)
+    a = read_body(early[-1]["answer"]).answer
+    assert a.outcomes == [] and a.studies == [] and a.at_a_glance.key_numbers == []
+    assert a.at_a_glance.verdict and answer_of(v).answer.at_a_glance.key_numbers
+
+
+def test_early_summary_stored_then_cleared_at_the_end(run_app):
+    from writer_fakes import good_parts
+
+    parts = good_parts()
+    outcomes = parts["outcomes"][0]
+    seen = []
+
+    def held(request):  # the outcomes part waits until the summary is on the page
+        wait_for(lambda: rows(run_app.pool, "SELECT count(*) FROM run_early")[0][0] == 1)
+        rid = rows(run_app.pool, "SELECT run_id FROM run_early")[0][0]
+        seen.append(run_app.view(rid).early)
+        return httpx.Response(200, json=outcomes)
+
+    parts["outcomes"] = [held]
+    rid = run_app.start(parts=parts)
+    assert seen and seen[0]["summary"] is True and seen[0]["answer"]["answer"]
+    assert run_app.view(rid).status == "done"
+    assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(0,)]
+    assert run_app.view(rid).early is None
+
+
+def test_withdraw_deletes_the_early_summary(run_app, caplog):
+    from writer_fakes import good_parts, piece_reply, whole_answer
+
+    parts = good_parts()
+    stored_first = []
+
+    def unreadable_after_the_summary(request):
+        wait_for(lambda: rows(run_app.pool, "SELECT count(*) FROM run_early")[0][0] == 1)
+        stored_first.append(True)
+        return httpx.Response(200, json=reply([{"text": "not json"}]))
+
+    parts["trials"] = [reply([{"text": "not json"}]), unreadable_after_the_summary]
+    at_one_piece = []
+
+    def one_piece(request):
+        at_one_piece.append(rows(run_app.pool, "SELECT count(*) FROM run_early")[0][0])
+        return httpx.Response(200, json=piece_reply(whole_answer()))
+
+    caplog.set_level(logging.INFO)
+    rid = run_app.start(parts=parts, one_piece=[one_piece])
+    v = run_app.view(rid)
+    assert stored_first == [True] and at_one_piece == [0]
+    assert v.status == "done" and v.answer is not None and v.early is None
+    assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(0,)]
+    assert f"run kind=early_withdrawn run_id={rid}" in [r.getMessage() for r in caplog.records]
+
+
+def test_a_failing_early_store_never_fails_the_run(run_app, monkeypatch, caplog):
+    import pubmedgemini.runner as runner_mod
+
+    def boom(*a, **k):
+        raise psycopg.OperationalError("made-up")
+
+    monkeypatch.setattr(runner_mod, "store_early", boom)
+    caplog.set_level(logging.INFO)
+    rid = run_app.start()
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("done", None) and v.answer is not None
+    assert "run kind=early_not_stored error=OperationalError" in [
+        r.getMessage() for r in caplog.records]
+
+
+def test_an_early_body_that_cannot_be_built_never_fails_the_run(run_app, monkeypatch, caplog):
+    import pubmedgemini.runner as runner_mod
+
+    def boom(*a, **k):
+        raise ValueError("made-up")
+
+    monkeypatch.setattr(runner_mod, "early_answer", boom)
+    caplog.set_level(logging.INFO)
+    rid = run_app.start()
+    assert run_app.view(rid).status == "done"
+    assert "run kind=early_not_stored error=ValueError" in [
+        r.getMessage() for r in caplog.records]
