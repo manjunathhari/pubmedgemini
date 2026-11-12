@@ -13,7 +13,7 @@ import os
 
 import httpx
 from lit_fakes import FakeUpstream, europepmc_routes, pubmed_routes
-from test_logging import intro_steps, marked_upstream, scenario
+from test_logging import intro_steps, marked_upstream, scenario, without_store_cleaning
 from writer_fakes import RunGemini
 
 from pubmedgemini.config import load_settings
@@ -30,6 +30,8 @@ def build():
         script, parts, piece = [_explode], None, ()
     else:
         script, parts, piece = scenario(mode)
+    if mode == "db_refused":
+        without_store_cleaning()  # a NUL is cleaned before the INSERT otherwise
     gemini = RunGemini(script, parts, piece, intro_steps(mode))  # the replies carry markers
     upstream = marked_upstream() if mode != "crash" else FakeUpstream(
         pubmed_routes() | europepmc_routes())

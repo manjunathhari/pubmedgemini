@@ -760,18 +760,40 @@ def test_finish_with_answer_stores_answer_and_status_together(run_app):
                 (rid,)) == [(True,)]
 
 
+DIRTY = "a\x00b\u202ec\u200bd"  # NUL, a bidi control, a zero-width space
+
+
+def test_finish_with_answer_stores_the_body_cleaned(run_app):
+    """NUL, bidi controls and zero-width characters are cleaned from every string of the
+    answer (keys too) before the INSERT: no UntranslatableCharacter, nothing for Postgres to
+    write into its server log."""
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    set_running(run_app.pool, rid)
+    body = {"summary": {"text": DIRTY, "k\x00\u200b": [DIRTY, 1, None]}, "references": []}
+    assert finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, body) is True
+    assert rows(run_app.pool, "SELECT body FROM answers WHERE run_id = %s", (rid,)) == [
+        ({"summary": {"text": "abcd", "k": ["abcd", 1, None]}, "references": []},)]
+    assert body["summary"]["text"] == DIRTY  # the caller's dict is not changed
+    assert run_app.view(rid).status == "done"
+
+
 def test_get_run_has_no_answer_when_none_was_stored(run_app):
     rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
     assert run_app.view(rid).answer is None
 
 
+# A body Postgres refuses: NaN is not JSON to Postgres (a NUL no longer is one: it is cleaned
+# before the INSERT).
+REFUSED = {"summary": float("nan")}
+
+
 def test_answer_and_status_are_stored_together(run_app):
-    """A body that cannot be stored (a NUL in a JSON string): no answer row and the status
-    stays running, in one rollback."""
+    """A body that cannot be stored (NaN in the JSON): no answer row and the status stays
+    running, in one rollback."""
     rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
     set_running(run_app.pool, rid)
     with pytest.raises(psycopg.Error):
-        finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, {"summary": "a\x00b"})
+        finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, REFUSED)
     assert rows(run_app.pool, "SELECT count(*) FROM answers") == [(0,)]
     assert rows(run_app.pool, "SELECT status, finished_at FROM runs WHERE id = %s",
                 (rid,)) == [("running", None)]
@@ -1139,12 +1161,13 @@ def test_the_database_refusing_the_answer_fails_the_run(run_app, monkeypatch, ca
 
     real = AnswerV3.to_body
 
-    def with_nul(self):
+    def refused(self):
         body = real(self)
-        body["question"] = "zq7 private\x00"  # Postgres refuses \u0000 in JSON
+        body["question"] = "zq7 private"
+        body["elapsed_s"] = float("nan")  # Postgres refuses NaN in JSON
         return body
 
-    monkeypatch.setattr(AnswerV3, "to_body", with_nul)
+    monkeypatch.setattr(AnswerV3, "to_body", refused)
     caplog.set_level(logging.DEBUG)
     rid = run_app.start()
     v = run_app.view(rid)
@@ -1152,7 +1175,7 @@ def test_the_database_refusing_the_answer_fails_the_run(run_app, monkeypatch, ca
     assert v.answer is None and answers(run_app.pool) == 0
     assert READY not in v.lines  # stored with the answer, so rolled back with it
     msgs = [r.getMessage() for r in caplog.records]
-    assert "run kind=answer_not_stored error=UntranslatableCharacter" in msgs
+    assert "run kind=answer_not_stored error=InvalidTextRepresentation" in msgs
     assert f"run kind=finished run_id={rid} status=failed error_kind=internal" in msgs
     assert "zq7" not in caplog.text and "u0000" not in caplog.text
 
@@ -1338,6 +1361,24 @@ def test_intro_text_is_stored_cleaned(run_app):
     assert run_app.view(rid).intro == "Abcd"
 
 
+def test_intro_text_with_every_hidden_character_is_stored_cleaned(run_app):
+    rid = running_run(run_app)
+    intro_start(run_app.pool, rid)
+    assert intro_finish(run_app.pool, rid, "done", None, DIRTY) is True
+    assert rows(run_app.pool, "SELECT text FROM run_intros") == [("abcd",)]
+    assert run_app.view(rid).status == "running"
+
+
+def test_store_early_stores_the_body_cleaned(run_app):
+    rid = running_run(run_app)
+    body = {"summary": True, "context": False, "answer": {"text": DIRTY, "list": [DIRTY]}}
+    assert store_early(run_app.pool, rid, body) is True  # no UntranslatableCharacter
+    assert rows(run_app.pool, "SELECT body FROM run_early") == [
+        ({"summary": True, "context": False, "answer": {"text": "abcd", "list": ["abcd"]}},)]
+    assert body["answer"]["text"] == DIRTY
+    assert run_app.view(rid).status == "running"
+
+
 def test_store_early_only_while_running(run_app):
     rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
     assert store_early(run_app.pool, rid, EARLY_BODY) is False  # queued: not yet
@@ -1375,7 +1416,7 @@ def test_finish_clears_the_early_row_in_the_same_transaction(run_app):
     store_early(run_app.pool, rid, EARLY_BODY)
     # A body the database refuses: the answer, the status and the early row all roll back.
     with pytest.raises(psycopg.Error):
-        finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, {"summary": "a\x00b"})
+        finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, REFUSED)
     assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(1,)]
     assert run_app.view(rid).status == "running"
     assert finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, BODY) is True
@@ -1735,3 +1776,50 @@ def test_an_early_body_that_cannot_be_built_never_fails_the_run(run_app, monkeyp
     assert run_app.view(rid).status == "done"
     assert "run kind=early_not_stored error=ValueError" in [
         r.getMessage() for r in caplog.records]
+
+
+def test_hidden_characters_in_the_early_part_and_the_answer_are_cleaned(run_app, monkeypatch,
+                                                                         caplog):
+    """The model text reaches the early summary and the answer with a NUL, U+202E and U+200B
+    (put in after the client, which already removes a NUL): both are stored cleaned, and the
+    run ends `done` as it would without them."""
+    from writer_fakes import good_parts
+
+    import pubmedgemini.runner as runner_mod
+    from pubmedgemini.writer.answer import AnswerV3
+
+    real_early = runner_mod.early_answer
+
+    def dirty_early(summary, context):
+        w = real_early(summary, context)
+        w.bottom_line.text += DIRTY
+        return w
+
+    real_body = AnswerV3.to_body
+
+    def dirty_body(self):
+        body = real_body(self)
+        body["question"] = "q" + DIRTY
+        return body
+
+    monkeypatch.setattr(runner_mod, "early_answer", dirty_early)
+    monkeypatch.setattr(AnswerV3, "to_body", dirty_body)
+    parts = good_parts()
+    outcomes = parts["outcomes"][0]
+    seen = []
+
+    def held(request):  # the outcomes part waits until the summary is stored
+        wait_for(lambda: rows(run_app.pool, "SELECT count(*) FROM run_early")[0][0] == 1)
+        seen.append(rows(run_app.pool, "SELECT body::text FROM run_early")[0][0])
+        return httpx.Response(200, json=outcomes)
+
+    parts["outcomes"] = [held]
+    caplog.set_level(logging.INFO)
+    rid = run_app.start(parts=parts)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("done", None)
+    assert seen and "abcd" in seen[0]
+    assert "\\u0000" not in seen[0] and "\u202e" not in seen[0] and "\u200b" not in seen[0]
+    assert v.answer["question"] == "qabcd"
+    msgs = [r.getMessage() for r in caplog.records]
+    assert not any("early_not_stored" in m or "answer_not_stored" in m for m in msgs)

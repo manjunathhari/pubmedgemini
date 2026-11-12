@@ -3,11 +3,14 @@
 A lone UTF-16 surrogate (JSON can spell one, as `\\ud800`) cannot be encoded as UTF-8, so
 it would fail the cache write and the page; it becomes U+FFFD. A NUL cannot be stored in a
 Postgres text column; it is removed. The answer page also drops bidi controls and
-zero-width characters from model text (`drop_invisible`); nothing stored changes. Nothing
-here logs.
+zero-width characters from model text (`drop_invisible`), and the stored model text (the
+Introduction, the early summary and the answer) is cleaned of all three before its INSERT
+(`scrub_json`), so Postgres never refuses it nor writes a piece of it into its server log.
+Nothing here logs.
 """
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 # A valid surrogate pair in JSON decodes to one character, so any surrogate left is lone.
@@ -33,25 +36,43 @@ def drop_invisible(s: str) -> str:
 def clean_json(value: Any) -> Any:
     """A parsed JSON value with every string (keys too) passed through `clean_text`.
     Walks with a stack, not recursion, so any depth json.loads accepted is fine."""
+    return _walk(value, clean_text)
+
+
+def _scrub(s: str) -> str:
+    return drop_invisible(clean_text(s))
+
+
+def scrub_json(value: Any) -> Any:
+    """As `clean_json`, and every string (keys too) also without bidi controls or zero-width
+    characters (`drop_invisible`): the body stored for model text. A new value; `value` is
+    not changed."""
+    return _walk(value, _scrub)
+
+
+def _walk(value: Any, fn: Callable[[str], str]) -> Any:
+    """`value` with `fn` applied to every string in it, keys too (a new value). A tuple is
+    walked as a list is (json.dumps writes both as an array); a key that is not a string is
+    kept as it is."""
     if isinstance(value, str):
-        return clean_text(value)
-    if not isinstance(value, (dict, list)):
+        return fn(value)
+    if not isinstance(value, (dict, list, tuple)):
         return value
     root: dict | list = {} if isinstance(value, dict) else []
-    stack: list[tuple[dict | list, dict | list]] = [(value, root)]
+    stack: list[tuple[dict | list | tuple, dict | list]] = [(value, root)]
     while stack:
         src, dst = stack.pop()
         pairs = src.items() if isinstance(src, dict) else enumerate(src)
         for key, item in pairs:
-            if isinstance(item, (dict, list)):
+            if isinstance(item, (dict, list, tuple)):
                 new: Any = {} if isinstance(item, dict) else []
                 stack.append((item, new))
             elif isinstance(item, str):
-                new = clean_text(item)
+                new = fn(item)
             else:
                 new = item
             if isinstance(dst, dict):
-                dst[clean_text(key)] = new
+                dst[fn(key) if isinstance(key, str) else key] = new
             else:
                 dst.append(new)
     return root

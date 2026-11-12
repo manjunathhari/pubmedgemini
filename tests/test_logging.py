@@ -755,7 +755,10 @@ def piece_after_a_blocked_part() -> tuple[dict, list]:
 
 def refused_by_the_database() -> dict:
     """The summary part's text holds a NUL: the whole answer is valid to read and to check, and
-    the database refuses it (JSONB has no NUL), with an error text that holds the body."""
+    the database refuses it (JSONB has no NUL), with an error text that holds the body. Since
+    the F3c review the body is cleaned of NUL before its INSERT (`runs.scrub_json`), so the
+    refusal is reached only with that cleaning turned off (`without_store_cleaning`): these
+    tests keep checking that a refused answer logs nothing of its text."""
     from writer_fakes import part_reply, whole_answer
 
     from pubmedgemini.writer.prompts import Section
@@ -763,6 +766,17 @@ def refused_by_the_database() -> dict:
     parts = marked_parts()
     parts["summary"] = [part_reply(Section.SUMMARY, whole_answer(f"{REFUSED_TAG}\u0000"))]
     return parts
+
+
+def without_store_cleaning(monkeypatch=None) -> None:
+    """Turns off the cleaning of stored bodies (`runs.scrub_json`), so a NUL in model text
+    reaches Postgres and is refused (the `db_refused` scenario)."""
+    import pubmedgemini.runs as runs_mod
+
+    if monkeypatch is None:  # tests/ask_app.py: a process of its own
+        runs_mod.scrub_json = lambda v: v
+    else:
+        monkeypatch.setattr(runs_mod, "scrub_json", lambda v: v)
 
 
 def marked_intro() -> list:
@@ -834,7 +848,7 @@ def test_nothing_private_is_logged_in_a_full_written_run(db_url, caplog, app_deb
     assert "writer kind=merged labels_defaulted=0" in msgs
 
 
-def test_failed_parts_log_kinds_only(db_url, caplog, app_debug):
+def test_failed_parts_log_kinds_only(db_url, caplog, app_debug, monkeypatch):
     """A blocked part (with a marked message), the one piece (marked text), and an answer the
     database refuses (marked body): fixed kinds and class names only, no exception text."""
     import re
@@ -857,6 +871,7 @@ def test_failed_parts_log_kinds_only(db_url, caplog, app_debug):
     assert_app_lines_fixed(msgs)
 
     caplog.clear()
+    without_store_cleaning(monkeypatch)
     with ask_env_marked(db_url, refused_by_the_database()) as env:
         app_debug()
         r = env.ask(LEAK_QUESTION)

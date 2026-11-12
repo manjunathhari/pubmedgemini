@@ -37,3 +37,13 @@ def test_clean_text_is_unchanged():
     assert clean_text("a\u200bb") == "a\u200bb"
     assert clean_json({"k\x00": ["x\ud800", {"y": "z\x00"}]}) == {"k": ["x\ufffd", {"y": "z"}]}
     assert clean_json({"k": "a\u202eb"}) == {"k": "a\u202eb"}
+
+
+def test_scrub_json_cleans_every_string_and_leaves_the_input_alone():
+    from pubmedgemini.lit.text import scrub_json
+
+    dirty = "a\x00b\u202ec\u200bd\ud800"
+    value = {"k\u200b": [dirty, (dirty, 2), {"n": None}], 7: True}
+    assert scrub_json(value) == {"k": ["abcd\ufffd", ["abcd\ufffd", 2], {"n": None}], 7: True}
+    assert value["k\u200b"][0] == dirty
+    assert scrub_json(dirty) == "abcd\ufffd" and scrub_json(3.5) == 3.5

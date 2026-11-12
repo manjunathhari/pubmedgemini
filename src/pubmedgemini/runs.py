@@ -32,7 +32,7 @@ from psycopg_pool import ConnectionPool
 from pubmedgemini.deid import BlockedIdentifiers, check_question
 from pubmedgemini.lit.cache import get_for_display
 from pubmedgemini.lit.paper import Paper
-from pubmedgemini.lit.text import clean_text, drop_invisible
+from pubmedgemini.lit.text import clean_text, drop_invisible, scrub_json
 from pubmedgemini.researcher.loop import SearchEntry, SeenPaper
 from pubmedgemini.researcher.studylist import Validated
 
@@ -383,7 +383,9 @@ def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
     neither. As `finish_run`, the outcome is written only while the run is still `queued` or
     `running`; when it is not (a restart stopped it), nothing is stored and the case is logged
     by a fixed kind. A body the database refuses raises the database error (the status stays
-    as it was); the caller decides what to do with it. Nothing of the body is logged.
+    as it was); the caller decides what to do with it. Nothing of the body is logged. The
+    body is stored cleaned of NUL, lone surrogates, bidi controls and zero-width characters
+    (`scrub_json`), so a NUL in model text never makes Postgres refuse it.
 
     The run's early summary is deleted in the same transaction (F3c), so the page never shows
     it next to the answer, nor loses it while the answer is not stored.
@@ -407,7 +409,7 @@ def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
         if applied:
             conn.execute(
                 "INSERT INTO answers (run_id, version, body) VALUES (%s, 3, %s)",
-                (run_id, Jsonb(body)),
+                (run_id, Jsonb(scrub_json(body))),
             )
             if closing_line is not None:
                 kind, line = closing_line
@@ -475,8 +477,9 @@ def store_early(pool: ConnectionPool, run_id: UUID, body: dict) -> bool:
     """Stores (or replaces) the run's early summary, only while the run is `running` and has
     no answer row. The run's row is locked first, so a store and the run's end never cross:
     a store after the end finds the run ended, and an end after a store deletes it. The
-    transaction waits at most EARLY_WRITE_TIMEOUT. A body the database refuses raises; the
-    caller logs its class. Nothing of the body is logged."""
+    transaction waits at most EARLY_WRITE_TIMEOUT. The body is stored cleaned as the answer
+    is (`scrub_json`). A body the database refuses raises; the caller logs its class. Nothing
+    of the body is logged."""
     with pool.connection() as conn, conn.transaction():
         conn.execute(f"SET LOCAL statement_timeout = '{EARLY_WRITE_TIMEOUT}'")
         row = conn.execute(
@@ -489,7 +492,7 @@ def store_early(pool: ConnectionPool, run_id: UUID, body: dict) -> bool:
         conn.execute(
             "INSERT INTO run_early (run_id, body) VALUES (%s, %s) ON CONFLICT (run_id) "
             "DO UPDATE SET body = EXCLUDED.body, updated_at = now()",
-            (run_id, Jsonb(body)),
+            (run_id, Jsonb(scrub_json(body))),
         )
         return True
 
