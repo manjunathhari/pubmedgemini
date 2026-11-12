@@ -760,10 +760,12 @@ def out_of_100_count(v: float) -> int:
 
 def out_of_100_groups(w: WrittenAnswer, groups: Sequence[NumGroup]) -> list[NumGroup]:
     """Incisive's selection (paired, every unit `%`, no difference), two arms only (X20); a
-    difference is `is_difference` (review M2)."""
-    return [g for g in groups if g.kind == "pair" and len(g.numbers) == 2 and all(
-        n.unit is not None and rust_trim(n.unit) == "%" and not is_difference(n)
-        for n in g.nums(w))]
+    difference is `is_difference` (review M2). Both arms must be named (`compared`, owner
+    decision d23, X29): Incisive labels a missing arm "arm 2"; here the pair is not drawn
+    and its numbers are listed in the outcome with the reason."""
+    return [g for g in groups if g.kind == "pair" and len(g.numbers) == 2 and compared(w, g)
+            and all(n.unit is not None and rust_trim(n.unit) == "%" and not is_difference(n)
+                    for n in g.nums(w))]
 
 
 @dataclass(frozen=True)
@@ -772,11 +774,6 @@ class OutItem:
     sentence_pieces: list[Piece]
     certainty: str
     arms: list[tuple[int, str, str]]  # (count of 100, arm name, "A" or "B")
-
-
-def _arm_name(n: Number, i: int) -> str:
-    a = rust_trim(n.arm) if n.arm is not None else ""
-    return a or f"arm {i + 1}"
 
 
 ALL_ZERO = "both arms round to 0 of 100"
@@ -805,7 +802,7 @@ def out_of_100(w: WrittenAnswer, refs: Mapping[str, int]) -> list[OutItem]:
         if out_of_100_problem(w, g, refs) is not None:
             continue
         o = w.outcomes[g.outcome]
-        names = [_arm_name(n, i) for i, n in enumerate(nums)]
+        names = [arm_name(n) for n in nums]
         exact = " vs ".join(f"{fmt_value(n.value)}% with {a}" for n, a in zip(nums, names,
                                                                               strict=True))
         sentence: list[Piece] = [("bold", f"{g.label}:"), ("text", f" {exact} "),

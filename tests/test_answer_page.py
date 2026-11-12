@@ -289,9 +289,24 @@ def test_out_of_100_takes_two_arm_percent_groups_only():  # Incisive's test, two
     assert [it.label for it in out_of_100(w, REFS)] == ["Relief"]
 
 
-def test_an_arm_without_a_name_is_numbered():
-    w = written([outcome("Pain", [num("Pain", 1.0, "%", "TEP"), num("Pain", 2.0, "%", None)])])
-    assert [a for _, a, _ in out_of_100(w, REFS)[0].arms] == ["TEP", "arm 2"]
+@pytest.mark.parametrize("blank", [None, "", "  "])
+def test_a_pair_with_an_unnamed_arm_is_not_drawn_out_of_100(blank):  # owner decision d23
+    w = written([outcome("Pain", [num("Pain", 9.4, "%", "TEP"), num("Pain", 18.8, "%", blank)])],
+                [study("1", "TEP vs Lichtenstein")])
+    assert out_of_100(w, REFS) == []
+    assert compare(w, REFS) == []
+    [c] = outcome_cards(w, REFS)
+    assert [(x.at, x.problem) for x in c.listed] == [((0, 0), "the other arm is not named"),
+                                                     ((0, 1), "arm not named")]
+    assert shown_at(w, REFS) == every_number(w)
+
+
+def test_a_pair_with_both_arms_named_is_drawn_out_of_100():
+    w = written([outcome("Pain", [num("Pain", 9.4, "%", "TEP"),
+                                  num("Pain", 18.8, "%", "Lichtenstein")])],
+                [study("1", "TEP vs Lichtenstein")])
+    [it] = out_of_100(w, REFS)
+    assert it.arms == [(9, "TEP", "A"), (19, "Lichtenstein", "B")]
 
 
 # ---------- compare the arms ----------
