@@ -1,0 +1,242 @@
+{
+ "outcomes": [
+  {
+   "outcome": "Chronic postoperative groin pain",
+   "rct_evidence": "Two meta-analyses [90000001; 90000002] and three RCTs [90000004; 90000007; 90000008]",
+   "effect_text": "Laparoscopic repair roughly halves to thirds the risk of any chronic groin pain compared with Lichtenstein. TEP vs Lichtenstein: RR 0.38 (95% CI 0.28-0.51) across 27 RCTs with 7,658 patients [90000001]. At 5 years: 9.4% with TEP vs 18.8% with Lichtenstein (P < 0.001) [90000004]. The exception is TEPLICH at about 8 years: 7.6% with TEP vs 6.7% with Lichtenstein [90000007].",
+   "numbers": [
+    {
+     "label": "Chronic pain, TEP vs Lichtenstein",
+     "value": 0.38,
+     "unit": "RR",
+     "arm": null,
+     "ci_low": 0.28,
+     "ci_high": 0.51,
+     "p": null,
+     "pmid": "90000001"
+    },
+    {
+     "label": "Chronic pain, TAPP vs Lichtenstein",
+     "value": 0.36,
+     "unit": "RR",
+     "arm": null,
+     "ci_low": 0.15,
+     "ci_high": 0.81,
+     "p": null,
+     "pmid": "90000002"
+    },
+    {
+     "label": "Patients in the meta-analysis",
+     "value": 7658,
+     "unit": "patients",
+     "arm": null,
+     "ci_low": null,
+     "ci_high": null,
+     "p": null,
+     "pmid": "90000001"
+    },
+    {
+     "label": "Chronic pain at 5 years",
+     "value": 9.4,
+     "unit": "%",
+     "arm": "TEP",
+     "ci_low": null,
+     "ci_high": null,
+     "p": "<0.001",
+     "pmid": "90000004"
+    },
+    {
+     "label": "Chronic pain at 5 years",
+     "value": 18.8,
+     "unit": "%",
+     "arm": "Lichtenstein",
+     "ci_low": null,
+     "ci_high": null,
+     "p": "<0.001",
+     "pmid": "90000004"
+    },
+    {
+     "label": "Non-ignorable pain at about 8 years",
+     "value": 7.6,
+     "unit": "%",
+     "arm": "TEP",
+     "ci_low": null,
+     "ci_high": null,
+     "p": null,
+     "pmid": "90000007"
+    },
+    {
+     "label": "Non-ignorable pain at about 8 years",
+     "value": 6.7,
+     "unit": "%",
+     "arm": "Lichtenstein",
+     "ci_low": null,
+     "ci_high": null,
+     "p": null,
+     "pmid": "90000007"
+    },
+    {
+     "label": "Chronic pain at 52 months",
+     "value": 15,
+     "unit": "%",
+     "arm": "TAPP",
+     "ci_low": null,
+     "ci_high": null,
+     "p": null,
+     "pmid": "90000008"
+    },
+    {
+     "label": "Chronic pain at 52 months",
+     "value": 31,
+     "unit": "%",
+     "arm": "Lichtenstein",
+     "ci_low": null,
+     "ci_high": null,
+     "p": null,
+     "pmid": "90000008"
+    }
+   ],
+   "certainty": "Moderate",
+   "why": "Consistent direction and large pooled effects; downgraded because one long-term trial found no difference and pain definitions vary.",
+   "pmids": [
+    "90000001",
+    "90000002",
+    "90000004",
+    "90000007",
+    "90000008"
+   ]
+  },
+  {
+   "outcome": "Moderate to severe chronic pain",
+   "rct_evidence": "Two RCTs [90000004; 90000007]",
+   "effect_text": "The absolute difference is much smaller for pain that matters: 1.9% with TEP vs 3.5% with Lichtenstein at 5 years (P = 0.092) [90000004].",
+   "numbers": [
+    {
+     "label": "Moderate or severe pain at 5 years",
+     "value": 1.9,
+     "unit": "%",
+     "arm": "TEP",
+     "ci_low": null,
+     "ci_high": null,
+     "p": "0.092",
+     "pmid": "90000004"
+    },
+    {
+     "label": "Moderate or severe pain at 5 years",
+     "value": 3.5,
+     "unit": "%",
+     "arm": "Lichtenstein",
+     "ci_low": null,
+     "ci_high": null,
+     "p": "0.092",
+     "pmid": "90000004"
+    }
+   ],
+   "certainty": "Low",
+   "why": "Few events and a wide difference between trials.",
+   "pmids": [
+    "90000004",
+    "90000007"
+   ]
+  },
+  {
+   "outcome": "Hernia recurrence",
+   "rct_evidence": "One meta-analysis [90000001] and one RCT [90000005]",
+   "effect_text": "There is no overall difference in recurrence: RR 1.03 (95% CI 0.62-1.72) [90000001]. The Swedish trial found 3.5% with TEP vs 1.2% with Lichtenstein [90000005].",
+   "numbers": [
+    {
+     "label": "Recurrence, TEP vs Lichtenstein",
+     "value": 1.03,
+     "unit": "RR",
+     "arm": null,
+     "ci_low": 0.62,
+     "ci_high": 1.72,
+     "p": null,
+     "pmid": "90000001"
+    },
+    {
+     "label": "Recurrence at 5 years",
+     "value": 3.5,
+     "unit": "%",
+     "arm": "TEP",
+     "ci_low": null,
+     "ci_high": null,
+     "p": "0.008",
+     "pmid": "90000005"
+    },
+    {
+     "label": "Recurrence at 5 years",
+     "value": 1.2,
+     "unit": "%",
+     "arm": "Lichtenstein",
+     "ci_low": null,
+     "ci_high": null,
+     "p": "0.008",
+     "pmid": "90000005"
+    }
+   ],
+   "certainty": "Moderate",
+   "why": "Pooled estimate is imprecise; one trial's excess was surgeon-specific.",
+   "pmids": [
+    "90000001",
+    "90000005"
+   ]
+  },
+  {
+   "outcome": "Cost",
+   "rct_evidence": "One RCT [90000006]",
+   "effect_text": "Operative costs were higher for TEP but total costs were comparable; no figures in the abstract [90000006].",
+   "numbers": [],
+   "certainty": "Very low",
+   "why": "A single trial from a European setting.",
+   "pmids": [
+    "90000006"
+   ]
+  },
+  {
+   "outcome": "Surgical wound infection",
+   "rct_evidence": "One meta-analysis [90000001]",
+   "effect_text": "Wound infection is less frequent after laparoscopic repair: RR 0.48 (95% CI 0.31-0.75) [90000001].",
+   "numbers": [
+    {
+     "label": "Wound infection, TEP vs Lichtenstein",
+     "value": 0.48,
+     "unit": "RR",
+     "arm": null,
+     "ci_low": 0.31,
+     "ci_high": 0.75,
+     "p": null,
+     "pmid": "90000001"
+    }
+   ],
+   "certainty": "Moderate",
+   "why": "Few events in single trials; consistent pooled effect.",
+   "pmids": [
+    "90000001"
+   ]
+  },
+  {
+   "outcome": "Return to work or daily activities",
+   "rct_evidence": "Two meta-analyses [90000001; 90000002]",
+   "effect_text": "Return to activity is about 3 to 5 days faster after laparoscopic repair: MD -4.74 days (95% CI -6.78 to -2.70) [90000001].",
+   "numbers": [
+    {
+     "label": "Return to daily activities, mean difference",
+     "value": -4.74,
+     "unit": "days",
+     "arm": null,
+     "ci_low": -6.78,
+     "ci_high": -2.7,
+     "p": null,
+     "pmid": "90000001"
+    }
+   ],
+   "certainty": "Moderate",
+   "why": "Consistent but heterogeneous definitions of return to activity.",
+   "pmids": [
+    "90000001",
+    "90000002"
+   ]
+  }
+ ]
+}

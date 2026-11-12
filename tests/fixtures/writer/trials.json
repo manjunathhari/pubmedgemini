@@ -1,0 +1,94 @@
+{
+ "studies": [
+  {
+   "pmid": "90000001",
+   "label": "TEP vs Lichtenstein meta-analysis, 2025, Hernia",
+   "design": "Meta-analysis of 27 RCTs",
+   "n": 7658,
+   "setting": "Mixed centres, mostly Europe",
+   "comparison": "TEP vs Lichtenstein",
+   "key_results": "Chronic pain RR 0.38; recurrence RR 1.03 [90000001].",
+   "appraisal": "Open-label trials; pain definitions vary."
+  },
+  {
+   "pmid": "90000002",
+   "label": "Network meta-analysis, 2021, Br J Surg",
+   "design": "Network meta-analysis of 35 RCTs",
+   "n": null,
+   "setting": "Mixed centres",
+   "comparison": "TEP vs TAPP vs Lichtenstein",
+   "key_results": "Chronic pain RR 0.36 for TEP and for TAPP [90000002].",
+   "appraisal": "Overlaps with the 2025 meta-analysis."
+  },
+  {
+   "pmid": "90000003",
+   "label": "TAPP vs Lichtenstein meta-analysis, 2020, Surg Endosc",
+   "design": "Meta-analysis",
+   "n": null,
+   "setting": "Mixed centres",
+   "comparison": "TAPP vs Lichtenstein",
+   "key_results": "Wound infection RR 0.36 [90000003].",
+   "appraisal": "Small trials."
+  },
+  {
+   "pmid": "90000004",
+   "label": "Swedish trial, 2010, Br J Surg",
+   "design": "RCT",
+   "n": "1370",
+   "setting": "Multicentre, Sweden",
+   "comparison": "TEP vs Lichtenstein",
+   "key_results": "Chronic pain at 5 years 9.4% vs 18.8% [90000004].",
+   "appraisal": "Open-label."
+  },
+  {
+   "pmid": "90000005",
+   "label": "Swedish trial, 2009, Ann Surg",
+   "design": "RCT",
+   "n": 1370,
+   "setting": "Multicentre, Sweden",
+   "comparison": "TEP vs Lichtenstein",
+   "key_results": "Recurrence 3.5% vs 1.2% [90000005].",
+   "appraisal": "One surgeon's results drove the excess."
+  },
+  {
+   "pmid": "90000006",
+   "label": "Cost trial, 2006, Surg Endosc",
+   "design": "RCT",
+   "n": 0,
+   "setting": "Single centre, Europe",
+   "comparison": "TEP vs Lichtenstein",
+   "key_results": "Total costs comparable [90000006].",
+   "appraisal": "No figures in the abstract."
+  },
+  {
+   "pmid": "90000007",
+   "label": "TEPLICH 8-year follow-up, 2024, Hernia",
+   "design": "RCT",
+   "n": 366,
+   "setting": "Multicentre, Netherlands",
+   "comparison": "TEP vs Lichtenstein",
+   "key_results": "Non-ignorable pain 7.6% vs 6.7% [90000007].",
+   "appraisal": "Loss to follow-up at 8 years."
+  },
+  {
+   "pmid": "90000008",
+   "label": "Three-arm RCT, 2004, Surg Endosc",
+   "design": "RCT",
+   "n": 200,
+   "setting": "Single centre",
+   "comparison": "TAPP vs Lichtenstein",
+   "key_results": "Chronic pain at 52 months 15% vs 31% [90000008].",
+   "appraisal": "Small; three arms."
+  }
+ ],
+ "conflicts": [
+  {
+   "text": "TEPLICH found no difference in pain at about 8 years [90000007], unlike the pooled trials [90000001]; longer follow-up and a stricter pain definition may explain it.",
+   "pmids": [
+    "90000007",
+    "90000001"
+   ]
+  }
+ ],
+ "notable_findings": "- One surgeon's results raised the TEP recurrence rate in the Swedish trial [90000005].\n- The two meta-analyses share many trials, so they are not independent evidence [90000001; 90000002].\n- The longest follow-up found no difference in pain [90000007]."
+}

@@ -1,0 +1,9 @@
+{
+ "bottom_line": {
+  "text": "Laparoscopic repair reduces chronic postoperative pain compared with Lichtenstein repair [90000001; 90000002; 90000003]. The absolute benefit is mainly in mild pain [90000004]. One long-term trial found no difference at about 8 years [90000007].",
+  "certainty": "Moderate",
+  "certainty_reason": "Consistent direction across overlapping meta-analyses, but pain definitions vary and trials are open-label."
+ },
+ "at_a_glance": "Laparoscopic repair causes less chronic pain than Lichtenstein repair [90000001; 90000002].\n- Chronic pain: RR 0.38 with TEP vs Lichtenstein [90000001]\n- Chronic pain at 5 years: 9.4% with TEP vs 18.8% with Lichtenstein [90000004]\n- Recurrence: RR 1.03, no difference [90000001]\nMain caveat: pain definitions vary and trials are open-label.",
+ "clinical_practice": "Default choice: Offer TEP or TAPP when a surgeon experienced in it is available [90000001; 90000002]. Lichtenstein remains a sound repair when laparoscopic expertise is lacking [90000005].\nWho may benefit: Patients most concerned about chronic pain [90000004].\nCounselling: Fewer people have lasting groin pain after keyhole repair; recurrence is similar [90000001].\nCost per case: not known"
+}

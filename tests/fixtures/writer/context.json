@@ -1,0 +1,11 @@
+{
+ "applicability": {
+  "case_mix": "Mostly primary unilateral hernias in men [90000001].",
+  "india_cost_context": "Not known from these abstracts; no Indian costs were reported.",
+  "training": "Laparoscopic repair has a learning curve; outcomes depend on surgeon experience."
+ },
+ "would_change": [
+  "A long-term trial with a standard definition of chronic pain.",
+  "A trial reporting costs in Indian practice."
+ ]
+}
