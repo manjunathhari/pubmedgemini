@@ -1327,6 +1327,12 @@ def out_of_100(w: WrittenAnswer, refs: Mapping[str, int]) -> list[OutItem]:
         if out_of_100_problem(w, g, refs) is not None:
             continue
         o = w.outcomes[g.outcome]
+        # D1 (review): the arm on the comparison's first side is shown first (solid squares),
+        # the second side second (hatched), whether `arm_side` placed it by the word score,
+        # S1 or S2; each name keeps its own value. `out_of_100_problem` has checked the two
+        # arms match opposite sides.
+        comparison = comparison_of(w, g.pmid)
+        nums = sorted(nums, key=lambda n: arm_side(n.arm, comparison) or 0)
         names = [arm_name(n) for n in nums]
         exact = " vs ".join(f"{fmt_value(n.value)}% with {a}" for n, a in zip(nums, names,
                                                                               strict=True))

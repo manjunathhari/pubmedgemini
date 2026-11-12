@@ -1335,6 +1335,10 @@ def test_random_answers_keep_the_pages_promises():
         items = out_of_100(w, refs)
         for it in items:
             assert all(name.strip() for _, name, _ in it.arms), case
+            # D1: the comparison's first side is shown first (solid), the second side second
+            cmp = w.studies[0].comparison if w.studies else None
+            assert [_o_side(name, cmp) for _, name, _ in it.arms] == [0, 1], case
+            assert [ab for _, _, ab in it.arms] == ["A", "B"], case
         # each out-of-100 candidate is drawn or its compare row gives the reason, never both
         candidates = out_of_100_groups(w, all_groups(w, refs))
         assert len(items) + sum(row.problem is not None for row in rows) == len(candidates), case
@@ -2156,8 +2160,13 @@ def test_s1_group_letters_get_squares():
     w = _pct_pair("Group A", "Group B", comparison=GROUP_CMP)
     [it] = out_of_100(w, REFS)
     assert [(c, a, s) for c, a, s in it.arms] == [(9, "Group A", "A"), (19, "Group B", "B")]
-    w = _pct_pair("Group B", "Group A", comparison=GROUP_CMP)  # the writer's order kept
-    assert [a for _, a, _ in out_of_100(w, REFS)[0].arms] == ["Group B", "Group A"]
+    # D1: the writer lists the second side first; the first side is still shown first (solid),
+    # each name with its own count (Group B 9.4% -> 9, Group A 18.8% -> 19). This replaces the
+    # earlier "the writer's order kept" assertion (deliberately changed in the D1 commit).
+    w = _pct_pair("Group B", "Group A", comparison=GROUP_CMP)
+    [it] = out_of_100(w, REFS)
+    assert it.arms == [(19, "Group A", "A"), (9, "Group B", "B")]
+    assert it.sentence_pieces[1] == ("text", " 18.8% with Group A vs 9.4% with Group B ")
 
 
 @pytest.mark.parametrize("a,b,comparison", [
@@ -2217,6 +2226,25 @@ def test_s2_pair_gets_squares_only_with_the_words_in_the_comparison():
         assert out_of_100(w, REFS) == []
         [row] = [r for g in compare(w, REFS) for r in g.rows]
         assert row.problem == NOT_MATCHED
+
+
+@pytest.mark.parametrize("a,b,comparison,first", [
+    ("Control group", "Experimental group", EXP_CMP, "Experimental group"),     # S2 and score
+    ("Standard arm", "Experimental arm", "Experimental arm vs standard arm", "Experimental arm"),
+    ("Group B", "Group A", GROUP_CMP, "Group A"),                                 # S1
+    ("Lichtenstein", "TEP", TEP_VS_L, "TEP"),                                     # word score
+    ("Lichtenstein group", "TEP (n=665)", TEP_VS_L, "TEP (n=665)")])
+def test_out_of_100_shows_the_first_side_first_whatever_the_writers_order(a, b, comparison,
+                                                                          first):  # D1
+    w = _pct_pair(a, b, comparison=comparison, va=9.4, vb=18.8)
+    [it] = out_of_100(w, REFS)
+    counts = {a: 9, b: 19}
+    assert [x[1] for x in it.arms] == [first, a if first == b else b]
+    assert [x[2] for x in it.arms] == ["A", "B"]  # solid squares first, hatched second
+    assert all(c == counts[name] for c, name, _ in it.arms)  # each count stays with its name
+    # the same pair written in the other order draws the same item
+    w2 = _pct_pair(b, a, comparison=comparison, va=18.8, vb=9.4)
+    assert out_of_100(w2, REFS)[0].arms == it.arms
 
 
 def test_s2_both_arms_on_one_side_stay_text():
