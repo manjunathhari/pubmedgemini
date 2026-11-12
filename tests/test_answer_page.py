@@ -952,10 +952,13 @@ _VALUES = [0.0, -0.0, 1.0, -1.0, 0.5, 12.5, 20.0, 99.5, 100.0, 140.0, -3.0, 1e-3
            1e306, 1e307, 1e308, -1e308, 1.7e308, float("nan"), float("inf"), float("-inf")]
 _LABELS = ["Pain", "MD", "Mean difference in pain", "Recurrence (no significant difference)",
            "Seroma RR", "Robotic minus lap", "Difference", "", "  ", "Ache at 2 y",
-           "Risk difference", "Md. score"]
+           "Risk difference", "Md. score", "MD Anderson Dysphagia Inventory score",
+           "Difference in pain", "MD, days", "Pain\u200b", "\u202eRecurrence"]
 _ARMS = [None, "", " ", " ", "MD", " md ", "SMD", "risk  difference", "TEP", "tep", "TEP ",
          "Lichtenstein", "MD Anderson protocol", "Md. Ali technique", "Drain minus",
-         "TEP vs Lichtenstein", "POEM minus PD", "Robotic  TAPP", "robotic TAPP"]
+         "TEP vs Lichtenstein", "POEM minus PD", "Robotic  TAPP", "robotic TAPP", "MD.",
+         "M.D.", "Difference:", "ARR", "NNT", "difference vs laparoscopic", "\u202eTEP",
+         "TEP\u200b", "\u200b", "\ufeffLichtenstein", "ＴＥＰ"]
 _UNITS = [None, "", "%", " % ", "RR", "OR", "HR", "rr", "aHR", "days", "points", "MD"]
 _PMIDS = ["1", "2", " 1 ", "", "  ", "99999999"]
 _P = [None, "", "p", "P < .001", "0.03"]
@@ -993,7 +996,13 @@ def _rand_body(r) -> AnswerBody:
 def test_random_answers_keep_the_pages_promises():
     import random
 
-    from pubmedgemini.answer_page import arm_name, names_an_arm, out_of_100_groups
+    from pubmedgemini.answer_page import (
+        arm_name,
+        difference_measure,
+        names_an_arm,
+        out_of_100_groups,
+        plain_arm,
+    )
 
     r = random.Random(20261112)
     for case in range(3000):
@@ -1017,6 +1026,25 @@ def test_random_answers_keep_the_pages_promises():
         # each out-of-100 candidate is drawn or its compare row gives the reason, never both
         candidates = out_of_100_groups(w, all_groups(w, refs))
         assert len(items) + sum(row.problem is not None for row in rows) == len(candidates), case
+        # third check M1: no drawn pair has an arm that is not a plain arm name
+        for row in rows:
+            assert all(plain_arm(w.outcomes[o].numbers[j]) for o, j in row.at), case
+        for g in candidates:
+            assert all(plain_arm(n) for n in g.nums(w)), case
+        # third check M2: no difference row lacks a named measure
+        for row in f.diffs:
+            assert difference_measure(w.outcomes[row.at[0]].numbers[row.at[1]]), case
+        # third check L1: drawn difference axes have three distinct labels and 0 inside
+        for row in f.diffs:
+            if row.drawn:
+                sc = row.scale
+                assert len({sc.lo_text, sc.mid_text, sc.hi_text}) == 3, case
+                assert sc.lo < 0 < sc.hi, case
+        # third check L2: a number shown in a compare row is never also listed as not drawn
+        in_rows = {x for row in rows for x in row.at}
+        assert not in_rows & {x.at for c in outcome_cards(w, refs) for x in c.listed}, case
+        # third check L3: nothing the page draws holds a bidi control or zero-width character
+        assert not any(ch in INVISIBLE for t in _strings(answer_view(body)) for ch in t), case
 
 
 def rust_trim_pmid(n: Number) -> str:
