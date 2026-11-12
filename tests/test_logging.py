@@ -1004,3 +1004,33 @@ def test_answer_page_logs_nothing_of_the_answer(db_url, upstream, caplog, app_de
         lines = [m for m in _app_messages(caplog) if m.startswith("answer_page")]
         assert lines == ["answer_page kind=row_not_derived rows=1"]
         assert_app_lines_fixed(_app_messages(caplog))
+
+
+def test_an_unreadable_answer_logs_its_fixed_kind_only(db_url, upstream, caplog, app_debug):
+    # Review leak gap: the run page's unreadable-answer line (main's own) must carry the fixed
+    # kind alone: nothing of the stored body, nothing of the exception (no repr, no text, no
+    # traceback).
+    from psycopg.types.json import Jsonb
+    from test_ask_page import HAPPY_RUN, H, ask_env, insert_run
+
+    body = _marked_answer().to_body()
+    body["answer"]["outcomes"][0]["numbers"] = "mkq-numbers-not-a-list"  # cannot be read
+    body["answer"]["bottom_line"]["certainty"] = "mkq-certainty"
+    with ask_env(db_url, upstream, HAPPY_RUN) as env:
+        app_debug()
+        rid = insert_run(env, status="done", error_kind=None)
+        with env.pool.connection() as conn:
+            conn.execute("INSERT INTO answers (run_id, version, body) VALUES (%s, 3, %s)",
+                         (rid, Jsonb(body)))
+        caplog.clear()
+        with caplog.at_level(logging.DEBUG):
+            r = env.c.get(f"/runs/{rid}", headers=H)
+        assert r.status_code == 200 and "The answer could not be shown." in r.text
+        assert "mkq" not in r.text
+        lines = [m for m in _app_messages(caplog) if m.startswith("run page answer")]
+        assert lines == ["run page answer kind=invalid"]
+        assert_app_lines_fixed(_app_messages(caplog))
+        assert "mkq" not in caplog.text
+        for word in ("AnswerInvalid", "ValidationError", "Traceback", "invalid'", "('"):
+            assert word not in caplog.text, word
+        assert all(rec.exc_info is None and rec.exc_text is None for rec in caplog.records)
