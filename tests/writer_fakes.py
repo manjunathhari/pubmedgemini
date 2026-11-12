@@ -3,10 +3,15 @@ mock's hernia numbers; no live reply) and small builders that change one field o
 
 import copy
 import json
+import re
+import threading
 from pathlib import Path
 from typing import Any
 
+import httpx
 from gemini_fakes import reply
+
+from pubmedgemini.gemini.client import GEMINI_HOST
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "writer"
 PART_FILES = {"trials": "trials.json", "outcomes": "outcomes.json", "context": "context.json",
@@ -59,3 +64,75 @@ def text_reply(text: str, finish: str = "STOP") -> dict:
 
 def deep(value: Any) -> Any:
     return copy.deepcopy(value)
+
+
+# ---------- a Gemini that serves the writer's parts by their section word ----------
+
+_SECTION = re.compile(r"SECTION TO WRITE: ([A-Z]+)")
+ONE_PIECE = "ONE_PIECE"
+
+
+def section_word(body: dict) -> str:
+    """The part a request writes (`TRIALS` …), or ONE_PIECE for the one-piece writer."""
+    m = _SECTION.search(body["contents"][0]["parts"][0]["text"])
+    return m.group(1) if m else ONE_PIECE
+
+
+def user_of(body: dict) -> str:
+    return body["contents"][0]["parts"][0]["text"]
+
+
+class PartsGemini:
+    """An httpx.MockTransport for GEMINI_HOST that serves each part from its own script
+    (`{"TRIALS": [step, ...], ..., "ONE_PIECE": [...]}`), since the four threads may send in
+    any order after pacing. A step is a 200 body (dict), an httpx.Response, or a function of
+    the request returning one. Records every request with the clock time it arrived.
+    Thread-safe."""
+
+    def __init__(self, script: dict, clock=None, on_request=None) -> None:
+        self.script = {k: list(v) for k, v in script.items()}
+        self.clock = clock
+        self.on_request = on_request
+        self.sent: list[dict] = []
+        self.starts: list[float] = []
+        self._lock = threading.Lock()
+        self.transport = httpx.MockTransport(self._handle)
+
+    def words(self) -> list[str]:
+        return [section_word(b) for b in self.sent]
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host != GEMINI_HOST:
+            return httpx.Response(404)
+        body = json.loads(request.content)
+        word = section_word(body)
+        with self._lock:
+            self.sent.append(body)
+            if self.clock is not None:
+                self.starts.append(self.clock.now())
+            steps = self.script.get(word) or []
+            if not steps:
+                raise AssertionError(f"PartsGemini: no reply left for {word}")
+            step = steps.pop(0)
+        if self.on_request is not None:
+            self.on_request(word, body)
+        if callable(step) and not isinstance(step, httpx.Response):
+            return step(request)
+        if isinstance(step, dict):
+            return httpx.Response(200, json=step)
+        return httpx.Response(step.status_code, headers=step.headers, content=step.content)
+
+
+def parts_ok() -> dict:
+    """Every part's first reply readable; nothing for the one-piece writer."""
+    return {w.upper(): [json_reply(fixture_part(w))] for w in PART_FILES} | {ONE_PIECE: []}
+
+
+def whole_ok() -> dict:
+    return json_reply(fixture("whole.json"))
+
+
+def cut_off(word: str = "outcomes") -> dict:
+    """A reply cut off by its output limit (a readable part, but MAX_TOKENS: never read)."""
+    return json_reply(fixture_part(word) if word != ONE_PIECE else fixture("whole.json"),
+                      finish="MAX_TOKENS", out=12_000)
