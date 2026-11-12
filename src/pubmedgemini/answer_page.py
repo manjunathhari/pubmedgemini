@@ -23,6 +23,7 @@ at an edge (X16), the out-of-100 sentence (X21), the pills and the fold that kee
 cards of a pair level (X14). Rounding is Rust's `f64::round` (half away from zero).
 """
 
+import dataclasses
 import logging
 import math
 import re
@@ -33,6 +34,7 @@ from decimal import Decimal
 from typing import Any, Literal
 
 from pubmedgemini.gemini.structured import rust_trim
+from pubmedgemini.lit.text import drop_invisible
 from pubmedgemini.writer.answer import (
     EVIDENCE_LABELS,
     AnswerBody,
@@ -259,8 +261,9 @@ def is_diff(n: Number) -> bool:
 
 
 def arm_name(n: Number) -> str:
-    """The arm name the writer gave for this number, trimmed ("" when none)."""
-    return rust_trim(n.arm) if n.arm is not None else ""
+    """The arm name the writer gave for this number, without bidi controls or zero-width
+    characters (L3), trimmed ("" when none)."""
+    return rust_trim(drop_invisible(n.arm)) if n.arm is not None else ""
 
 
 # Arm texts that are a difference marker, not an arm name: the whole text, trimmed, case-folded
@@ -284,9 +287,16 @@ ArmKind = Literal["none", "marker", "comparison", "name"]
 
 
 def _key(s: str) -> str:
-    """A text as a classification key: Unicode NFKC ("ＭＤ" is "MD"), trimmed, inner
-    whitespace squashed, case-folded. Never shown."""
-    return rust_trim(_SPACES.sub(" ", unicodedata.normalize("NFKC", s))).casefold()
+    """A text as a classification key: bidi controls and zero-width characters removed (L3:
+    "TEP\u200b" is "TEP"), Unicode NFKC ("ＭＤ" is "MD"), trimmed, inner whitespace squashed,
+    case-folded. Never shown."""
+    return _display_key(s).casefold()
+
+
+def _display_key(s: str) -> str:
+    """A text for matching with its case kept: bidi controls and zero-width characters
+    removed, NFKC, trimmed, inner whitespace squashed."""
+    return rust_trim(_SPACES.sub(" ", unicodedata.normalize("NFKC", drop_invisible(s))))
 
 
 
@@ -344,10 +354,6 @@ _LEAD_TERM = re.compile(
 _FIRST_WORD = re.compile(r"[^\W\d_]+")
 _UNIT_TERMS = {"md": "MD", "smd": "SMD", "wmd": "WMD", "difference": "difference"}
 
-
-def _display_key(s: str) -> str:
-    """A text for matching with its case kept: NFKC, trimmed, inner whitespace squashed."""
-    return rust_trim(_SPACES.sub(" ", unicodedata.normalize("NFKC", s)))
 
 
 def _named(m: re.Match[str]) -> str:
@@ -1279,8 +1285,30 @@ def _clean(text: str) -> str:
     return rust_trim(_SPACES.sub(" ", text))
 
 
+def _scrub(x: Any) -> Any:
+    """`x` with `drop_invisible` applied to every string in it, at any depth (dataclasses and
+    lists); numbers and None as they are. A new value: `x` is not changed."""
+    if isinstance(x, str):
+        return drop_invisible(x)
+    if isinstance(x, list):
+        return [_scrub(i) for i in x]
+    if dataclasses.is_dataclass(x) and not isinstance(x, type):
+        return dataclasses.replace(x, **{f.name: _scrub(getattr(x, f.name))
+                                         for f in dataclasses.fields(x) if f.init})
+    return x
+
+
+def model_text_cleaned(body: AnswerBody) -> AnswerBody:
+    """The body with bidi controls and zero-width characters removed from the model's text
+    (`answer`, `notes`, `searches`), as `runs.save_answer` stores it (third check L3): the
+    page's own defence for an answer stored before that rule."""
+    return dataclasses.replace(body, answer=_scrub(body.answer), notes=_scrub(body.notes),
+                               searches=_scrub(body.searches))
+
+
 def answer_view(body: AnswerBody) -> dict[str, Any]:
     """Everything the answer page draws, computed here; the template only places it."""
+    body = model_text_cleaned(body)
     refs = refs_of(body)
     v: dict[str, Any] = {
         "empty_reason": body.empty_reason,

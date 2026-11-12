@@ -36,7 +36,7 @@ from psycopg_pool import ConnectionPool
 from pubmedgemini.deid import BlockedIdentifiers, check_question
 from pubmedgemini.lit.cache import get_for_display
 from pubmedgemini.lit.paper import Paper
-from pubmedgemini.lit.text import clean_json, clean_text
+from pubmedgemini.lit.text import clean_json, clean_model_text, clean_text
 from pubmedgemini.researcher.loop import SearchEntry, SeenPaper
 from pubmedgemini.researcher.studylist import Validated
 from pubmedgemini.writer.answer import AnswerBody, body_from_json, body_to_json
@@ -375,6 +375,11 @@ def finish_run(pool: ConnectionPool, run_id: UUID, status: str, error_kind: str 
     return applied
 
 
+# The stored answer's fields written by the model (or holding its words): bidi controls and
+# zero-width characters are removed from them (`save_answer`).
+MODEL_TEXT_FIELDS = frozenset({"answer", "notes", "searches"})
+
+
 def save_answer(pool: ConnectionPool, run_id: UUID, body: AnswerBody,
                 written: str | None) -> int | None:
     """Stores the run's answer (one row per run; a second write replaces the first), only
@@ -386,8 +391,12 @@ def save_answer(pool: ConnectionPool, run_id: UUID, body: AnswerBody,
     it is removed, as Incisive removes it before Postgres (`chat/service.rs`, "Postgres text
     cannot hold NUL"); a lone surrogate becomes U+FFFD. Other control characters are kept:
     JSONB stores them and Incisive's writer path has no rule for them (`agent/llm.rs`,
-    `agent/answer_v3.rs`, `agent/writer_v3.rs`: none, checked at commit 12630f7)."""
-    doc = clean_json(body_to_json(body))
+    `agent/answer_v3.rs`, `agent/writer_v3.rs`: none, checked at commit 12630f7), except bidi
+    controls and zero-width characters, removed from the model's text (`answer`, `notes`,
+    `searches`: `clean_model_text`; F3 third check L3) so they cannot reorder or hide what the
+    page shows. PubMed's text (`references`) keeps them. Incisive has no such rule."""
+    doc = {k: clean_json(v, clean_model_text if k in MODEL_TEXT_FIELDS else clean_text)
+           for k, v in body_to_json(body).items()}
     size = len(json.dumps(doc, ensure_ascii=False).encode("utf-8", "surrogatepass"))
     with pool.connection() as conn:
         cur = conn.execute(

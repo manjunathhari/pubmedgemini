@@ -7,6 +7,7 @@ route; one test runs a whole question inline (the writer's fake parts) and follo
 page's link. No test reaches the network."""
 
 import copy
+import dataclasses
 import re
 import uuid
 from pathlib import Path
@@ -368,3 +369,16 @@ def test_a_difference_whose_axis_overflows_never_500s_the_page(env, v, lo, hi): 
         num("Mean difference in stay", v, "days", None, PMIDS[0], lo, hi))))
     i = t.index("<b>Mean difference in stay</b>")
     assert "Not drawn: the interval is too wide to draw." in t[i:i + 2000]
+
+
+def test_a_right_to_left_override_never_reaches_the_page(env):  # third check L3
+    body = copy.deepcopy(hernia())
+    for o in body.answer.outcomes:
+        for i, n in enumerate(o.numbers):
+            if n.arm == "TEP":
+                o.numbers[i] = dataclasses.replace(n, arm="\u202eTEP")
+    body.answer.outcomes[0].effect_text += " \u2067x\u2069 \u200b"
+    t = page(env, store(env, body))
+    assert not re.search("[\u202a-\u202e\u2066-\u2069\u200b-\u200f\u061c\u2060\ufeff]", t)
+    assert '<span class="mono">TEP 9.4% vs Lichtenstein 18.8%</span>' in t
+    assert "9.4% with TEP vs 18.8% with Lichtenstein" in t

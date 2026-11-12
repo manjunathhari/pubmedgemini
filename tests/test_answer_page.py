@@ -1148,3 +1148,106 @@ def test_a_compared_number_is_not_listed_again(label):
     in_pairs = {x for g in compare(w, REFS) for r in g.rows for x in r.at}
     assert in_pairs == {(0, 0), (0, 1)}
     assert outcome_cards(w, REFS)[0].listed == []
+
+
+# ---------- bidi controls and zero-width characters never reach the page (third check L3) ----
+
+INVISIBLE = ("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f\u061c"
+             "\u200b\u200c\u200d\u2060\ufeff")
+
+
+def test_drop_invisible_removes_bidi_and_zero_width_characters_only():
+    from pubmedgemini.lit.text import drop_invisible
+
+    assert drop_invisible("T" + INVISIBLE + "EP") == "TEP"
+    kept = "\t\n\x01\x1f\u00ad\u00a0é🦷ТЕР"  # other controls and characters are kept
+    assert drop_invisible(kept) == kept
+
+
+def _body(w) -> AnswerBody:
+    return AnswerBody(created_at="2026-11-12T00:00:00Z", answer=w, empty_reason=None,
+                      references=[Reference(1, "1", "T", "J", 2020, None, False)], searches=[],
+                      integrity=Integrity(), stopped_early=None, elapsed_s=1, notes=[])
+
+
+def _compare_rows(v):
+    return [i.payload for p in v["pairs"] for side in (p.left, p.right) if side
+            for i in side.shown + side.hidden if i.payload.__class__.__name__ == "CompareRow"]
+
+
+def _out_items(v):
+    return [i.payload for p in v["pairs"] for side in (p.left, p.right) if side
+            for i in side.shown + side.hidden if i.payload.__class__.__name__ == "OutItem"]
+
+
+def test_a_right_to_left_override_in_an_arm_cannot_reorder_the_row():  # the reviewer's case
+    w = written([outcome("Pain", [num("Chronic pain", 9.4, "%", "\u202eTEP"),
+                                  num("Chronic pain", 18.8, "%", "Lichtenstein\u202c")])],
+                [study("1", "TEP vs Lichtenstein")])
+    v = answer_view(_body(w))
+    [row] = _compare_rows(v)
+    assert row.values_text == "TEP 9.4% vs Lichtenstein 18.8%"
+    [it] = _out_items(v)
+    assert [(c, a) for c, a, _ in it.arms] == [(9, "TEP"), (19, "Lichtenstein")]
+    assert pieces_text(it.sentence_pieces).startswith(
+        "Chronic pain: 9.4% with TEP vs 18.8% with Lichtenstein [1].")
+
+
+def test_an_arm_differing_only_by_a_zero_width_character_is_the_same_arm():
+    w = written([outcome("Pain", [num("Pain", 9.4, "%", "TEP\u200b"), num("Pain", 18.8, "%", "TEP")])],
+                [study("1", "TEP vs Lichtenstein")])
+    assert [g.kind for g in all_groups(w, REFS)] == ["text"]
+    assert compare(w, REFS) == []
+    assert [x.problem for x in outcome_cards(w, REFS)[0].listed] == [
+        "its arms are not distinct", "its arms are not distinct"]
+
+
+@pytest.mark.parametrize("arm", ["\u200b", "\u202e", " \ufeff\u2060 "])
+def test_an_arm_of_invisible_characters_only_is_unnamed(arm):  # d23
+    w = written([outcome("Pain", [num("Pain", 9.4, "%", "TEP"), num("Pain", 18.8, "%", arm)])],
+                [study("1", "TEP vs Lichtenstein")])
+    from pubmedgemini.answer_page import arm_kind
+
+    assert arm_kind(w.outcomes[0].numbers[1]) == "none"
+    assert compare(w, REFS) == [] and out_of_100(w, REFS) == []
+    assert [x.problem for x in outcome_cards(w, REFS)[0].listed] == [
+        "the other arm is not named", "arm not named"]
+
+
+def test_invisible_characters_in_a_marker_or_measure_are_ignored():
+    from pubmedgemini.answer_page import arm_kind, difference_measure
+
+    assert arm_kind(num("LOS", 1.0, "days", "M\u200bD")) == "marker"
+    assert difference_measure(num("M\u200bD, days", 1.0)) == "MD"
+    assert difference_measure(num("Pain", 1.0, "\u202eMD")) == "MD"
+
+
+def test_the_view_drops_invisible_characters_from_every_model_string():
+    w = written([outcome("Pa\u202ein", [num("Pain\u200b", 9.4, "%", "TEP", p="<0.0\u200e1"),
+                                         num("Pain", 18.8, "%", "Lichtenstein")],
+                         effect="E\u2066x", why="W\u061c", evidence="R\ufeff")],
+                [study("1", "TEP\u202d vs Lichtenstein")])
+    body = _body(w)
+    body.notes.append("n\u200f")
+    v = answer_view(body)
+    assert not any(ch in INVISIBLE for t in _strings(v) for ch in t)
+    assert any("Pain" == t for t in _strings(v))  # the strings were walked
+    assert body.answer.outcomes[0].outcome == "Pa\u202ein"  # the stored answer is unchanged
+
+
+def _strings(x, seen=None):
+    """Every string in an answer_view value, at any depth (dataclasses, lists, dicts)."""
+    import dataclasses
+
+    if isinstance(x, str):
+        yield x
+    elif isinstance(x, dict):
+        for k, v in x.items():
+            yield from _strings(k)
+            yield from _strings(v)
+    elif isinstance(x, (list, tuple, set)):
+        for v in x:
+            yield from _strings(v)
+    elif dataclasses.is_dataclass(x) and not isinstance(x, type):
+        for f in dataclasses.fields(x):
+            yield from _strings(getattr(x, f.name))

@@ -927,6 +927,29 @@ def test_save_answer_removes_nul_at_any_depth(run_app):  # review M4
     assert got.answer.bottom_line.text == "b" + C0_KEPT and got.notes[-1] == "n"
 
 
+def test_save_answer_drops_bidi_and_zero_width_characters_from_model_text(run_app):  # L3
+    from test_answer_page import hernia
+
+    from pubmedgemini.researcher.loop import SearchEntry
+
+    body = hernia()
+    n0 = body.answer.outcomes[0].numbers[3]
+    body.answer.outcomes[0].numbers[3] = dataclasses.replace(n0, arm="\u202eTEP\u200b")
+    body.answer.bottom_line = dataclasses.replace(body.answer.bottom_line,
+                                                  text="b\u2066\ufeff" + C0_KEPT)
+    body.notes.append("n\u200f")
+    body.searches.append(SearchEntry("mesh\u200d repair", "PubMed", 3))
+    body.references[0] = dataclasses.replace(body.references[0], title="Title\u202e 1")
+    rid = create_run(run_app.pool, run_app.owner_id, "q", MODEL)
+    set_running(run_app.pool, rid)
+    assert save_answer(run_app.pool, rid, body, "parts") is not None
+    got = run_app.answer(rid)
+    assert got.answer.outcomes[0].numbers[3].arm == "TEP"
+    assert got.answer.bottom_line.text == "b" + C0_KEPT  # other control characters kept
+    assert got.notes[-1] == "n" and got.searches[-1].query == "mesh repair"
+    assert got.references[0].title == "Title\u202e 1"  # PubMed's text, not the model's: kept
+
+
 def test_step_lines_written_at_once_from_threads_are_all_kept(run_app):  # review L10
     rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
     progress = DbProgress(run_app.pool, rid)
