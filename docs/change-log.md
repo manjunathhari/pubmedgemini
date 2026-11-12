@@ -29,3 +29,9 @@ Nothing is deployed yet. Entries start with the first merge to `main` that chang
 
 - The researcher's instructions get one added block, approved by the owner on 11 Nov 2026 (not from Incisive): before it stops, the researcher checks that it has run a broad trial search, the same search for the last five years, a five-year search for reviews and meta-analyses, at least one Europe PMC search, a search for each key trial's longer follow-up, and similar articles for the two most important trials; it re-runs a search that finds fewer than 40 papers with fewer terms, and selects a guideline only when the question asks about practice recommendations. The five years count back from the current year (2021 to 2026 this year).
 - Nothing else changes: the same 8 rounds, the same 14-request cap, the same tools and the same study-list step. Nothing to do on the VPS.
+
+## F3: the written answer (branch `f3-writer`, planned, not built)
+
+- Plan written on 12 Nov 2026 (`docs/superpowers/plans/2026-11-12-f3-writer.md`); nothing built yet. It waits for the owner's answers to its "Needs the owner" list.
+- What it will do: after the study list, Gemini writes Incisive Quick's answer in four parts (summary, context, trials, outcomes) from the selected studies' abstracts, with Incisive's prompts; code joins the parts, stores the answer and shows it on a new answer page laid out exactly as the owner's frozen mock (version 3, added to the repo as `docs/mocks/f3-answer-page-v3.html`). Every line, bar, square and fold on that page is computed by code from the numbers. No JavaScript.
+- The spec's page section (§6) is rewritten for the frozen mock; a few other stale lines are corrected (the page is no longer "plain writing", the one-piece line uses Incisive's words, the model line sits at the bottom as in the mock).
