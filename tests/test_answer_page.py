@@ -3,7 +3,7 @@
 Ported rules follow Incisive (commit 12630f7, `crates/incisive-app/src/answer_page.rs`,
 `agent/answer_v3.rs` `arm_lines`); the tests named after Incisive's are ported from it. New
 rules (the frozen mock's scales, draw checks and fold) are checked against the mock's own
-numbers (`docs/mocks/f3-answer-page-v4.html`).
+numbers (`docs/mocks/f3-answer-page-v5.html`; its numbers are v4's).
 
 HERNIA is the hand-written hernia answer (`tests/fixtures/writer/whole.json`), which follows
 Incisive's rules; where the rules give rows the mock's example does not show, the mock's own

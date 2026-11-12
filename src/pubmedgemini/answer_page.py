@@ -17,7 +17,7 @@ Ports of Incisive (commit 12630f7, `crates/incisive-app/src/`):
 | `NO_NUMBERS` | `app/page.rs` `no_numbers_view` |
 | `PAIRS` | `answer_page.rs` `PAIRS` |
 
-Defined here for the frozen mock (`docs/mocks/f3-answer-page-v4.html`; F3 plan Task 7): the
+Defined here for the frozen mock (`docs/mocks/f3-answer-page-v5.html`; F3 plan Task 7): the
 draw checks (D3a), the ratio axis from the data (D3b), the difference axis that never puts 0
 at an edge (X16), the out-of-100 sentence (X21), the pills and the fold that keeps the two
 cards of a pair level (X14). Rounding is Rust's `f64::round` (half away from zero).

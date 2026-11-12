@@ -1,4 +1,4 @@
-{#- The answer page: the frozen mock (docs/mocks/f3-answer-page-v4.html, v4, 12 Nov 2026),
+{#- The answer page: the frozen mock (docs/mocks/f3-answer-page-v5.html, v5, 12 Nov 2026),
 its stylesheet byte for byte. Every number, position, count and fold comes from
 answer_page.py; model text is only ever escaped text here (autoescape, no |safe). No script. -#}
 {%- macro pieces(ps) -%}
@@ -127,6 +127,7 @@ details.oc .body{border-top:1px solid var(--rule);margin-top:8px;padding-top:6px
 .row b{font-weight:600}.row .muted{grid-column:1/-1}
 .two>.card{display:flex;flex-direction:column}details.more{margin-top:auto;padding-top:8px}details.more>summary{cursor:pointer;color:var(--link);font-size:.9rem;padding:8px 0 0;list-style:none;border-top:1px solid var(--rule)}details.more>summary::-webkit-details-marker{display:none}details.more[open]>summary .a{display:none}details.more:not([open])>summary .b{display:none}
 .ci .lab .mono,.row .mono{white-space:normal;overflow-wrap:anywhere}
+body{overflow-wrap:anywhere}
 </style></head><body>
 <p><a href="/">Home</a> · <a href="/runs/{{ run_id }}">Steps and studies</a></p>
 <h1>{{ question }}</h1>

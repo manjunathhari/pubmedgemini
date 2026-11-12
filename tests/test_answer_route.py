@@ -1,4 +1,4 @@
-"""Task 8 (F3): the answer page as the frozen mock (`docs/mocks/f3-answer-page-v4.html`), and
+"""Task 8 (F3): the answer page as the frozen mock (`docs/mocks/f3-answer-page-v5.html`), and
 the run page's link to it.
 
 The page tests store the hand-written hernia answer (`test_answer_page.hernia`: the mock's
@@ -25,7 +25,11 @@ from pubmedgemini.runs import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-MOCK = ROOT / "docs" / "mocks" / "f3-answer-page-v4.html"
+MOCK = ROOT / "docs" / "mocks" / "f3-answer-page-v5.html"
+MOCK_V4 = ROOT / "docs" / "mocks" / "f3-answer-page-v4.html"
+# The one rule mock v5 adds to v4's stylesheet (third check L4a; owner decision d25): every
+# text on the page may break anywhere rather than push the page sideways.
+V5_WRAP = "body{overflow-wrap:anywhere}"
 
 
 def style_block(page: str) -> str:
@@ -382,3 +386,14 @@ def test_a_right_to_left_override_never_reaches_the_page(env):  # third check L3
     assert not re.search("[\u202a-\u202e\u2066-\u2069\u200b-\u200f\u061c\u2060\ufeff]", t)
     assert '<span class="mono">TEP 9.4% vs Lichtenstein 18.8%</span>' in t
     assert "9.4% with TEP vs 18.8% with Lichtenstein" in t
+
+
+def test_mock_v5_is_v4_plus_only_the_wrap_rule():  # third check L4a
+    v4, v5 = style_block(MOCK_V4.read_text()), style_block(MOCK.read_text())
+    assert v5.replace(V5_WRAP + "\n", "", 1) == v4 and V5_WRAP in v5
+    rest = lambda t: re.sub(r"<style>.*?</style>", "", t, flags=re.DOTALL)
+    assert rest(MOCK.read_text()) == rest(MOCK_V4.read_text())  # the body is v4's
+
+
+def test_long_unbroken_model_text_may_wrap_anywhere(env, answer_url):  # third check L4a
+    assert V5_WRAP in style_block(page(env, answer_url))
