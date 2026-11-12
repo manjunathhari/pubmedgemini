@@ -306,7 +306,9 @@ def test_question_is_stored_and_sent_as_typed(env):
                      "Find and select the evidence for this question.")
     page = env.run_page(r.headers["location"]).text
     assert "x &lt;/question&gt; y?" in page and "Second line &lt;b&gt;" in page
-    assert "<b>" not in page
+    # F3b: the answer page uses <b> for its own labels; the question's <b> is escaped
+    assert "<h1>x &lt;/question&gt; y?<br>Second line &lt;b&gt;</h1>" in page
+    assert "Second line <b>" not in page
 
 
 def test_a_nul_is_seen_by_the_check_and_blocks(env):
@@ -445,7 +447,9 @@ def test_running_page_refreshes_itself_and_finished_does_not(held):
 
 def test_finished_page_shows_the_study_list(env):
     page = env.run_page(env.ask(QUESTION).headers["location"]).text
-    sel = page.split("<h2>Selected studies</h2>", 1)[1].split("<h2>", 1)[0]
+    # F3b: an answered run shows its study list folded at the end of the answer
+    sel = page.split("<summary>Selected studies, with their abstracts (2)</summary>", 1)[1] \
+        .split("</details>", 1)[0]
     assert sel.index(f"PMID {ID2}") < sel.index(f"PMID {ID1}")  # the model's order
     assert f'<a href="https://pubmed.ncbi.nlm.nih.gov/{ID2}/">PMID {ID2}</a>' in sel
     assert re.search(r"<p>[^<]+ · \d{4} · SR_MA</p>", sel)
@@ -453,12 +457,14 @@ def test_finished_page_shows_the_study_list(env):
     assert "<p>The newest meta-analysis.</p>" in sel and "<p>A large trial.</p>" in sel
     assert "Publication types: " in sel and sel.count("<h3>") == 2
     assert "Abstract not available." not in sel
-    con = page.split("<h2>Considered, not selected</h2>", 1)[1].split("<h2>", 1)[0]
+    con = page.split("<summary>Considered, not selected (1)</summary>", 1)[1] \
+        .split("</details>", 1)[0]
     assert f'<a href="https://pubmed.ncbi.nlm.nih.gov/{ID3}/">PMID {ID3}</a>' in con
     assert "Older." in con
-    contra = page.split("<h2>Possible contradictions</h2>", 1)[1].split("<h2>", 1)[0]
+    contra = page.split("<summary>Possible contradictions (1)</summary>", 1)[1] \
+        .split("</details>", 1)[0]
     assert "Found more pain." in contra
-    trail = page.split("<h2>Search trail</h2>", 1)[1]
+    trail = page.split("<h2>Search trail</h2>", 1)[1].split("</section>", 1)[0]
     assert "<li>PubMed: hernia[tiab] (5,160 found)</li>" in trail
     assert "<li>Europe PMC: hernia (" in trail
     assert "<li>Researcher: searching PubMed and Europe PMC</li>" in page
@@ -472,7 +478,8 @@ def test_abstract_not_available_when_records_cannot_be_fetched(db_url):
     routes[(EUTILS_HOST, EUTILS_PATH + "efetch.fcgi")] = httpx.Response(503)
     with ask_env(db_url, FakeUpstream(routes), HAPPY_RUN) as env:
         page = env.run_page(env.ask(QUESTION).headers["location"]).text
-    sel = page.split("<h2>Selected studies</h2>", 1)[1].split("<h2>", 1)[0]
+    sel = page.split("<summary>Selected studies, with their abstracts (2)</summary>", 1)[1] \
+        .split("</details>", 1)[0]
     assert sel.count("Abstract not available.") == 2 and sel.count("<h3>") == 2
 
 
@@ -729,31 +736,39 @@ def answered(env, status="done", **kw):
 
 
 def test_answer_sections_in_order(env):
+    # F3b (mock v6): the plain long list became the answer page; the practice lines sit in
+    # Bottom line, the outcomes in "Why this conclusion", the trials card is "The trials".
     page = answered(env, written=_written())
-    heads = ["At a glance", "Bottom line", "Clinical practice", "Outcomes", "Trials",
-             "Conflicting evidence", "Applicability", "What would change this answer",
+    heads = ["At a glance", "Bottom line", "Why this conclusion", "Conflicting evidence",
+             "Applicability", "What would change this answer", "The trials",
              "Other notable findings", "References"]
     pos = [page.index(f"<h2>{h}</h2>") for h in heads]
     assert pos == sorted(pos) and len(set(pos)) == len(pos)
-    assert "<h2>Notes</h2>" not in page and "<h2>Selected studies</h2>" not in page
-    assert "<p>Probably helps.</p>" in page and "<li>RR: 0.76</li>" in page
-    assert "<p>Main caveat: Small trials</p>" in page
-    assert "<p>Mesh helps [33763744].</p>" in page
-    assert "<p>Certainty: Moderate. Two trials.</p>" in page
-    for line in ("Default choice: Use mesh", "Counselling: Explain risks",
-                 "Cost per case: Unknown", "Free text."):
+    for old in ("Clinical practice", "Outcomes", "Trials", "Notes", "Selected studies"):
+        assert f"<h2>{old}</h2>" not in page, old
+    assert "<p>Probably helps.</p>" in page and "<p><b>RR:</b> 0.76</p>" in page
+    assert "<p><b>Main caveat:</b> Small trials</p>" in page
+    assert '<p>Mesh helps [<a href="#ref-2">2</a>].</p>' in page
+    assert '<p><span class="pill mo">Moderate certainty</span> Two trials.</p>' in page
+    for line in ("<b>Default choice:</b> Use mesh", "<b>Counselling:</b> Explain risks",
+                 "<b>Cost per case:</b> Unknown", "Free text."):
         assert f"<p>{line}</p>" in page
-    assert "Who may benefit" not in page and "India cost context" not in page
-    assert "<h3>Recurrence</h3>" in page and "Certainty: Low · RCTs" in page
-    assert "<li>RR: 0.76 (0.49 to 1.1), mesh, p 0.2, PMID 36262096</li>" in page
-    assert "<li>Events: 12 %, PMID 33763744</li>" in page
+    assert "Who may benefit" not in page and "India and cost" not in page
+    assert '<span class="t">Recurrence</span><span class="pill lo">Low</span>' in page
+    assert '<span class="tag">RCTs</span> 2 numbers' in page
+    assert ('<b>RR</b> <span class="num">0.76 (0.49 to 1.1)</span></p><p class="muted">Trial A '
+            '[<a href="#ref-1">1</a>] · mesh · p 0.2</p><p class="notdrawn">Not drawn: unit not '
+            'RR, OR or HR.</p>') in page
+    assert ('<b>Events</b> <span class="num">12%</span></p><p class="muted">PMID 33763744 '
+            '[<a href="#ref-2">2</a>]</p><p class="notdrawn">Not drawn: single arm.</p>') in page
     assert "None" not in page
-    assert "<h3>Trial A</h3>" in page and "Appraisal: Unblinded" in page
+    assert ('<p><b>[<a href="#ref-1">1</a>] Trial A.</b> RCT · n = 60 · One centre · Mesh vs '
+            'none. Less pain</p>') in page and "Limitations: Unblinded" in page
     assert "<li>A larger trial</li>" in page
-    assert ('<li>[1] A trial of mesh. Hernia 2022. '
+    assert ('<li id="ref-1">[1] A trial of mesh. Hernia, 2022. '
             '<a href="https://pubmed.ncbi.nlm.nih.gov/36262096/">PMID 36262096</a></li>') in page
-    assert ('<li>[2] A review. <a href="https://pubmed.ncbi.nlm.nih.gov/33763744/">'
-            'PMID 33763744</a> <strong>Retracted</strong></li>') in page
+    assert ('<li id="ref-2">[2] A review. <a href="https://pubmed.ncbi.nlm.nih.gov/33763744/">'
+            'PMID 33763744</a> <span class="tag">Retracted</span></li>') in page
     assert f"answer written by {MODEL}" in page and "studies selected by" not in page
 
 
@@ -766,8 +781,10 @@ def test_notes_show_when_present(env):
                     empty_reason=None, references=[], searches=[], integrity=IntegrityV3(),
                     stopped_early=None, elapsed_s=1, notes=["A note."]).to_body()
     page = answered(env, raw=body)
-    assert "<h2>Notes</h2>" in page and "<li>A note.</li>" in page
-    assert page.index("<h2>Other notable findings</h2>") < page.index("<h2>Notes</h2>")
+    # F3b: the merge notes sit under Other notable findings, after the findings
+    sec = page.split("<h2>Other notable findings</h2>", 1)[1].split("</section>", 1)[0]
+    assert '<li class="muted">A note.</li>' in sec and "<h2>Notes</h2>" not in page
+    assert sec.index("Two withdrawals") < sec.index("A note.")
 
 
 def test_answer_text_is_escaped(env):
@@ -872,32 +889,40 @@ def _num_page(env, **n):
 
 
 def test_a_lone_ci_end_is_shown(env):
-    assert "<li>L: 1 (CI from 0.5), PMID 36262096</li>" in _num_page(env, ci_low=0.5)
-    assert "<li>L: 1 (CI to 2.5), PMID 36262096</li>" in _num_page(env, ci_high=2.5)
-    assert "<li>L: 1 (0.5 to 3), PMID 36262096</li>" in _num_page(env, ci_low=0.5, ci_high=3.0)
+    # F3b: listed under its outcome as f3-writer's derivation writes it (ported unchanged:
+    # `listed_numbers`, "not given" for the missing end)
+    def shown(page):
+        return re.search(r'<b>L</b> <span class="num">([^<]*)</span>', page).group(1)
+
+    assert shown(_num_page(env, ci_low=0.5)) == "1 (0.5 to not given)"
+    assert shown(_num_page(env, ci_high=2.5)) == "1 (not given to 2.5)"
+    assert shown(_num_page(env, ci_low=0.5, ci_high=3.0)) == "1 (0.5 to 3)"
 
 
 @pytest.mark.parametrize("v,shown", [
-    (12.0, "12"), (0.76, "0.76"), (1.1, "1.1"), (-3.0, "-3"), (-0.0, "0"), (0.0, "0"),
-    (0.00001, "0.00001"), (1e-7, "0.0000001"), (1e15, "1000000000000000"),
-    (1e16, "10000000000000000"), (123456.789, "123456.789")])
+    (12.0, "12"), (0.76, "0.76"), (1.1, "1.1"), (-3.0, "\u22123"), (-0.0, "0"), (0.0, "0"),
+    (0.00001, "0.00001"), (1e-7, "0.0000001"), (1e15, "1,000,000,000,000,000"),
+    (1e16, "10,000,000,000,000,000"), (123456.789, "123456.789")])
 def test_numbers_print_as_plain_decimals(v, shown):
-    from pubmedgemini.web import _num
+    # F3b: the page prints numbers with answer_page.fmt_value (a true minus, thousands
+    # separated for whole numbers of 1,000 or more), never in exponent form
+    from pubmedgemini.answer_page import fmt_value
 
-    assert _num(v) == shown
+    assert fmt_value(v) == shown
 
 
 def test_a_shown_number_is_the_stored_value_with_no_exponent():
     import random
 
-    from pubmedgemini.web import _num
+    from pubmedgemini.answer_page import fmt_value as _num
 
     rng = random.Random(8)
     values = [rng.uniform(-1, 1) * 10.0 ** rng.randint(-12, 20) for _ in range(400)]
     values += [float(rng.randint(-10**6, 10**6)) for _ in range(50)] + [5e-324, 1.7e308]
     for v in values:
         t = _num(v)
-        assert float(t) == v and "e" not in t and "E" not in t, (v, t)
+        assert float(t.replace("\u2212", "-").replace(",", "")) == v, (v, t)
+        assert "e" not in t and "E" not in t, (v, t)
 
 
 def test_guidelines_show_with_each_field_and_the_flag(env):

@@ -258,3 +258,12 @@ details.fold>summary::before{content:"+ ";color:#666666}details.fold[open]>summa
 details.fold[open]>summary{margin-bottom:10px}
 .foot{font-size:13px}
 summary:focus-visible{outline:3px solid #333333;outline-offset:2px}
+
+/* ---- the answer page on the run page (F3b Task 4): what the live base rules need beside mock
+   v6's block. The question is the page heading and may be one long word; paragraphs inside a CI
+   row or an outcome sit as the mock sets them (the base `p + p` margin is for card text); the
+   selected studies keep their article cards inside the fold. ---- */
+main.wide > h1 { overflow-wrap: anywhere; }
+.ci p + p, details.oc .body p + p, .cp p + p { margin-top: 0; }
+details.fold > summary + article { border-top: 0; padding-top: 0; }
+details.fold > article + article { margin-top: 10px; }

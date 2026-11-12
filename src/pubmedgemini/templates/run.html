@@ -1,10 +1,228 @@
 {% extends "base.html" %}
+{% import "_answer.html" as ans %}
 {% block head %}
 {% if active %}
 <meta http-equiv="refresh" content="5">
 {% endif %}
 {% endblock %}
+{% block main_class %}{% if wide %} class="wide"{% endif %}{% endblock %}
 {% block content %}
+{% if wide %}
+{#- A finished run with a stored answer: the answer page (owner decision N1 A, mock v6). -#}
+<h1>{% for para in question_paragraphs %}{{ para }}{% if not loop.last %}<br>{% endif %}{% endfor %}</h1>
+<p class="sub">{{ status_word }} · Quick · Decision support. The clinician decides.</p>
+<section class="card">
+<details class="fold"><summary>Steps ({{ run.lines|length }})</summary>
+{%- if run.lines %}
+<ul>
+{%- for line in run.lines %}
+<li>{{ line }}</li>
+{%- endfor %}
+</ul>
+{%- else %}
+<p>No steps were recorded.</p>
+{%- endif %}
+</details>
+</section>
+{% if outcome or run.status in ("stopped", "failed", "partial") %}
+<section class="card">
+{% if outcome %}
+<p><strong>{{ outcome }}</strong></p>
+{% endif %}
+{% if run.status in ("stopped", "failed", "partial") %}
+<form method="post" action="/runs/{{ run.id }}/again">
+<p><button type="submit">Run again</button></p>
+</form>
+{% endif %}
+</section>
+{% endif %}
+{% if view.empty_reason and view.empty_reason != outcome %}
+<section class="card">
+<p>{{ view.empty_reason }}</p>
+</section>
+{% endif %}
+{% if view.answer %}
+{% if view.glance %}
+<section class="card">
+<h2>At a glance</h2>
+{%- if view.glance.verdict %}
+<p>{{ ans.pieces(view.glance.verdict) }}</p>
+{%- endif %}
+{%- for label, value in view.glance["keys"] %}
+<p>{% if label %}<b>{{ label }}:</b> {% endif %}{{ ans.pieces(value) }}</p>
+{%- endfor %}
+{%- if view.glance.caveat %}
+<p><b>Main caveat:</b> {{ ans.pieces(view.glance.caveat) }}</p>
+{%- endif %}
+</section>
+{% endif %}
+<section class="card">
+<h2>Bottom line</h2>
+{%- for para in view.bottom.paragraphs %}
+<p>{{ ans.pieces(para) }}</p>
+{%- endfor %}
+<p><span class="pill {{ view.bottom.pill }}">{{ view.bottom.certainty }} certainty</span>{% if view.bottom.reason %} {{ ans.pieces(view.bottom.reason) }}{% endif %}</p>
+{%- for label, text in view.practice %}
+<p>{% if label %}<b>{{ label }}:</b> {% endif %}{{ ans.pieces(text) }}</p>
+{%- endfor %}
+</section>
+{% for pair in view.pairs %}
+{{ ans.pair_block(pair, view.outcome_count) }}
+{% endfor %}
+{% if view.conflicts %}
+<section class="card">
+<h2>Conflicting evidence</h2>
+{%- for c in view.conflicts %}
+<p>{{ ans.pieces(c) }}</p>
+{%- endfor %}
+</section>
+{% endif %}
+{% if view.applicability %}
+<section class="card">
+<h2>Applicability</h2>
+{%- for label, text in view.applicability %}
+<p><b>{{ label }}:</b> {{ ans.pieces(text) }}</p>
+{%- endfor %}
+</section>
+{% endif %}
+{% if view.would_change %}
+<section class="card">
+<h2>What would change this answer</h2>
+<ul>
+{%- for c in view.would_change %}
+<li>{{ ans.pieces(c) }}</li>
+{%- endfor %}
+</ul>
+</section>
+{% endif %}
+{% if view.guidelines %}
+<section class="card">
+<h2>Guidelines</h2>
+{%- for body, statement, year, pmid, removed in view.guidelines %}
+<article>
+{%- if body %}
+<h3>{{ body }}</h3>
+{%- endif %}
+{%- if statement %}
+<p>{{ ans.pieces(statement) }}</p>
+{%- endif %}
+{%- if year is not none %}
+<p>Year: {{ year }}</p>
+{%- endif %}
+{%- if pmid and pmid.isascii() and pmid.isdigit() %}
+<p class="row"><a href="https://pubmed.ncbi.nlm.nih.gov/{{ pmid }}/">PMID {{ pmid }}</a></p>
+{%- elif pmid %}
+<p>PMID {{ pmid }}</p>
+{%- endif %}
+{%- if removed %}
+<p>Its PMID was removed: the study it cited was not among the selected studies.</p>
+{%- endif %}
+</article>
+{%- endfor %}
+</section>
+{% endif %}
+{% if view.trials %}
+<section class="card">
+<h2>The trials</h2>
+{%- for t in view.trials %}
+<p><b>{{ ans.pieces(t.ref_pieces) }} {{ t.label }}.</b> {{ t.facts }}{% if t.facts %}. {% endif %}{{ ans.pieces(t.key_pieces) }}</p>
+{%- if t.appraisal %}
+<p class="muted">Limitations: {{ t.appraisal }}</p>
+{%- endif %}
+{%- endfor %}
+</section>
+{% endif %}
+{% endif %}
+{% if view.notable or view.notes %}
+<section class="card">
+<h2>Other notable findings</h2>
+<ul>
+{%- for n in view.notable %}
+<li>{{ ans.pieces(n) }}</li>
+{%- endfor %}
+{%- for n in view.notes %}
+<li class="muted">{{ n }}</li>
+{%- endfor %}
+</ul>
+</section>
+{% endif %}
+{% if trail %}
+<section class="card">
+<h2>Search trail</h2>
+<ul>
+{%- for line in trail %}
+<li>{{ line }}</li>
+{%- endfor %}
+</ul>
+</section>
+{% endif %}
+{% if view.references %}
+<section class="card">
+<h2>References</h2>
+<ul>
+{%- for r in view.references %}
+<li id="ref-{{ r.n }}">[{{ r.n }}] {{ r.text }} {% if r.pmid.isascii() and r.pmid.isdigit() %}<a href="https://pubmed.ncbi.nlm.nih.gov/{{ r.pmid }}/">PMID {{ r.pmid }}</a>{% else %}PMID {{ r.pmid }}{% endif %}{% if r.retracted %} <span class="tag">Retracted</span>{% endif %}</li>
+{%- endfor %}
+</ul>
+</section>
+{% endif %}
+{% if run.selected %}
+<section class="card">
+<details class="fold"><summary>Selected studies, with their abstracts ({{ selected|length }})</summary>
+{%- for s in selected %}
+<article>
+<h3>{{ s.title }}</h3>
+<p>{{ s.facts }}</p>
+<p>{{ s.why }}</p>
+{%- if s.pub_types %}
+<p>Publication types: {{ s.pub_types|join(", ") }}</p>
+{%- endif %}
+<p class="row"><a href="https://pubmed.ncbi.nlm.nih.gov/{{ s.pmid }}/">PMID {{ s.pmid }}</a></p>
+{%- if s.retracted %}
+<p><strong>Retracted</strong></p>
+{%- endif %}
+{%- for para in s.paragraphs %}
+<p>{{ para }}</p>
+{%- else %}
+<p>Abstract not available.</p>
+{%- endfor %}
+</article>
+{%- endfor %}
+</details>
+</section>
+{% endif %}
+{% if run.considered %}
+<section class="card">
+<details class="fold"><summary>Considered, not selected ({{ run.considered|length }})</summary>
+<ul>
+{%- for c in run.considered %}
+<li><a href="https://pubmed.ncbi.nlm.nih.gov/{{ c.pmid }}/">PMID {{ c.pmid }}</a>{% if c.title %} · {{ c.title }}{% endif %} · {{ c.reason }}</li>
+{%- endfor %}
+</ul>
+</details>
+</section>
+{% endif %}
+{% if run.contradictions %}
+<section class="card">
+<details class="fold"><summary>Possible contradictions ({{ run.contradictions|length }})</summary>
+<ul>
+{%- for c in run.contradictions %}
+<li><a href="https://pubmed.ncbi.nlm.nih.gov/{{ c.pmid }}/">PMID {{ c.pmid }}</a>{% if c.title %} · {{ c.title }}{% endif %} · {{ c.note }}</li>
+{%- endfor %}
+</ul>
+</details>
+</section>
+{% endif %}
+{% if run.down_line %}
+<p class="foot muted">{{ run.down_line }}</p>
+{% endif %}
+{% if view.answer %}
+<p class="foot muted">Searched PubMed and Europe PMC (free sources); answer written by {{ run.model }}</p>
+{% else %}
+<p class="foot muted">Searched PubMed and Europe PMC (free sources); studies selected by {{ run.model }}</p>
+{% endif %}
+<p class="foot muted">Google may use what you type here, and its reviewers may read it (Gemini free tier). Do not type anything that identifies a patient.</p>
+{% else %}
 <h1>pubmedgemini</h1>
 <p class="row"><a href="/">Home</a></p>
 <section class="card">
@@ -41,193 +259,8 @@
 {% endif %}
 </section>
 {% endif %}
-{% if shown.has %}
-{% if shown.unreadable %}
+{% if unreadable %}
 <p>The answer could not be shown.</p>
-{% else %}
-{% if shown.empty_reason and shown.empty_reason != outcome %}
-<section class="card">
-<p>{{ shown.empty_reason }}</p>
-</section>
-{% endif %}
-{% if shown.written %}
-{% if shown.glance %}
-<section class="card">
-<h2>At a glance</h2>
-{% if shown.glance.verdict %}
-<p>{{ shown.glance.verdict }}</p>
-{% endif %}
-{% if shown.glance.numbers %}
-<ul>
-{% for line in shown.glance.numbers %}
-<li>{{ line }}</li>
-{% endfor %}
-</ul>
-{% endif %}
-{% if shown.glance.caveat %}
-<p>Main caveat: {{ shown.glance.caveat }}</p>
-{% endif %}
-</section>
-{% endif %}
-<section class="card">
-<h2>Bottom line</h2>
-{% if shown.bottom.text %}
-<p>{{ shown.bottom.text }}</p>
-{% endif %}
-<p>Certainty: {{ shown.bottom.certainty.value }}.{% if shown.bottom.certainty_reason %} {{ shown.bottom.certainty_reason }}{% endif %}</p>
-</section>
-{% if shown.practice %}
-<section class="card">
-<h2>Clinical practice</h2>
-{% for line in shown.practice %}
-<p>{{ line }}</p>
-{% endfor %}
-</section>
-{% endif %}
-{% if shown.outcomes %}
-<section class="card">
-<h2>Outcomes</h2>
-{% for o, label, number_lines in shown.outcomes %}
-<article>
-<h3>{{ o.outcome }}</h3>
-<p>{{ label }}</p>
-{% if o.effect_text %}
-<p>{{ o.effect_text }}</p>
-{% endif %}
-{% if o.rct_evidence %}
-<p>RCT evidence: {{ o.rct_evidence }}</p>
-{% endif %}
-{% if number_lines %}
-<ul>
-{% for line in number_lines %}
-<li>{{ line }}</li>
-{% endfor %}
-</ul>
-{% endif %}
-{% if o.why %}
-<p>Why: {{ o.why }}</p>
-{% endif %}
-</article>
-{% endfor %}
-</section>
-{% endif %}
-{% if shown.studies %}
-<section class="card">
-<h2>Trials</h2>
-{% for t in shown.studies %}
-<article>
-<h3>{{ t.label }}</h3>
-{% if t.design %}
-<p>Design: {{ t.design }}</p>
-{% endif %}
-{% if t.n is not none %}
-<p>Participants: {{ t.n }}</p>
-{% endif %}
-{% if t.setting %}
-<p>Setting: {{ t.setting }}</p>
-{% endif %}
-{% if t.comparison %}
-<p>Comparison: {{ t.comparison }}</p>
-{% endif %}
-{% if t.key_results %}
-<p>Key results: {{ t.key_results }}</p>
-{% endif %}
-{% if t.appraisal %}
-<p>Appraisal: {{ t.appraisal }}</p>
-{% endif %}
-{% if t.pmid and t.pmid.isascii() and t.pmid.isdigit() %}
-<p class="row"><a href="https://pubmed.ncbi.nlm.nih.gov/{{ t.pmid }}/">PMID {{ t.pmid }}</a></p>
-{% elif t.pmid %}
-<p>PMID {{ t.pmid }}</p>
-{% endif %}
-</article>
-{% endfor %}
-</section>
-{% endif %}
-{% if shown.conflicts %}
-<section class="card">
-<h2>Conflicting evidence</h2>
-{% for c in shown.conflicts %}
-<p>{{ c.text }}</p>
-{% endfor %}
-</section>
-{% endif %}
-{% if shown.applicability %}
-<section class="card">
-<h2>Applicability</h2>
-{% for line in shown.applicability %}
-<p>{{ line }}</p>
-{% endfor %}
-</section>
-{% endif %}
-{% if shown.would_change %}
-<section class="card">
-<h2>What would change this answer</h2>
-<ul>
-{% for line in shown.would_change %}
-<li>{{ line }}</li>
-{% endfor %}
-</ul>
-</section>
-{% endif %}
-{% if shown.guidelines %}
-<section class="card">
-<h2>Guidelines</h2>
-{% for g in shown.guidelines %}
-<article>
-{% if g.body %}
-<h3>{{ g.body }}</h3>
-{% endif %}
-{% if g.statement %}
-<p>{{ g.statement }}</p>
-{% endif %}
-{% if g.year is not none %}
-<p>Year: {{ g.year }}</p>
-{% endif %}
-{% if g.pmid and g.pmid.isascii() and g.pmid.isdigit() %}
-<p class="row"><a href="https://pubmed.ncbi.nlm.nih.gov/{{ g.pmid }}/">PMID {{ g.pmid }}</a></p>
-{% elif g.pmid %}
-<p>PMID {{ g.pmid }}</p>
-{% endif %}
-{% if g.pmid_removed %}
-<p>Its PMID was removed: the study it cited was not among the selected studies.</p>
-{% endif %}
-</article>
-{% endfor %}
-</section>
-{% endif %}
-{% if shown.findings %}
-<section class="card">
-<h2>Other notable findings</h2>
-<ul>
-{% for line in shown.findings %}
-<li>{{ line }}</li>
-{% endfor %}
-</ul>
-</section>
-{% endif %}
-{% endif %}
-{% if shown.notes %}
-<section class="card">
-<h2>Notes</h2>
-<ul>
-{% for line in shown.notes %}
-<li>{{ line }}</li>
-{% endfor %}
-</ul>
-</section>
-{% endif %}
-{% if shown.references %}
-<section class="card">
-<h2>References</h2>
-<ul>
-{% for r, line in shown.references %}
-<li>{{ line }} {% if r.pmid.isascii() and r.pmid.isdigit() %}<a href="https://pubmed.ncbi.nlm.nih.gov/{{ r.pmid }}/">PMID {{ r.pmid }}</a>{% else %}PMID {{ r.pmid }}{% endif %}{% if r.retracted %} <strong>Retracted</strong>{% endif %}</li>
-{% endfor %}
-</ul>
-</section>
-{% endif %}
-{% endif %}
 {% endif %}
 {% if run.selected %}
 <section class="card">
@@ -286,11 +319,8 @@
 {% if run.down_line %}
 <p>{{ run.down_line }}</p>
 {% endif %}
-{% if shown.written %}
-<p>Searched PubMed and Europe PMC (free sources); answer written by {{ run.model }}</p>
-{% else %}
 <p>Searched PubMed and Europe PMC (free sources); studies selected by {{ run.model }}</p>
 {% endif %}
-{% endif %}
 <p>Google may use what you type here, and its reviewers may read it (Gemini free tier). Do not type anything that identifies a patient.</p>
+{% endif %}
 {% endblock %}

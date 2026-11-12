@@ -1,0 +1,112 @@
+{#- The answer's parts, as mock v6 (docs/mocks/f3b-answer-page-v6.html) draws them. Every number,
+position, count and fold comes from answer_page.py; positions reach SVG attributes only through
+the `pct` filter (numbers only). Model text is only ever escaped text here (autoescape, no |safe).
+No style attribute, no style block, no script. -#}
+{%- macro pieces(ps) -%}
+{%- for kind, v in ps -%}
+{%- if kind == "text" -%}{{ v }}
+{%- elif kind == "bold" -%}<b>{{ v }}</b>
+{%- elif kind == "cite" -%}[{% for n in v %}<a href="#ref-{{ n }}">{{ n }}</a>{% if not loop.last %}, {% endif %}{% endfor %}]
+{%- else -%}[not in the study list]
+{%- endif -%}
+{%- endfor -%}
+{%- endmacro -%}
+{%- macro track(r) -%}
+<svg class="track" role="img" aria-label="{{ r.aria }}"><line class="base" x1="0" x2="100%" y1="21.5" y2="21.5"/><line class="null" x1="{{ r.null|pct }}%" x2="{{ r.null|pct }}%" y1="0" y2="22"/><line class="span" x1="{{ r.left|pct }}%" x2="{{ (r.left + r.width)|pct }}%" y1="11" y2="11"/><line class="est" x1="{{ r.est|pct }}%" x2="{{ r.est|pct }}%" y1="3" y2="19"/><text x="0" y="35">{{ r.scale.lo_text }}</text><text class="mid" x="{{ r.scale.null|pct }}%" y="35">{{ r.scale.mid_text }}</text><text class="end" x="100%" y="35">{{ r.scale.hi_text }}</text></svg>
+{%- endmacro -%}
+{%- macro listed(x) -%}
+<div class="ci"><p class="lab"><b>{{ x.label }}</b> <span class="num">{{ x.value_text }}</span></p><p class="muted">{{ pieces(x.sub_pieces) }}</p><p class="notdrawn">Not drawn: {{ x.problem }}.</p></div>
+{%- endmacro -%}
+{%- macro forest_item(item) -%}
+{%- set r = item.payload -%}
+{%- if item.heading %}
+<p class="eyebrow">{{ item.heading }}</p>
+{%- endif %}
+{%- if r.drawn %}
+<div class="ci"><p class="lab"><b>{{ r.label }}</b> <span class="num">{{ r.estimate_text }}</span></p><p class="muted">{{ pieces(r.sub_pieces) }}</p>
+{{ track(r) }}</div>
+{%- else %}
+{{ listed(r) }}
+{%- endif -%}
+{%- endmacro -%}
+{%- macro outcome_item(item) -%}
+{%- set c = item.payload -%}
+<details class="oc"><summary><span class="t">{{ c.title }}</span><span class="pill {{ c.pill }}">{{ c.certainty }}</span><span class="meta">{% if c.evidence_label %}<span class="tag">{{ c.evidence_label }}</span> {% endif %}{{ c.n_numbers }}</span><span class="s">{{ c.first_sentence }}</span></summary><div class="body">
+{%- if c.evidence_pieces %}<p class="muted">Evidence: {{ pieces(c.evidence_pieces) }}</p>{% endif -%}
+{%- for para in c.effect_paragraphs %}<p>{{ pieces(para) }}</p>{% endfor -%}
+{%- for x in c.listed %}{{ listed(x) }}{% endfor -%}
+{%- if c.why_pieces %}<p class="muted">Why this certainty: {{ pieces(c.why_pieces) }}</p>{% endif -%}
+</div></details>
+{%- endmacro -%}
+{%- macro out100_item(item, first) -%}
+{%- set it = item.payload -%}
+<div class="cp{% if first %} first{% endif %}"><p>{{ pieces(it.sentence_pieces) }}</p>
+<div class="arms">
+{%- for count, arm, side in it.arms -%}
+<div class="{{ side }}"><span class="big">{{ count }}</span> <span class="armname"><i class="key"></i>of 100 · {{ arm }}</span><div class="dots" aria-hidden="true">{% for k in range(100) %}<i class="{{ 'on' if k < count else 'off' }}"></i>{% endfor %}</div></div>
+{%- endfor -%}
+</div></div>
+{%- endmacro -%}
+{%- macro compare_item(item) -%}
+{%- set r = item.payload -%}
+{%- if item.heading %}
+<p class="eyebrow">{{ item.heading }}</p>
+{%- endif %}
+<div class="cmp"><b>{{ r.label }}</b><span class="pill {{ r.certainty|pill }}">{{ r.certainty }}</span><span class="num">{{ r.values_text }}</span><span class="muted">{{ pieces(r.study_pieces) }}{% if r.p_text %} · {{ r.p_text }}{% endif %}</span>{% if r.problem %}<span class="notdrawn">Not drawn as squares: {{ r.problem }}.</span>{% endif %}</div>
+{%- endmacro -%}
+{%- macro item(kind, it, first) -%}
+{%- if kind == "forest" -%}{{ forest_item(it) }}
+{%- elif kind == "outcomes" -%}{{ outcome_item(it) }}
+{%- elif kind == "out100" -%}{{ out100_item(it, first) }}
+{%- else -%}{{ compare_item(it) }}
+{%- endif -%}
+{%- endmacro -%}
+{%- macro card_head(kind, outcome_count) -%}
+{%- if kind == "forest" %}
+<h3>Every estimate with a 95% CI</h3>
+<p class="muted">Ratios on a log scale (dashed mark at 1); differences centred on 0. A line crossing the mark is compatible with no difference.</p>
+{%- elif kind == "outcomes" %}
+<div class="head"><h3>Outcome by outcome</h3><span class="sub">{{ outcome_count }} · tap to open</span></div>
+{%- elif kind == "out100" %}
+<p class="eyebrow">Out of 100 patients</p>
+<h3>Out of 100 people like those in the trials</h3>
+{%- else %}
+<h3>Compare the arms</h3>
+<p class="muted">Side-by-side arm results, grouped by each study&#39;s comparison. Most have no confidence interval.</p>
+{%- endif -%}
+{%- endmacro -%}
+{%- macro card(p, outcome_count) -%}
+<section class="card">
+{{- card_head(p.kind, outcome_count) }}
+{%- for it in p.shown %}
+{{ item(p.kind, it, loop.first) }}
+{%- endfor %}
+{%- if p.hidden %}
+<details class="more"><summary><span class="a">{{ p.more_text }}</span><span class="b">Show fewer</span></summary>
+{%- for it in p.hidden %}
+{{ item(p.kind, it, false) }}
+{%- endfor %}
+</details>
+{%- endif %}
+</section>
+{%- endmacro -%}
+{%- macro pair_block(pair, outcome_count) -%}
+<div class="pair-head"><h2>{{ pair.heading }}</h2><p class="sub">{{ pair.sub }}</p></div>
+{%- if pair.note %}
+<div class="two">
+<section class="card">
+<p>{{ pair.note }}</p>
+</section>
+{%- if pair.right %}
+{{ card(pair.right, outcome_count) }}
+{%- endif %}
+</div>
+{%- elif pair.left and pair.right %}
+<div class="two">
+{{ card(pair.left, outcome_count) }}
+{{ card(pair.right, outcome_count) }}
+</div>
+{%- else %}
+{{ card(pair.left or pair.right, outcome_count) }}
+{%- endif %}
+{%- endmacro -%}
