@@ -9,14 +9,17 @@ HERNIA is the hand-written hernia answer (`tests/fixtures/writer/whole.json`), w
 Incisive's rules; where the rules give rows the mock's example does not show, the mock's own
 arithmetic is checked separately (coordinator ruling 1, 12 Nov 2026)."""
 
+import dataclasses
 import math
 
 import pytest
 from writer_fakes import fixture
 
 from pubmedgemini.answer_page import (
-    MIN_SHOWN,
-    WEIGHTS,
+    GROUP,
+    HEAD,
+    MORE,
+    OUT100_BASE,
     ForestRow,
     Item,
     Panel,
@@ -457,29 +460,105 @@ def test_outcome_cards_follow_the_mock():
 
 def test_fold_matches_the_frozen_mock():  # Review Focus 3
     assert fold_pair(forest_panel(HERNIA), outcomes_panel(HERNIA)) == (5, 4)
-    # The mock's counselling pair: two out-of-100 items beside four compare rows in two
-    # comparisons; no fold.
-    out = Panel(WEIGHTS["out100"].head, [Item(WEIGHTS["out100"].item)] * 2)
-    cmp = Panel(WEIGHTS["compare"].head,
-                [Item(7, "TEP vs Lichtenstein", 4), Item(7), Item(7),
-                 Item(7, "TAPP vs Lichtenstein", 4)])
-    assert fold_pair(out, cmp) == (2, 4)
-
-
-def test_fold_arithmetic_is_the_plans():
-    f, o = forest_panel(HERNIA), outcomes_panel(HERNIA)
-    assert (f.total(), o.total()) == (65, 81)
+    # The mock's counselling pair: its two out-of-100 items beside its four compare rows in
+    # two comparisons (the hernia's rows without "Moderate or severe pain"); no fold.
     out, cmp = out100_panel(HERNIA), compare_panel(HERNIA)
-    assert (out.total(), len(out.items)) == (6 + 5 * 24, 5)
-    assert cmp.total() == 6 + 2 * 4 + 5 * 7
-    assert fold_pair(out, cmp) == (MIN_SHOWN, 5)  # 6 + 24k <= 49: k = 1, at least 2
+    mock_out = Panel(out.head, [i for i in out.items if i.payload.label in (
+        "Chronic pain at 5 years", "Moderate or severe pain at 5 years")])
+    mock_cmp = Panel(cmp.head, [i for i in cmp.items
+                                if i.payload.label != "Moderate or severe pain at 5 years"])
+    assert (len(mock_out.items), len(mock_cmp.items)) == (2, 4)
+    assert fold_pair(mock_out, mock_cmp) == (2, 4)
+
+
+def test_fold_arithmetic_is_the_rules():  # third check L4b: pixels at 1,000 px (Estimate)
+    f, o = forest_panel(HERNIA), outcomes_panel(HERNIA)
+    # forest: head, two group headings, three one-line rows and two two-line rows (the
+    # label and estimate need two lines: 56 and 70 characters)
+    assert [i.weight for i in f.items] == [101, 101, 101, 125, 125]
+    assert f.total() == HEAD["forest"] + 2 * GROUP + 3 * 101 + 2 * 125
+    assert [i.weight for i in o.items] == [147] * 6  # each first sentence takes two lines
+    # outcomes: 65 + 39 + 147k <= 737 keeps 4: "Show 2 more outcomes", the mock's fold
+    assert fold_pair(f, o) == (5, 4)
+    out, cmp = out100_panel(HERNIA), compare_panel(HERNIA)
+    assert [i.weight for i in cmp.items] == [101] * 5
+    assert cmp.total() == HEAD["compare"] + 2 * GROUP + 5 * 101
+    k = fold_pair(out, cmp)[0]
+    assert out.total(k) + MORE <= cmp.total() < out.total(k + 1) + MORE
+
+
+def test_lines_wrap_words_and_break_long_ones():
+    from pubmedgemini.answer_page import text_lines
+
+    assert text_lines("", 10) == 1 and text_lines("abc", 10) == 1
+    assert text_lines("aaaa bbbb", 9) == 1 and text_lines("aaaa bbbbb", 9) == 2
+    assert text_lines("x" * 300, 55) == 6  # broken anywhere, as the v5 wrap rule
+    assert text_lines("ab " + "x" * 20, 10) == 3  # a long word starts a new line
+
+
+def _row(label="Seroma", drawn=True, problem=None, sub="Trial [1]"):
+    return ForestRow(label, "RR 0.5 (0.2–0.9)", [("text", sub)], drawn, problem)
+
+
+def test_item_weights_follow_their_lines():  # third check L4b
+    from pubmedgemini.answer_page import CompareRow, OutcomeCard, OutItem, item_weight
+
+    assert item_weight("forest", _row()) == 101
+    assert item_weight("forest", _row(drawn=False, problem="the interval is reversed")) == 84
+    assert item_weight("forest", _row(label="x" * 300)) == 101 + 5 * 24
+    long_reason = _row(drawn=False, problem="its arm text reads as a comparison, not an arm " * 2)
+    assert item_weight("forest", long_reason) == 84 + 21
+    row = CompareRow("Pain", "Low", "TEP 9.4% vs Lichtenstein 18.8%", [("text", "Trial [1]")],
+                     None)
+    assert item_weight("compare", row) == 101
+    assert item_weight("compare", dataclasses.replace(row, problem="both arms round to 0 of 100")
+                       ) == 101 + 27
+    assert item_weight("compare", dataclasses.replace(row, values_text="y" * 120)) == 101 + 2 * 20
+    card = OutcomeCard("Pain", "Low", "lo", "RCTs", "2 numbers", "One line.", [], [], [])
+    assert item_weight("outcomes", card) == 126
+    assert item_weight("outcomes", dataclasses.replace(card, first_sentence="w " * 40)) == 147
+    item = OutItem("Pain", [("text", "Pain: 9.4% with TEP vs 18.8% with L [1].")], "Low",
+                   [(9, "TEP", "A"), (19, "L", "B")])
+    assert item_weight("out100", item) == OUT100_BASE + 24
+    longer = dataclasses.replace(item, arms=[(9, "z" * 60, "A"), (19, "L", "B")])
+    assert item_weight("out100", longer) == OUT100_BASE + 24 + 3 * 21
+
+
+def test_a_long_group_heading_weighs_its_lines():
+    from pubmedgemini.answer_page import heading_weight
+
+    assert heading_weight("TEP vs Lichtenstein") == GROUP
+    assert heading_weight("Robotic transabdominal preperitoneal repair vs laparoscopic") == \
+        GROUP + 17
+    w = written([outcome("P", [num("P", 1.0, "%", "a"), num("P", 2.0, "%", "b")])],
+                [study("1", "x" * 100)])
+    [i] = compare_panel(_body(w)).items
+    assert i.heading_weight == GROUP + 2 * 17
+
+
+def test_the_fold_counts_its_show_more_line():
+    left = Panel(100, [Item(100)] * 5)  # 600
+    right = Panel(100, [Item(100)] * 10)
+    # 100 + 100k + MORE <= 600 keeps 4 (539), not 5 (639)
+    assert fold_pair(left, right) == (5, 4)
+
+
+def test_many_not_drawn_lines_weigh_what_they_take():  # the reviewer's 614 px case
+    b = hernia()
+    for k, o in enumerate(b.answer.outcomes):
+        for i in range(6):
+            o.numbers += [num(f"Wound {k}.{i}", 12.0, "%", "TEP", PMIDS[i % 8], 13.0, 20.0),
+                          num(f"Wound {k}.{i}", 15.0, "%", "Lichtenstein", PMIDS[i % 8])]
+    cmp = compare_panel(b)
+    assert {i.weight for i in cmp.items if i.payload.problem} == {128}
+
 
 
 def test_fold_keeps_at_least_two_and_folds_the_left_too():
-    left = Panel(7, [Item(10, "Ratios (RR · OR · HR)", 4)] + [Item(10)] * 11)
-    right = Panel(3, [Item(13)] * 2)
+    left = Panel(70, [Item(100, "Ratios (RR · OR · HR)", 37)] + [Item(100)] * 11)
+    right = Panel(30, [Item(130)] * 2)
     assert fold_pair(left, right) == (2, 2)
-    right = Panel(3, [Item(13)] * 4)  # 55: 7 + 4 + 10k <= 55 -> k = 4
+    right = Panel(30, [Item(130)] * 4)  # 550: 70 + 37 + 100k + MORE <= 550 -> k = 4
     assert fold_pair(left, right) == (4, 4)
 
 
@@ -490,9 +569,9 @@ def test_fold_with_an_empty_panel_or_equal_totals_is_none():
 
 
 def test_fold_puts_a_group_heading_inside_only_when_the_group_starts_there():
-    left = Panel(7, [Item(10, "Ratios", 4), Item(10), Item(10), Item(10, "Differences", 4),
-                     Item(10)])
-    right = Panel(3, [Item(13)] * 3)  # 42: 7 + 4 + 10 + 10 + 10 = 41 -> 3 shown
+    left = Panel(70, [Item(100, "Ratios", 37), Item(100), Item(100),
+                      Item(100, "Differences", 37), Item(100)])
+    right = Panel(30, [Item(150)] * 3)  # 480: 70 + 37 + 300 + MORE = 446 -> 3 shown
     assert fold_pair(left, right) == (3, 3)
     shown, hidden = left.split(3)
     assert [i.heading for i in shown] == ["Ratios", None, None]

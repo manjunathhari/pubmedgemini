@@ -1126,20 +1126,74 @@ def outcome_cards(w: WrittenAnswer, refs: Mapping[str, int]) -> list[OutcomeCard
 # ---------- the fold that keeps a pair level (X14) ----------
 
 
-@dataclass(frozen=True)
-class W:
-    head: int
-    item: int
-    group: int
-
-
-# Weights in tenths of the mock's rendered height (Estimate, from its CSS at about 500 px a
-# column; plan Task 7).
-WEIGHTS = {"forest": W(7, 10, 4), "outcomes": W(3, 13, 0), "out100": W(6, 24, 0),
-           "compare": W(6, 7, 4)}
+# The fold's weights are estimated heights in pixels at a 1,000 px wide window (each card's
+# text about 443 px wide), measured in Chromium on the hernia page and on one with many
+# "Not drawn" lines (Estimate; third check L4b, replacing plan Task 7's tenths). An item
+# weighs a fixed part plus one line height for each line its texts take (`text_lines`, at
+# the characters a line holds for that text's font).
+HEAD = {"forest": 110, "outcomes": 65, "out100": 88, "compare": 110}  # padding, title, note
+GROUP = 37  # a group heading (eyebrow) of one line; 17 more for each further line (45)
+MORE = 39  # the "Show N more" line a folded card gains
+LINE, SMALL, MONO = 24, 21, 20  # a line of body text, of .muted text, of .mono text
+OUT100_BASE = 200  # an out-of-100 item without its sentence: margins, numbers, two grids
 MIN_SHOWN = 2
 FOLD_NOUNS = {"forest": ("estimate", "estimates"), "outcomes": ("outcome", "outcomes"),
               "out100": ("outcome", "outcomes"), "compare": ("result", "results")}
+
+
+def text_lines(text: str, per_line: int) -> int:
+    """The lines `text` takes at `per_line` characters a line: words wrap whole, a word longer
+    than a line is broken anywhere (mock v5's wrap rule); at least one line."""
+    n, cur = 1, 0
+    for word in text.split():
+        w = len(word)
+        need = w if cur == 0 else cur + 1 + w
+        if need <= per_line:
+            cur = need
+            continue
+        if cur:
+            n, cur = n + 1, 0
+        while w > per_line:
+            n, w = n + 1, w - per_line
+        cur = w
+    return n
+
+
+def item_weight(kind: str, payload: Any) -> int:
+    """An item's estimated height in pixels (deterministic; Estimate from measurements):
+
+    - CI row: 56 + 24 a line of label and estimate (55 characters a line) + 21 a line of the
+      study line (66); not drawn: 18 + the same + 21 a line of "Not drawn: <reason>." (66);
+    - closed outcome: 60 + 24 a line of title (40) + 21 a line of evidence and count (60) +
+      21 a line of the first sentence (66);
+    - out-of-100 item: 200 + 24 a line of its sentence (50) + 21 for each line past the first
+      of the longer "of 100 · <arm>" (22);
+    - compare row: 36 + 24 a line of label (40) + 20 a line of values (44: the pill takes
+      the right column) + 21 a line of study and p (66), + 6 + 21 a line of
+      "Not drawn: <reason>." (66) when it has one."""
+    if kind == "forest":
+        r = payload
+        h = LINE * text_lines(f"{r.label} {r.estimate_text}", 55) + SMALL * text_lines(r.sub, 66)
+        if r.drawn:
+            return 56 + h
+        return 18 + h + SMALL * text_lines(f"Not drawn: {r.problem}.", 66)
+    if kind == "outcomes":
+        c = payload
+        meta = f"{c.evidence_label} {c.n_numbers}" if c.evidence_label else c.n_numbers
+        return (60 + LINE * text_lines(c.title, 40) + SMALL * text_lines(meta, 60)
+                + SMALL * text_lines(c.first_sentence, 66))
+    if kind == "out100":
+        it = payload
+        arm = max((text_lines(f"of 100 · {a}", 22) for _, a, _ in it.arms), default=1)
+        return (OUT100_BASE + LINE * text_lines(pieces_text(it.sentence_pieces), 50)
+                + SMALL * (arm - 1))
+    r = payload
+    study = pieces_text(r.study_pieces) + (f" · {r.p_text}" if r.p_text else "")
+    h = (36 + LINE * text_lines(r.label, 40) + MONO * text_lines(r.values_text, 44)
+         + SMALL * text_lines(study, 66))
+    if r.problem:
+        h += 6 + SMALL * text_lines(f"Not drawn: {r.problem}.", 66)
+    return h
 
 
 @dataclass(frozen=True)
@@ -1166,8 +1220,8 @@ class Panel:
 
 def fold_pair(left: Panel, right: Panel) -> tuple[int, int]:
     """How many items each panel shows. The longer panel keeps the longest prefix whose
-    total is at most the shorter panel's, never fewer than MIN_SHOWN; equal totals or an
-    empty panel: no fold."""
+    total, with the "Show N more" line it then gains (`MORE`), is at most the shorter
+    panel's, never fewer than MIN_SHOWN; equal totals or an empty panel: no fold."""
     shown = [len(left.items), len(right.items)]
     if not left.items or not right.items:
         return shown[0], shown[1]
@@ -1176,21 +1230,26 @@ def fold_pair(left: Panel, right: Panel) -> tuple[int, int]:
         return shown[0], shown[1]
     i, long_p, short_total = (0, left, rt) if lt > rt else (1, right, lt)
     k = 0
-    while k < len(long_p.items) and long_p.total(k + 1) <= short_total:
+    while k < len(long_p.items) and long_p.total(k + 1) + MORE <= short_total:
         k += 1
     shown[i] = min(len(long_p.items), max(k, MIN_SHOWN))
     return shown[0], shown[1]
 
 
+def heading_weight(text: str) -> int:
+    """A group heading's estimated height in pixels (`GROUP`, 17 for each further line)."""
+    return GROUP + 17 * (text_lines(text, 45) - 1)
+
+
 def _items(kind: str, entries: Sequence[tuple[str | None, Any]]) -> Panel:
-    w = WEIGHTS[kind]
-    return Panel(w.head, [Item(w.item, h, w.group if h is not None else 0, payload)
-                          for h, payload in entries])
+    return Panel(HEAD[kind], [Item(item_weight(kind, payload), h,
+                                   heading_weight(h) if h is not None else 0, payload)
+                              for h, payload in entries])
 
 
 def forest_panel(body: AnswerBody) -> Panel:
     if body.answer is None:
-        return Panel(WEIGHTS["forest"].head, [])
+        return Panel(HEAD["forest"], [])
     f = forest(body.answer, refs_of(body))
     entries = [(RATIO_HEADING if i == 0 else None, r) for i, r in enumerate(f.ratios)]
     entries += [(DIFF_HEADING if i == 0 else None, r) for i, r in enumerate(f.diffs)]
