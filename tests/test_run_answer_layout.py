@@ -494,3 +494,282 @@ def test_pct_filter_takes_numbers_only():
 def test_an_unknown_run_id_stays_404(env):
     r = env.c.get(f"/runs/{uuid.uuid4()}", headers=H)
     assert r.status_code == 404 and RUN_NOT_FOUND in r.text
+
+
+# ---------- F3c Task 4: the Introduction panel and the early summary (mock f3c v1) ----------
+
+from pubmedgemini import intro as intro_words
+
+INTRO = "Example paragraph one.\n\nExample paragraph two\nwith a line break."
+BG = ("Background only, written by the model from your question alone. It is not drawn from "
+      "the studies and carries no citations.")  # O1 (a), typed from the plan
+EARLY_NOTE = ("The summary was written first. Its citations have been checked against the "
+              "selected studies. The outcomes, the trials and the check that the parts agree "
+              "are still being written, so this summary may still change or be withdrawn. The "
+              "full answer replaces it on this page.")  # mock v1, typed
+KEYS_HELD = "The key numbers are shown with the full answer."  # O3 (b), mock v1
+STILL = ("Still being written: why this conclusion (every estimate with a 95% CI, outcome by "
+         "outcome), the counselling dashboard, the trials, conflicting evidence, applicability, "
+         "what would change this answer, and the references.")  # mock v1, typed
+STILL_WITH_CONTEXT = ("Still being written: why this conclusion (every estimate with a 95% CI, "
+                      "outcome by outcome), the counselling dashboard, the trials, conflicting "
+                      "evidence, and the references.")
+
+
+def running(env, steps=("Researcher: searching PubMed and Europe PMC",)):
+    rid = insert_run(env, status="running", error_kind=None)
+    with env.pool.connection() as conn:
+        conn.execute("UPDATE runs SET finished_at = NULL WHERE id = %s", (rid,))
+        for i, line in enumerate(steps, start=1):
+            conn.execute("INSERT INTO run_steps (run_id, seq, kind, line) "
+                         "VALUES (%s, %s, 'note', %s)", (rid, i, line))
+    return rid
+
+
+def with_intro(env, rid, text=INTRO, status="done"):
+    with env.pool.connection() as conn:
+        conn.execute("INSERT INTO run_intros (run_id, status, reason, text) "
+                     "VALUES (%s, %s, %s, %s)",
+                     (rid, status, "api" if status == "failed" else None,
+                      text if status == "done" else None))
+
+
+def with_early(env, rid, summary=True, context=False, glance=True):
+    """The early row EarlyStore stores for the made-up parts (a real citation check)."""
+    from writer_fakes import whole_answer
+
+    from pubmedgemini.runner import EarlyStore, _Answer
+    from pubmedgemini.writer.answer import IntegrityV3, ReferenceV3
+    from pubmedgemini.writer.prompts import Section
+    from pubmedgemini.writer.read import as_context, as_summary
+
+    w = whole_answer("ex", (PMIDS[0], PMIDS[1]))
+    if not glance:
+        w["at_a_glance"] = None
+    a = _Answer("q", [], None, IntegrityV3())
+    a.references = [ReferenceV3(n=i, pmid=p, title=f"Title {i}", journal="J", year=2020,
+                                doi=None, retracted=False, found_by_skeptic=False)
+                    for i, p in enumerate(PMIDS[:2], start=1)]
+    es = EarlyStore(env.pool, uuid.UUID(rid) if isinstance(rid, str) else rid, a, PMIDS[:2])
+    if context:
+        es(("context", as_context({f: w[f] for f in Section.CONTEXT.fields})))
+    if summary:
+        es(("summary", as_summary({f: w[f] for f in Section.SUMMARY.fields})))
+    with env.pool.connection() as conn:
+        assert conn.execute("SELECT count(*) FROM run_early").fetchone()[0] == 1
+
+
+def run_page(env, rid):
+    return page(env, f"/runs/{rid}")
+
+
+def test_working_page_shows_the_introduction_open_with_its_labels(env):
+    rid = running(env)
+    with_intro(env, rid)
+    t = run_page(env, rid)
+    sec = t.split("<h2>Introduction</h2>", 1)[1].split("</section>", 1)[0]
+    assert f'<p class="sub">{intro_words.TAG_RUNNING}</p>' in sec
+    assert f'<p class="muted">{BG}</p>' in sec and intro_words.BACKGROUND == BG
+    assert "<p>Example paragraph one.</p>" in sec
+    assert "<p>Example paragraph two\nwith a line break.</p>" in sec
+    assert f"<p><b>{intro_words.CLOSING}</b></p>" in sec
+    # order: Question, Introduction, Steps; the 5 s refresh while working
+    assert t.index("<h2>Question</h2>") < t.index("<h2>Introduction</h2>") < t.index(
+        "<h2>Steps</h2>")
+    assert '<meta http-equiv="refresh" content="5">' in t
+    assert "<details" not in t and "Early" not in t
+
+
+@pytest.mark.parametrize("case", ["no_row", "failed", "pending"])
+def test_no_introduction_row_no_panel(env, case):
+    rid = running(env)
+    if case == "failed":
+        with_intro(env, rid, status="failed")
+    elif case == "pending":
+        with env.pool.connection() as conn:
+            conn.execute("INSERT INTO run_intros (run_id) VALUES (%s)", (rid,))
+    t = run_page(env, rid)
+    assert "Introduction" not in t and BG not in t
+    url = store(env, hernia())
+    rid2 = url.rsplit("/", 1)[1]
+    if case == "failed":
+        with_intro(env, rid2, status="failed")
+    assert "Introduction" not in page(env, url)
+
+
+def test_working_page_without_an_introduction_is_as_before(env):
+    rid = running(env)
+    t = run_page(env, rid)
+    assert ('<section class="card">\n<h2>Steps</h2>\n\n<ul>\n\n<li>Researcher: searching PubMed '
+            'and Europe PMC</li>\n\n</ul>\n\n</section>') in t
+
+
+def test_introduction_text_is_escaped_and_never_linked(env):
+    rid = running(env)
+    with_intro(env, rid, text="<script>alert(1)</script> see [90000001] and "
+                              "[PMID 90000002]\u202e\u200b.")
+    t = run_page(env, rid)
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in t and "<script" not in t
+    sec = t.split("<h2>Introduction</h2>", 1)[1].split("</section>", 1)[0]
+    assert "[90000001]" in sec and "<a" not in sec
+    assert "\u202e" not in t and "\u200b" not in t
+
+
+def test_early_summary_marked_and_without_key_numbers(env):
+    rid = running(env, steps=["Researcher: searching PubMed and Europe PMC",
+                              "Writer: writing the answer from 2 studies (2 with an abstract)"])
+    with_intro(env, rid)
+    with_early(env, rid)
+    t = run_page(env, rid)
+    assert '<meta http-equiv="refresh" content="5">' in t
+    assert '<h2>Early summary <span class="tag">Early</span></h2>' in t
+    assert f"<p>{EARLY_NOTE}</p>" in t
+    assert t.count('<span class="tag">Early</span>') == 3
+    assert '<h2>At a glance <span class="tag">Early</span></h2>' in t
+    assert '<h2>Bottom line <span class="tag">Early</span></h2>' in t
+    glance = t.split("<h2>At a glance", 1)[1].split("</section>", 1)[0]
+    assert "<p>ex no clear benefit.</p>" in glance  # the verdict
+    assert "<p><b>Main caveat:</b> small</p>" in glance
+    assert f'<p class="muted">{KEYS_HELD}</p>' in glance
+    assert "Chronic pain" not in glance and "RR 0.76" not in t  # the key number held back
+    assert "<svg" not in t and 'class="dots"' not in t and 'class="cmp"' not in t
+    bottom = t.split("<h2>Bottom line", 1)[1].split("</section>", 1)[0]
+    assert 'ex no clear benefit [<a href="#ref-1">1</a>, <a href="#ref-2">2</a>].' in bottom
+    assert '<span class="pill mo">Moderate certainty</span>' in bottom
+    assert "<p><b>Default choice:</b> ex lap</p>" in bottom
+    assert f'<p class="muted">{STILL}</p>' in t
+    assert "<h2>Applicability" not in t and "<h2>What would change" not in t
+    # Introduction and Steps fold, in the mock's order
+    assert ('<section class="card">\n<details class="fold"><summary>Introduction</summary>\n'
+            f'<p class="sub">{intro_words.TAG_FINISHED}</p>\n<p class="muted">{BG}</p>') in t
+    assert intro_words.CLOSING not in t
+    assert '<details class="fold"><summary>Steps (2)</summary>' in t
+    order = ["<h2>Question</h2>", "<summary>Introduction</summary>", "<summary>Steps (2)",
+             "<h2>Early summary", "<h2>At a glance", "<h2>Bottom line", "Still being written"]
+    assert [t.index(x) for x in order] == sorted(t.index(x) for x in order)
+    assert "<h2>Steps</h2>" not in t and "<h2>References</h2>" not in t
+
+
+def test_early_context_cards_only_when_context_arrived(env):
+    rid = running(env)
+    with_early(env, rid, summary=True, context=True)
+    t = run_page(env, rid)
+    assert t.count('<span class="tag">Early</span>') == 5
+    assert '<h2>Applicability <span class="tag">Early</span></h2>' in t
+    assert "<p><b>Case mix:</b> ex simple</p>" in t
+    assert '<h2>What would change this answer <span class="tag">Early</span></h2>' in t
+    assert "<li>ex a larger RCT</li>" in t
+    assert f'<p class="muted">{STILL_WITH_CONTEXT}</p>' in t
+    order = ["<h2>Bottom line", "<h2>Applicability", "<h2>What would change", "Still being"]
+    assert [t.index(x) for x in order] == sorted(t.index(x) for x in order)
+
+
+def test_context_alone_shows_no_early_summary(env):
+    """Until the summary part is in, the page stays as it works (the early card's words say
+    the summary was written first)."""
+    rid = running(env)
+    with_intro(env, rid)
+    with_early(env, rid, summary=False, context=True)
+    t = run_page(env, rid)
+    assert "Early" not in t and "<h2>Applicability" not in t
+    assert "<h2>Introduction</h2>" in t and "<h2>Steps</h2>" in t
+
+
+def test_early_without_at_a_glance_has_no_glance_card(env):
+    rid = running(env)
+    with_early(env, rid, glance=False)
+    t = run_page(env, rid)
+    assert "<h2>At a glance" not in t and t.count('<span class="tag">Early</span>') == 2
+
+
+def test_an_unreadable_early_body_is_ignored(env, caplog):
+    rid = running(env)
+    with env.pool.connection() as conn:
+        conn.execute("INSERT INTO run_early (run_id, body) VALUES (%s, %s)",
+                     (rid, Jsonb({"summary": True, "context": False,
+                                  "answer": {"version": 3, "SECRET-EARLY-TEXT": "x"}})))
+    with caplog.at_level("WARNING"):
+        t = run_page(env, rid)
+    assert "Early" not in t and "<h2>Steps</h2>" in t
+    assert "SECRET-EARLY-TEXT" not in t and "SECRET-EARLY-TEXT" not in caplog.text
+    assert "run page early kind=invalid" in caplog.text
+
+
+def test_early_text_is_escaped(env):
+    rid = running(env)
+    with_early(env, rid)
+    with env.pool.connection() as conn:
+        body = conn.execute("SELECT body FROM run_early").fetchone()[0]
+        body["answer"]["answer"]["bottom_line"]["text"] = "<script>x</script>\u202e"
+        conn.execute("UPDATE run_early SET body = %s", (Jsonb(body),))
+    t = run_page(env, rid)
+    assert "&lt;script&gt;x&lt;/script&gt;" in t and "<script" not in t and "\u202e" not in t
+
+
+def test_finished_page_never_shows_the_early_summary(env):
+    url = store(env, hernia())
+    rid = url.rsplit("/", 1)[1]
+    with env.pool.connection() as conn:  # a leftover row, inserted by hand
+        conn.execute("INSERT INTO run_early (run_id, body) VALUES (%s, %s)",
+                     (rid, Jsonb({"summary": True, "context": True, "answer": {}})))
+    t = page(env, url)
+    assert "Early" not in t and "Still being written" not in t
+    assert '<meta http-equiv="refresh"' not in t
+
+
+def test_finished_page_has_the_introduction_fold_first(env):
+    url = store(env, hernia())
+    with_intro(env, url.rsplit("/", 1)[1])
+    t = page(env, url)
+    assert t.index('<p class="sub">Done · Quick') < t.index("<summary>Introduction</summary>") \
+        < t.index("<summary>Steps (")
+    sec = t.split("<summary>Introduction</summary>", 1)[1].split("</details>", 1)[0]
+    assert sec == (f'\n<p class="sub">{intro_words.TAG_FINISHED}</p>\n<p class="muted">{BG}</p>'
+                   "\n<p>Example paragraph one.</p>\n<p>Example paragraph two\nwith a line "
+                   "break.</p>\n")
+    assert intro_words.CLOSING not in t and "Early" not in t
+
+
+@pytest.mark.parametrize("status", ["done", "partial"])
+def test_the_finished_page_is_unchanged_but_for_the_introduction(env, status):
+    """Byte for byte: the page with an Introduction, less its one card, is the page without
+    one (so everything below the sub line, Bottom line included, is as before)."""
+    with_one = store(env, hernia(), status=status)
+    without = store(env, hernia(), status=status)
+    with_intro(env, with_one.rsplit("/", 1)[1])
+    a = page(env, with_one).replace(with_one.rsplit("/", 1)[1], "RID")
+    b = page(env, without).replace(without.rsplit("/", 1)[1], "RID")
+    card = a.split("<section class=\"card\">\n<details class=\"fold\"><summary>Introduction", 1)
+    assert len(card) == 2
+    rest = card[1].split("</section>\n", 1)[1]
+    assert card[0] + rest == b
+
+
+def _end(env, rid):  # one active run for the whole app: end it before the next
+    with env.pool.connection() as conn:
+        conn.execute("UPDATE runs SET status = 'done' WHERE id = %s", (rid,))
+
+
+def test_new_states_have_no_script_and_no_new_css(env):
+    plain_rid = running(env)
+    plain = run_page(env, plain_rid)
+    _end(env, plain_rid)
+    rid = running(env)
+    with_intro(env, rid)
+    working = run_page(env, rid)
+    _end(env, rid)
+    rid2 = running(env)
+    with_intro(env, rid2)
+    with_early(env, rid2, context=True)
+    early = run_page(env, rid2)
+    url = store(env, hernia())
+    with_intro(env, url.rsplit("/", 1)[1])
+    done = page(env, url)
+    css = CSS.read_text()
+    for t in (working, early, done):
+        low = t.lower()
+        assert "<script" not in low and "style=" not in low and "<style" not in low
+        assert t.count("<link") == plain.count("<link")
+        for cls in set(re.findall(r'class="([^"]+)"', t)):
+            for c in cls.split():
+                assert re.search(rf"\.{re.escape(c)}\b", css) or c in ("wide",), c

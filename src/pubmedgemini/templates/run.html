@@ -1,5 +1,68 @@
 {% extends "base.html" %}
 {% import "_answer.html" as ans %}
+{#- F3c (mock f3c v1): the Introduction folded, and the early summary's cards. Model text is
+escaped text only (autoescape, no |safe); every word around it is fixed. -#}
+{%- macro intro_fold() -%}
+<section class="card">
+<details class="fold"><summary>{{ intro_words.heading }}</summary>
+<p class="sub">{{ intro_words.tag_finished }}</p>
+<p class="muted">{{ intro_words.background }}</p>
+{%- for para in intro_paragraphs %}
+<p>{{ para }}</p>
+{%- endfor %}
+</details>
+</section>
+{%- endmacro -%}
+{%- macro early_cards(e) -%}
+{%- set view = e.view -%}
+<section class="card">
+<h2>Early summary <span class="tag">Early</span></h2>
+<p>{{ e.note }}</p>
+</section>
+{%- if view.glance %}
+<section class="card">
+<h2>At a glance <span class="tag">Early</span></h2>
+{%- if view.glance.verdict %}
+<p>{{ ans.pieces(view.glance.verdict) }}</p>
+{%- endif %}
+{%- if view.glance.caveat %}
+<p><b>Main caveat:</b> {{ ans.pieces(view.glance.caveat) }}</p>
+{%- endif %}
+<p class="muted">{{ e.keys_held }}</p>
+</section>
+{%- endif %}
+<section class="card">
+<h2>Bottom line <span class="tag">Early</span></h2>
+{%- for para in view.bottom.paragraphs %}
+<p>{{ ans.pieces(para) }}</p>
+{%- endfor %}
+<p><span class="pill {{ view.bottom.pill }}">{{ view.bottom.certainty }} certainty</span>{% if view.bottom.reason %} {{ ans.pieces(view.bottom.reason) }}{% endif %}</p>
+{%- for label, text in view.practice %}
+<p>{% if label %}<b>{{ label }}:</b> {% endif %}{{ ans.pieces(text) }}</p>
+{%- endfor %}
+</section>
+{%- if e.context and view.applicability %}
+<section class="card">
+<h2>Applicability <span class="tag">Early</span></h2>
+{%- for label, text in view.applicability %}
+<p><b>{{ label }}:</b> {{ ans.pieces(text) }}</p>
+{%- endfor %}
+</section>
+{%- endif %}
+{%- if e.context and view.would_change %}
+<section class="card">
+<h2>What would change this answer <span class="tag">Early</span></h2>
+<ul>
+{%- for c in view.would_change %}
+<li>{{ ans.pieces(c) }}</li>
+{%- endfor %}
+</ul>
+</section>
+{%- endif %}
+<section class="card">
+<p class="muted">{{ e.still }}</p>
+</section>
+{%- endmacro -%}
 {% block head %}
 {% if active %}
 <meta http-equiv="refresh" content="5">
@@ -11,6 +74,9 @@
 {#- A finished run with a stored answer: the answer page (owner decision N1 A, mock v6). -#}
 <h1>{% for para in question_paragraphs %}{{ para }}{% if not loop.last %}<br>{% endif %}{% endfor %}</h1>
 <p class="sub">{{ status_word }} · Quick · Decision support. The clinician decides.</p>
+{% if intro_paragraphs -%}
+{{ intro_fold() }}
+{% endif -%}
 <section class="card">
 <details class="fold"><summary>Steps ({{ run.lines|length }})</summary>
 {%- if run.lines %}
@@ -234,6 +300,34 @@
 <p>Working. This page refreshes itself; you can leave it and come back from the home page.</p>
 {% endif %}
 </section>
+{% if early -%}
+{#- F3c, mock v1 screen A2: the summary part is in, citation-checked. -#}
+{% if intro_paragraphs -%}
+{{ intro_fold() }}
+{% endif -%}
+<section class="card">
+<details class="fold"><summary>Steps ({{ run.lines|length }})</summary>
+<ul>
+{%- for line in run.lines %}
+<li>{{ line }}</li>
+{%- endfor %}
+</ul></details>
+</section>
+{{ early_cards(early) }}
+<p class="foot muted">Google may use what you type here, and its reviewers may read it (Gemini free tier). Do not type anything that identifies a patient.</p>
+{% else -%}
+{% if intro_paragraphs and active -%}
+{#- F3c, mock v1 screen A1: the Introduction open while the run works. -#}
+<section class="card">
+<h2>{{ intro_words.heading }}</h2>
+<p class="sub">{{ intro_words.tag_running }}</p>
+<p class="muted">{{ intro_words.background }}</p>
+{%- for para in intro_paragraphs %}
+<p>{{ para }}</p>
+{%- endfor %}
+<p><b>{{ intro_words.closing }}</b></p>
+</section>
+{% endif -%}
 <section class="card">
 <h2>Steps</h2>
 {% if run.lines %}
@@ -322,5 +416,6 @@
 <p>Searched PubMed and Europe PMC (free sources); studies selected by {{ run.model }}</p>
 {% endif %}
 <p>Google may use what you type here, and its reviewers may read it (Gemini free tier). Do not type anything that identifies a patient.</p>
+{% endif -%}
 {% endif %}
 {% endblock %}

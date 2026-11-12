@@ -13,11 +13,13 @@ from fastapi import APIRouter, Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from pubmedgemini import intro
 from pubmedgemini.answer_page import answer_view, fmt_pct, pill_class
 from pubmedgemini.db import is_healthy
 from pubmedgemini.gemini.quota import reset_time_ist, runs_left
 from pubmedgemini.identity import NotSetUp, NotSignedIn, User, current_user
 from pubmedgemini.lit.query import query_rejected_message
+from pubmedgemini.lit.text import clean_text, drop_invisible
 from pubmedgemini.runs import (
     ActiveRunExists,
     QuestionBlocked,
@@ -99,6 +101,29 @@ KIND_MESSAGES = {
     **{k: GEMINI_UNAVAILABLE for k in ("overloaded", "timeout", "network", "http",
                                        "request_refused", "not_found", "too_large", "parse")},
 }
+# ---------- the Introduction and the early summary (F3c, mock f3c v1) ----------
+
+INTRO_WORDS = {"heading": intro.HEADING, "tag_running": intro.TAG_RUNNING,
+               "tag_finished": intro.TAG_FINISHED, "closing": intro.CLOSING,
+               "background": intro.BACKGROUND}
+EARLY_NOTE = (
+    "The summary was written first. Its citations have been checked against the selected "
+    "studies. The outcomes, the trials and the check that the parts agree are still being "
+    "written, so this summary may still change or be withdrawn. The full answer replaces it on "
+    "this page."
+)
+EARLY_KEYS_HELD = "The key numbers are shown with the full answer."  # O3 (b)
+_STILL_ALWAYS = ("why this conclusion (every estimate with a 95% CI, outcome by outcome)",
+                 "the counselling dashboard", "the trials", "conflicting evidence")
+_STILL_CONTEXT = ("applicability", "what would change this answer")
+
+
+def still_being_written(context: bool) -> str:
+    """The muted line naming what the early summary does not hold yet."""
+    items = [*_STILL_ALWAYS, *(() if context else _STILL_CONTEXT), "the references"]
+    return "Still being written: " + ", ".join(items[:-1]) + ", and " + items[-1] + "."
+
+
 STATUS_WORDS = {"queued": "Waiting", "running": "Running", "done": "Done", "partial": "Partial",
                 "failed": "Failed", "stopped": "Stopped"}
 LISTED_QUESTION_CHARS = 120
@@ -461,6 +486,37 @@ def _answer_view(v: RunView) -> tuple[dict[str, Any] | None, bool]:
     return answer_view(a), False
 
 
+def _intro_paragraphs(v: RunView) -> list[str]:
+    """The Introduction's paragraphs (Incisive `paragraphs`), cleaned again of NUL, bidi and
+    zero-width characters; none when it is not `done`."""
+    if not v.intro:
+        return []
+    return intro.paragraphs(drop_invisible(clean_text(v.intro)))
+
+
+def _early_view(v: RunView) -> dict[str, Any] | None:
+    """The early summary, only while the run works, once the summary part is in, read only
+    through `read_body` (as the stored answer). Unreadable: ignored, logged by kind alone."""
+    e = v.early
+    if not isinstance(e, dict) or e.get("summary") is not True:
+        return None
+    try:
+        a = read_body(e.get("answer"))
+        view = answer_view(a)
+    except AnswerInvalid as exc:
+        log.warning("run page early kind=%s", exc.kind)
+        return None
+    except Exception:  # noqa: BLE001 - nothing of the body reaches the log
+        log.warning("run page early kind=internal")
+        return None
+    if not view.get("answer"):
+        log.warning("run page early kind=invalid")
+        return None
+    context = e.get("context") is True
+    return {"view": view, "context": context, "note": EARLY_NOTE, "keys_held": EARLY_KEYS_HELD,
+            "still": still_being_written(context)}
+
+
 @router.get("/runs/{run_id}", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
 def run_page(request: Request, run_id: str, user: Annotated[User, Depends(current_user)]):
     v = _own_run(request, user, run_id)
@@ -482,6 +538,11 @@ def run_page(request: Request, run_id: str, user: Annotated[User, Depends(curren
         "status_word": STATUS_WORDS.get(v.status, v.status),
         "selected": [_shown_study(s) for s in v.selected],
         "trail": [f"{e.source}: {e.query} ({e.hits:,} found)" for e in v.searches],
+        # F3c: the Introduction (none for old runs, a failed or a pending one) and, while the
+        # run works, the early summary.
+        "intro_paragraphs": _intro_paragraphs(v),
+        "intro_words": INTRO_WORDS,
+        "early": _early_view(v) if active else None,
     }
     return templates.TemplateResponse(request, "run.html", context)
 
