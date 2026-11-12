@@ -311,7 +311,9 @@ def chart_kind(nums: Sequence[Number]) -> Kind:
         return "ratio"
     if len(nums) == 1 and has_ci(nums[0]) and is_difference(nums[0]):
         return "diff"
-    arms = {rust_trim(n.arm) if n.arm is not None else None for n in nums}
+    # Arms that differ only by case or spacing are one arm (re-check L-D: Incisive compares
+    # them trimmed only); the page still shows the writer's own spelling.
+    arms = {_arm_key(n.arm) if n.arm is not None else None for n in nums}
     if len(nums) >= 2 and len(arms) == len(nums) and not any(
             is_ratio(n) or is_difference(n) for n in nums):
         return "pair"

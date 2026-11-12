@@ -812,3 +812,23 @@ def test_an_arm_named_on_a_labelled_difference_is_listed_with_a_true_reason(n):
 def test_a_number_not_labelled_as_a_difference_keeps_the_one_arm_reason(label):
     w = answer_with(num(label, 2.1, "%", "TEP", lo=1.0, hi=3.5))
     assert [x.problem for x in outcome_cards(w, REFS)[0].listed] == [ONE_ARM]
+
+
+# ---------- arms that differ only by case or spacing are one arm (re-check L-D) ----------
+
+@pytest.mark.parametrize("a,b", [("TEP", "tep"), ("TEP ", "TEP"), ("Robotic  TAPP", "robotic TAPP"),
+                                 ("Lap\tTEP", "LAP TEP")])
+def test_arms_differing_only_by_case_or_spacing_are_not_a_pair(a, b):
+    w = written([outcome("Pain", [num("Pain", 9.4, "%", a), num("Pain", 18.8, "%", b)])],
+                [study("1", "TEP vs Lichtenstein")])
+    assert [g.kind for g in all_groups(w)] == ["text"]
+    assert compare(w, REFS) == [] and out_of_100(w, REFS) == []
+    listed = outcome_cards(w, REFS)[0].listed
+    assert [(x.at, x.problem) for x in listed] == [((0, 0), "its arms are not distinct"),
+                                                   ((0, 1), "its arms are not distinct")]
+    assert pieces_text(listed[0].sub_pieces).endswith(f" · {a.strip()}")  # the writer's spelling
+
+
+def test_distinct_arms_still_pair():
+    w = written([outcome("Pain", [num("Pain", 9.4, "%", "TEP"), num("Pain", 18.8, "%", "TAPP")])])
+    assert [g.kind for g in all_groups(w)] == ["pair"]
