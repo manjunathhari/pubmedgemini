@@ -39,6 +39,7 @@ from pubmedgemini.gemini.client import (
     parse_reply,
     retry_delay_seconds,
     structured_body,
+    text_body,
     to_openapi,
     turn_body,
     user_text,
@@ -531,3 +532,11 @@ def test_fake_answers_404_for_any_other_host_and_fails_when_the_script_ends():
     with pytest.raises(AssertionError, match="script exhausted"):
         client(g).generate({}, 60)
     assert len(g.sent) == 2
+
+
+def test_text_body_shape():  # F3c: the Introduction's body, no tools and no schema
+    assert text_body("S", "U", 800) == {
+        "systemInstruction": {"parts": [{"text": "S"}]},
+        "contents": [{"role": "user", "parts": [{"text": "U"}]}],
+        "generationConfig": {"maxOutputTokens": 800},
+    }

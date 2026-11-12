@@ -144,14 +144,18 @@ class ModelCaller:
         deadline: float,
         on_wait: Callable[[int], None],
         attempt_deadline: float | None = None,
+        max_attempts: int = MAX_ATTEMPTS,
     ) -> Reply:
-        """The reply, after at most MAX_ATTEMPTS attempts. Raises RunCapReached when the next
+        """The reply, after at most `max_attempts` attempts (MAX_ATTEMPTS unless a step asks
+        for fewer: the Introduction makes one, F3c O5). Raises RunCapReached when the next
         attempt would pass the run's cap, DeadlineReached when the pacer or a wait would pass
         `deadline`, else the last GeminiError.
 
         `deadline` decides whether an attempt starts; an attempt once sent is bounded by
         `attempt_deadline` (default `deadline`) and the 120 s attempt timeout. Incisive checks
         the wrap-up only before a turn and lets the turn in flight run to the hard stop."""
+        if not 1 <= max_attempts <= MAX_ATTEMPTS:
+            raise ValueError("max_attempts must be 1 to MAX_ATTEMPTS")
         limit = deadline if attempt_deadline is None else attempt_deadline
         estimate = estimate_tokens(body)
         attempt = 0
@@ -194,7 +198,7 @@ class ModelCaller:
                 " output_tokens=0 thought_tokens=0 latency_ms=%d",
                 step, attempt, err.kind, latency_ms,
             )
-            if err.kind not in RETRYABLE_KINDS or attempt >= MAX_ATTEMPTS:
+            if err.kind not in RETRYABLE_KINDS or attempt >= max_attempts:
                 raise err
             wait = err.retry_after if err.retry_after is not None else self._backoff(attempt)
             if self._clock() + wait >= deadline:

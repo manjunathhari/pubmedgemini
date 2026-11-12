@@ -347,3 +347,39 @@ def test_the_cap_log_line_holds_a_kind_and_counts_only(caller_with, caplog):
         f"gemini kind=run_call_cap step=study_list attempts={RUN_ATTEMPTS} cap={RUN_ATTEMPTS}"
     ]
     assert str(RunCapReached()) == "run_call_cap"
+
+
+# ---------- F3c: a call may ask for fewer attempts (the Introduction's one) ----------
+
+
+def test_max_attempts_one_sends_one_attempt(caller_with, migrated_pool):
+    c, g, clock, waits = caller_with([error(503, "UNAVAILABLE"), reply([{"text": "x"}])])
+    with pytest.raises(GeminiError) as e:
+        c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 200, on_wait=waits.append,
+               max_attempts=1)
+    assert e.value.kind == "overloaded" and len(g.sent) == 1 and clock.slept == []
+    assert [r[:3] for r in rows(migrated_pool)] == [("researcher", 1, "overloaded")]
+
+
+def test_max_attempts_one_never_waits_a_429(caller_with):
+    c, g, clock, waits = caller_with([error(429, "RESOURCE_EXHAUSTED", [RETRY_INFO("12s")])])
+    with pytest.raises(GeminiError):
+        c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 200, on_wait=waits.append,
+               max_attempts=1)
+    assert len(g.sent) == 1 and waits == [] and 12.0 not in clock.slept
+
+
+def test_the_default_still_makes_three_attempts(caller_with):
+    c, g, clock, _ = caller_with([error(503, "UNAVAILABLE")] * 2 + [reply([{"text": "x"}])])
+    assert c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 200,
+                  on_wait=print).text == "x"
+    assert len(g.sent) == 3
+
+
+@pytest.mark.parametrize("n", [0, 4])
+def test_max_attempts_out_of_range_is_refused(caller_with, n):
+    c, g, clock, _ = caller_with([])
+    with pytest.raises(ValueError):
+        c.call({}, step="researcher", run_id=RUN, deadline=clock.t + 200, on_wait=print,
+               max_attempts=n)
+    assert g.sent == []

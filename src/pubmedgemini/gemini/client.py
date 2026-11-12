@@ -197,6 +197,15 @@ def structured_body(system: str, user: str, schema: dict, max_tokens: int) -> di
     }
 
 
+def text_body(system: str, user: str, max_tokens: int) -> dict:
+    """One plain-text reply, no tools and no schema (F3c: the Introduction)."""
+    return {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [user_text(user)],
+        "generationConfig": {"maxOutputTokens": int(max_tokens)},
+    }
+
+
 def function_response_turn(replies: Sequence[tuple[str, str | None, bool, str]]) -> dict:
     """`replies` is `(name, call id or None, ok, text)` in call order: one user turn holding
     every functionResponse part, `{"output": text}` or `{"error": text}`; the id is echoed

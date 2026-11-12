@@ -1,9 +1,10 @@
-"""Compare the writer's texts in `writer/prompts.py` with Incisive's Rust source, read from disk.
+"""Compare the writer's texts in `writer/prompts.py`, and the Introduction's in `intro.py`, with
+Incisive's Rust source, read from disk.
 
 Usage: python scripts/check_incisive_texts.py <incisive-root>
 
 Reads the string literals by pinned line range from Incisive's
-`crates/incisive-app/src/agent/writer_v3.rs` (commit 12630f7), decodes Rust's escapes (`\\"`,
+`crates/incisive-app/src/agent/writer_v3.rs` and `intro_page.rs` (commit 12630f7), decodes Rust's escapes (`\\"`,
 `\\n`, `\\\\`, `\\u{..}`, and a line-end `\\` dropping the newline and the next line's leading
 whitespace), and compares each with the port. Prints only `equal`, or one line per difference,
 `differs <name> at character N` (N counts from 0). Never prints prompt text. Exit 0 when equal.
@@ -17,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from pubmedgemini import intro
 from pubmedgemini.researcher.loop import SearchEntry
 from pubmedgemini.researcher.studylist import MAX_CONTRADICTIONS, Contradiction
 from pubmedgemini.writer import prompts as p
@@ -217,6 +219,22 @@ def check(incisive_root: Path) -> list[str]:
         rust_instruction = render(template, {"SECTION_HEAD": section_head},
                                   [names[i].upper(), ", ".join(fields[i]), others])
         same(f"Section.{order[i].upper()}.instruction", rust_instruction, s.instruction())
+
+    # F3c: the Introduction's words (intro_page.rs:9-22) and limits (runs/intro.rs:60, 65).
+    page = Source(incisive_root / "crates/incisive-app/src/intro_page.rs")
+    same("intro.PROMPT", page.one(9, 14, "pub const PROMPT: &str ="), intro.PROMPT)
+    same("intro.HEADING", page.one(16, 16, "pub const HEADING: &str ="), intro.HEADING)
+    same("intro.TAG_RUNNING", page.one(17, 18, "pub const TAG_RUNNING: &str ="),
+         intro.TAG_RUNNING)
+    same("intro.TAG_FINISHED", page.one(19, 20, "pub const TAG_FINISHED: &str ="),
+         intro.TAG_FINISHED)
+    same("intro.CLOSING", page.one(22, 22, "pub const CLOSING: &str ="), intro.CLOSING)
+    job = Source(incisive_root / "crates/incisive-app/src/runs/intro.rs")
+    same("intro.MAX_TOKENS", str(job.number(60, "pub const MAX_TOKENS")), str(intro.MAX_TOKENS))
+    m = re.search(r"from_secs\((\d+)\)", job.code(65, 65, "pub const TIME_LIMIT"))
+    if not m:
+        raise Moved("line 65")
+    same("intro.TIME_LIMIT_SECONDS", m.group(1), str(intro.TIME_LIMIT_SECONDS))
 
     # The user message's fixed text (w.rs:733-871: capped .. notes_tail). Each literal's
     # pieces must appear, in order around its placeholders, in a message the port builds.
