@@ -48,6 +48,16 @@ Live: F0, F1, F2, the look, Library and Activity (merged and deployed on 10 and 
 - Each page shows only the signed-in user's own questions and counts. Nothing new is logged. No JavaScript.
 - Nothing to do on the VPS.
 
+## F3b: the answer page on the live writer (branch `f3b-answer-page`, not merged yet)
+
+- A finished question's page is now laid out as the mock the owner signed off (v6): the answer first, in cards, with the steps folded at the top and the selected studies, the studies considered and the possible contradictions folded at the bottom. Nothing is lost from the old page: it is the same content, moved and folded.
+- "Why this conclusion": every ratio or difference that has a 95% interval is drawn as a short line on a scale (dashed mark at 1 or 0), beside the outcomes, each of which opens with a tap. "Counselling dashboard": out of 100 patients like those in the trials, solid squares for one arm and hatched squares for the other, beside "Compare the arms".
+- A number is drawn only when the app is sure what it is. Anything else is shown as text under its outcome (or in Compare the arms) with the reason, for example "Not drawn: no interval." Owner decisions of 12 Nov: a hazard ratio, odds ratio, risk ratio, relative risk or rate ratio named at the start of its label is drawn even when the writer left its unit blank (R1); squares are drawn for "Group A" / "Group B" when the trial's comparison names "(group A)" and "(group B)" (S1), and for "Experimental" / "Standard" / "Standard of care" / "Control" arms when the trial's comparison itself uses those words on the matching sides (S2).
+- Greys only: certainty labels print their word (High dark, Moderate light, Low outlined, Very low dashed outline). On a computer the page's content is wider and the cards sit two by two; on a phone they stack, with no sideways scrolling.
+- Answers already stored show in the new layout without running them again. Runs without an answer look as before. No JavaScript.
+- Nothing changes in how the answer is written: the same calls, the same "Free runs left today", the same time limits, no new table. Never logged: anything from the answer; the page logs only "answer_page kind=row_not_derived rows=N" when a line could not be placed.
+- Nothing to do on the VPS.
+
 ## F3a: the writer (branch `f3a-writer`, not merged yet)
 
 - A finished question now shows a written answer on its page, in plain sections: At a glance, Bottom line, Clinical practice, the outcomes, the trials and the references. The page still lists the studies, as before. The Incisive layout, the Introduction and the number check come later (F3b, F4).
