@@ -227,3 +227,36 @@ def test_controls_and_labels_use_the_sans_font():
         parts = {" ".join(x.split()).split("[")[0].split(":")[0] for x in sel.split(",")}
         if parts & named:
             assert not re.search(r"(^|[;\s])font:", body), sel
+
+
+# ---------- the answer page's rules (F3b plan Task 3, mock v6) ----------
+
+
+def _rule_body(selector: str, text: str) -> str:
+    m = re.search(r"(?:^|[}\s])" + re.escape(selector) + r"\s*\{([^}]*)\}", text)
+    assert m, selector
+    return m.group(1)
+
+
+def test_answer_rules_present():
+    text = css()
+    assert re.search(r"(^|[}\s])\.two\s*\{", text)
+    assert re.search(r"@media \(min-width:700px\)\{\.two\{grid-template-columns:"
+                     r"minmax\(0,1fr\) minmax\(0,1fr\)", text)
+    assert re.search(r"@media \(min-width:700px\)\{main\.wide\{max-width:68rem\}\}", text)
+    assert "svg.track{" in text
+    assert "stroke-dasharray" in _rule_body(".track .null", text)
+    assert re.search(r"(^|[}\s,])\.dots\{", text)
+    assert "details.more{" in text
+    assert _rule_body(".pill.hi", text)
+    assert "dashed" in _rule_body(".pill.vl", text)
+    # no colour carries meaning alone: the two arms are solid against hatched (N3)
+    assert "repeating-linear-gradient" in _rule_body(".B .dots i.on,.B i.key", text)
+
+
+def test_no_row_class_rules_added():
+    """The compare rows are `.cmp`: a `.row` means "links in here get the 44px target"."""
+    text = css()
+    assert ".cmp{" in text
+    rows = [sel for sel, _ in _rules() if re.search(r"\.row\b", sel)]
+    assert rows == [".row > a, .item a"]
