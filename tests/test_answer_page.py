@@ -721,7 +721,7 @@ def test_a_difference_without_an_arm_is_still_drawn():
 
 # ---------- an arm name that contains "MD" or "minus" is an arm name (re-check H-A) ----------
 
-@pytest.mark.parametrize("arm", ["MD Anderson protocol", "Md. Ali technique", "Drain minus"])
+@pytest.mark.parametrize("arm", ["MD Anderson protocol", "Md. Ali technique"])
 def test_an_arm_name_containing_a_marker_is_one_arms_rate(arm):
     w = answer_with(num("Recurrence at 2 y", 12.5, "%", arm, lo=8.0, hi=17.0))
     f = forest(w, REFS)
@@ -730,7 +730,7 @@ def test_an_arm_name_containing_a_marker_is_one_arms_rate(arm):
     assert shown_at(w, REFS) == every_number(w)
 
 
-@pytest.mark.parametrize("arm", ["MD Anderson protocol", "Md. Ali technique", "Drain minus"])
+@pytest.mark.parametrize("arm", ["MD Anderson protocol", "Md. Ali technique"])
 def test_an_arm_name_containing_a_marker_pairs_as_a_normal_arm(arm):
     w = written([outcome("Recurrence", [num("Recurrence at 2 y", 12.5, "%", arm),
                                         num("Recurrence at 2 y", 20.0, "%", "Standard")])],
@@ -795,10 +795,8 @@ ARM_ON_DIFF = "an arm is named on a difference"
 
 @pytest.mark.parametrize("n", [
     num("MD", -0.34, "points", "robotic", lo=-0.9, hi=0.2),  # Incisive's writer_v3.rs example
-    num("Mean difference in pain", -1.2, None, "TEP vs Lichtenstein", lo=-2.0, hi=-0.4),
     num("Pain", -1.2, "MD", "TEP", lo=-2.0, hi=-0.4),
     num("Robotic minus lap", 4.0, "min", "robotic", lo=1.0, hi=7.0),
-    num("Difference", 41.0, "percentage points", "POEM minus PD", lo=25.0, hi=57.0),
 ])
 def test_an_arm_named_on_a_labelled_difference_is_listed_with_a_true_reason(n):
     w = answer_with(n)
@@ -941,3 +939,82 @@ def rust_trim_pmid(n: Number) -> str:
     from pubmedgemini.gemini.structured import rust_trim
 
     return rust_trim(n.pmid)
+
+
+# ---------- an arm qualifies for a pair only as a plain arm name (third check M1) ----------
+
+COMPARISON_ARM = "its arm text reads as a comparison, not an arm"
+OTHER_COMPARISON_ARM = "the other arm's text reads as a comparison, not an arm"
+
+
+@pytest.mark.parametrize("arm,kind", [
+    (None, "none"), ("", "none"), ("  ", "none"),
+    ("MD", "marker"), (" md ", "marker"), ("risk  difference", "marker"), ("SMD", "marker"),
+    ("MD.", "comparison"), ("M.D.", "comparison"), ("Difference:", "comparison"),
+    ("ARR", "comparison"), ("rd", "comparison"), ("A.R.D.", "comparison"), ("NNT", "comparison"),
+    ("nnh", "comparison"), ("difference vs laparoscopic", "comparison"),
+    ("TEP vs Lichtenstein", "comparison"), ("TEP vs. Lichtenstein", "comparison"),
+    ("TEP versus Lichtenstein", "comparison"), ("Drain minus", "comparison"),
+    ("POEM minus PD", "comparison"), ("TEP compared with open", "comparison"),
+    ("TEP compared  to open", "comparison"), ("relative to open", "comparison"),
+    ("Mean difference.", "comparison"), ("Differences", "comparison"),
+    ("MD Anderson protocol", "name"), ("Md. Ali technique", "name"), ("TEP", "name"),
+    ("Robotic TAPP", "name"), ("Lichtenstein", "name"), ("Versius robot", "name"),
+    ("Minusinsk protocol", "name"), ("Relative risk group", "name"), ("ＴＥＰ", "name"),
+])
+def test_each_arm_text_has_one_kind(arm, kind):
+    from pubmedgemini.answer_page import arm_kind
+
+    assert arm_kind(num("Pain", 1.0, "%", arm)) == kind
+
+
+def test_a_comparison_in_the_arm_text_is_never_paired():  # the reviewer's case
+    w = written([outcome("Conversion", [
+        num("Conversion", 2.0, "%", "robotic"),
+        num("Conversion", 6.0, "%", "difference vs laparoscopic", lo=2.0, hi=10.0)])],
+        [study("1", "Robotic vs laparoscopic")])
+    assert out_of_100(w, REFS) == [] and compare(w, REFS) == []
+    f = forest(w, REFS)
+    assert f.diffs == [] and f.ratios == []
+    assert [(x.at, x.problem) for x in outcome_cards(w, REFS)[0].listed] == [
+        ((0, 0), OTHER_COMPARISON_ARM), ((0, 1), COMPARISON_ARM)]
+    assert shown_at(w, REFS) == every_number(w)
+
+
+@pytest.mark.parametrize("arm", ["MD.", "M.D.", "Difference:", "ARR", "RD", "ARD", "NNT", "NNH",
+                                 "Drain minus", "TEP vs Lichtenstein"])
+def test_a_marker_with_punctuation_or_a_comparison_is_not_an_arm_of_a_pair(arm):
+    w = written([outcome("Pain", [num("Pain", 9.4, "%", "TEP"), num("Pain", 3.0, "%", arm)])],
+                [study("1", "TEP vs Lichtenstein")])
+    assert out_of_100(w, REFS) == [] and compare(w, REFS) == []
+    assert [x.problem for x in outcome_cards(w, REFS)[0].listed] == [OTHER_COMPARISON_ARM,
+                                                                     COMPARISON_ARM]
+
+
+def test_drain_minus_is_now_listed_not_paired():
+    # Changed by the third check (M1): "Drain minus" contains the word "minus", so it reads as
+    # a comparison, not an arm; it was paired as an arm name after re-check H-A.
+    w = written([outcome("Recurrence", [num("Recurrence at 2 y", 12.5, "%", "Drain minus"),
+                                        num("Recurrence at 2 y", 20.0, "%", "Standard")])],
+                [study("1", "Drain minus vs Standard")])
+    assert compare(w, REFS) == [] and out_of_100(w, REFS) == []
+    assert [x.problem for x in outcome_cards(w, REFS)[0].listed] == [COMPARISON_ARM,
+                                                                     OTHER_COMPARISON_ARM]
+
+
+@pytest.mark.parametrize("n", [
+    num("Recurrence at 2 y", 12.5, "%", "Drain minus", lo=8.0, hi=17.0),
+    num("Mean difference in pain", -1.2, None, "TEP vs Lichtenstein", lo=-2.0, hi=-0.4),
+    num("Difference", 41.0, "percentage points", "POEM minus PD", lo=25.0, hi=57.0),
+])
+def test_a_single_number_with_a_comparison_arm_says_so(n):
+    w = answer_with(n)
+    assert forest(w, REFS).diffs == []
+    assert [(x.at, x.problem) for x in outcome_cards(w, REFS)[0].listed] == [
+        ((0, 0), COMPARISON_ARM)]
+
+
+def test_a_ratio_with_a_comparison_arm_is_still_a_ratio_row():
+    w = answer_with(num("Seroma", 0.5, "RR", "TEP vs Lichtenstein", lo=0.2, hi=0.9))
+    [r] = forest(w, REFS).ratios
+    assert r.drawn and r.sub.endswith(" · TEP vs Lichtenstein")

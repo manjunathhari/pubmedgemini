@@ -26,6 +26,7 @@ cards of a pair level (X14). Rounding is Rust's `f64::round` (half away from zer
 import logging
 import math
 import re
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -265,26 +266,69 @@ def arm_name(n: Number) -> str:
 # Arm texts that are a difference marker, not an arm name: the whole text, trimmed, case-folded
 # and with inner spaces squashed, must be one of these (re-check H-A). Incisive's own examples
 # put "MD", "difference" and "risk difference" in `arm` (`answer_page.rs` tests); the rest
-# are the coordinator's list. A full match, never a search: "MD Anderson protocol",
-# "Md. Ali technique" and "Drain minus" are arm names.
+# are the coordinator's list. A full match, never a search: "MD Anderson protocol" and
+# "Md. Ali technique" are arm names.
 DIFF_MARKERS = frozenset({"md", "smd", "wmd", "difference", "mean difference",
                           "risk difference", "absolute difference"})
+# The whole arm text, punctuation ignored, is one of these: a measure, not an arm ("MD.",
+# "M.D.", "Difference:", "ARR", "RD", "ARD", "NNT", "NNH"; third check M1).
+_MEASURE_ARMS = DIFF_MARKERS | {"arr", "rd", "ard", "nnt", "nnh"}
+# Words that make an arm text read as a comparison (third check M1), matched as whole words
+# in the key (case-folded): "difference(s)", "minus", "versus", "vs", "vs.", "compared with",
+# "compared to", "relative to".
+_COMPARISON_WORDS = re.compile(
+    r"(?<!\w)(?:differences?|minus|versus|vs\.?|compared with|compared to|relative to)(?!\w)")
+_PUNCT = re.compile(r"[^\w\s]|_")
+
+ArmKind = Literal["none", "marker", "comparison", "name"]
 
 
-def _arm_key(a: str) -> str:
-    """An arm text as a comparison key: trimmed, case-folded, inner whitespace squashed."""
-    return rust_trim(_SPACES.sub(" ", a)).casefold()
+def _key(s: str) -> str:
+    """A text as a classification key: Unicode NFKC ("ＭＤ" is "MD"), trimmed, inner
+    whitespace squashed, case-folded. Never shown."""
+    return rust_trim(_SPACES.sub(" ", unicodedata.normalize("NFKC", s))).casefold()
+
+
+
+def arm_kind(n: Number) -> ArmKind:
+    """The one rule for what a number's arm text is (third check M1; owner rule D3a, decisions
+    d23 and d24). On the key (`_key`):
+
+    - "none": empty (no arm; d23: never shown as an arm);
+    - "marker": the whole key is one of `DIFF_MARKERS` (Incisive puts the measure in `arm`:
+      the number has no arm and the marker names its measure);
+    - "comparison": the key with punctuation removed is one of `_MEASURE_ARMS`, or the key
+      contains, as a whole word, one of `_COMPARISON_WORDS`;
+    - "name": anything else, a plain arm name ("TEP", "MD Anderson protocol").
+
+    Only a "name" may be paired (Compare the arms, Out of 100); a "comparison" is never
+    paired and never makes a difference row; it is listed, with
+    "its arm text reads as a comparison, not an arm"."""
+    k = _key(n.arm) if n.arm is not None else ""
+    if not k:
+        return "none"
+    if k in DIFF_MARKERS:
+        return "marker"
+    if (rust_trim(_SPACES.sub(" ", _PUNCT.sub("", k))) in _MEASURE_ARMS
+            or _COMPARISON_WORDS.search(k)):
+        return "comparison"
+    return "name"
 
 
 def arm_is_marker(n: Number) -> bool:
     """The arm text is a difference marker as a whole (`DIFF_MARKERS`)."""
-    return n.arm is not None and _arm_key(n.arm) in DIFF_MARKERS
+    return arm_kind(n) == "marker"
 
 
 def names_an_arm(n: Number) -> bool:
-    """The number carries an arm name: its arm text is not blank and is not, as a whole, a
-    difference marker (`DIFF_MARKERS`)."""
-    return bool(arm_name(n)) and not arm_is_marker(n)
+    """The number carries arm text that is not blank and not, as a whole, a difference marker
+    (`arm_kind` "comparison" or "name"): d24, such a number is never a difference row."""
+    return arm_kind(n) in ("comparison", "name")
+
+
+def plain_arm(n: Number) -> bool:
+    """The arm text is a plain arm name (`arm_kind` "name"): the only kind that is paired."""
+    return arm_kind(n) == "name"
 
 
 def is_difference(n: Number) -> bool:
@@ -311,9 +355,9 @@ def chart_kind(nums: Sequence[Number]) -> Kind:
         return "ratio"
     if len(nums) == 1 and has_ci(nums[0]) and is_difference(nums[0]):
         return "diff"
-    # Arms that differ only by case or spacing are one arm (re-check L-D: Incisive compares
-    # them trimmed only); the page still shows the writer's own spelling.
-    arms = {_arm_key(n.arm) if n.arm is not None else None for n in nums}
+    # Arms that differ only by case, spacing or Unicode form are one arm (re-check L-D:
+    # Incisive compares them trimmed only); the page still shows the writer's own spelling.
+    arms = {_key(n.arm) if n.arm is not None else None for n in nums}
     if len(nums) >= 2 and len(arms) == len(nums) and not any(
             is_ratio(n) or is_difference(n) for n in nums):
         return "pair"
@@ -331,9 +375,10 @@ def forest_kind(n: Number) -> Literal["ratio", "diff"] | None:
 
 
 def compared(w: WrittenAnswer, g: "NumGroup") -> bool:
-    """A pair group "Compare the arms" shows: every value has its own arm name (review H1,
-    owner decision d23: an arm is never inferred from position or from the heading)."""
-    return g.kind == "pair" and all(arm_name(n) for n in g.nums(w))
+    """A pair group "Compare the arms" shows: every value has its own plain arm name
+    (`plain_arm`; review H1, owner decision d23: an arm is never inferred from position or
+    from the heading; third check M1: an arm text that reads as a comparison is no name)."""
+    return g.kind == "pair" and all(plain_arm(n) for n in g.nums(w))
 
 
 def _words(s: str) -> list[str]:
@@ -488,8 +533,17 @@ def listed_problem(n: Number, group: Sequence[Number], pair: bool = False,
     `has_study`: its PMID is in the references (else it is never grouped: re-check L-F)."""
     if not has_study:
         return NO_STUDY
+    kind = arm_kind(n)
     if pair:
-        return "the other arm is not named" if arm_name(n) else "arm not named"
+        if kind == "none":
+            return "arm not named"
+        if kind != "name":
+            return COMPARISON_ARM
+        if any(arm_kind(x) == "none" for x in group if x is not n):
+            return "the other arm is not named"
+        return OTHER_COMPARISON_ARM
+    if kind == "comparison" and not is_ratio(n):
+        return COMPARISON_ARM
     if names_an_arm(n) and labelled_difference(n):
         return ARM_ON_DIFF
     if is_diff(n) and names_an_arm(n):
@@ -506,6 +560,8 @@ def listed_problem(n: Number, group: Sequence[Number], pair: bool = False,
 
 
 ONE_ARM_RATE = "one arm's rate, not a difference"
+COMPARISON_ARM = "its arm text reads as a comparison, not an arm"
+OTHER_COMPARISON_ARM = "the other arm's text reads as a comparison, not an arm"
 NO_STUDY = "its study is not in the references"
 # A number whose label or unit names a difference measure and which also carries an arm name:
 # not drawn (d24), and the reason says what is wrong (re-check M-C, coordinator option a).
