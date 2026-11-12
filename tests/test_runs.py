@@ -38,16 +38,20 @@ from pubmedgemini.runs import (
     add_search,
     add_seen,
     add_step,
+    clear_early,
     clip,
     create_run,
     end_message,
     finish_run,
     finish_with_answer,
     get_run,
+    intro_finish,
+    intro_start,
     list_runs,
     save_list,
     set_running,
     stop_unfinished,
+    store_early,
 )
 from pubmedgemini.writer.prompts import Section
 
@@ -1275,3 +1279,128 @@ def test_nothing_private_is_logged_on_any_ending(run_app, migrated_pool, upstrea
     msgs = [r.getMessage() for r in caplog.records if r.name.startswith("pubmedgemini")]
     assert_app_lines_fixed(msgs)
     assert sum(m.startswith(f"run kind=finished run_id={rid} ") for m in msgs) == 1
+
+
+# ---------- F3c Task 1: the Introduction's row and the early summary's row ----------
+
+EARLY_BODY = {"summary": True, "context": False, "answer": {"made": "up"}}
+
+
+def running_run(run_app):
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    set_running(run_app.pool, rid)
+    return rid
+
+
+def test_intro_row_moves_pending_to_done_once(run_app):
+    rid = running_run(run_app)
+    assert run_app.view(rid).intro is None  # no row
+    assert intro_start(run_app.pool, rid) is True
+    assert intro_start(run_app.pool, rid) is False  # one row a run
+    assert run_app.view(rid).intro is None  # pending shows nothing
+    assert intro_finish(run_app.pool, rid, "done", None, "Example paragraph.") is True
+    assert intro_finish(run_app.pool, rid, "failed", "api", None) is False  # only once
+    assert run_app.view(rid).intro == "Example paragraph."
+    assert rows(run_app.pool, "SELECT status, reason, finished_at IS NOT NULL FROM run_intros"
+                ) == [("done", None, True)]
+
+
+def test_intro_start_for_a_missing_run_is_false(run_app):
+    assert intro_start(run_app.pool, uuid.uuid4()) is False
+    assert rows(run_app.pool, "SELECT count(*) FROM run_intros") == [(0,)]
+
+
+def test_failed_intro_shows_nothing(run_app):
+    rid = running_run(run_app)
+    intro_start(run_app.pool, rid)
+    assert intro_finish(run_app.pool, rid, "failed", "api", "ignored text") is True
+    assert run_app.view(rid).intro is None
+    assert rows(run_app.pool, "SELECT status, reason, text FROM run_intros") == [
+        ("failed", "api", None)]  # a failed row never keeps text
+
+
+def test_intro_text_is_stored_cleaned(run_app):
+    rid = running_run(run_app)
+    intro_start(run_app.pool, rid)
+    intro_finish(run_app.pool, rid, "done", None, "A\x00b\u202ec\u200bd")
+    assert run_app.view(rid).intro == "Abcd"
+
+
+def test_store_early_only_while_running(run_app):
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    assert store_early(run_app.pool, rid, EARLY_BODY) is False  # queued: not yet
+    set_running(run_app.pool, rid)
+    assert store_early(run_app.pool, rid, EARLY_BODY) is True
+    assert run_app.view(rid).early == EARLY_BODY
+    assert store_early(run_app.pool, rid, EARLY_BODY | {"context": True}) is True  # an upsert
+    assert run_app.view(rid).early["context"] is True
+    assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(1,)]
+    assert finish_run(run_app.pool, rid, "done", None, None, None) is True
+    assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(0,)]  # cleared with it
+    assert store_early(run_app.pool, rid, EARLY_BODY) is False
+    assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(0,)]
+    assert run_app.view(rid).early is None
+
+
+@pytest.mark.parametrize("status", ["partial", "failed", "stopped"])
+def test_finish_run_clears_the_early_row_for_every_end(run_app, status):
+    rid = running_run(run_app)
+    store_early(run_app.pool, rid, EARLY_BODY)
+    finish_run(run_app.pool, rid, status, None, None, None)
+    assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(0,)]
+
+
+def test_store_early_refused_once_an_answer_is_stored(run_app):
+    rid = running_run(run_app)
+    with run_app.pool.connection() as conn:  # an answer row while still running (by hand)
+        conn.execute("INSERT INTO answers (run_id, version, body) VALUES (%s, 3, '{}')", (rid,))
+    assert store_early(run_app.pool, rid, EARLY_BODY) is False
+    assert run_app.view(rid).early is None
+
+
+def test_finish_clears_the_early_row_in_the_same_transaction(run_app):
+    rid = running_run(run_app)
+    store_early(run_app.pool, rid, EARLY_BODY)
+    # A body the database refuses: the answer, the status and the early row all roll back.
+    with pytest.raises(psycopg.Error):
+        finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, {"summary": "a\x00b"})
+    assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(1,)]
+    assert run_app.view(rid).status == "running"
+    assert finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, BODY) is True
+    assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(0,)]
+    assert run_app.view(rid).answer == BODY and run_app.view(rid).early is None
+
+
+def test_clear_early_deletes_the_row(run_app):
+    rid = running_run(run_app)
+    store_early(run_app.pool, rid, EARLY_BODY)
+    clear_early(run_app.pool, rid)
+    assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(0,)]
+    clear_early(run_app.pool, rid)  # nothing to delete: no error
+
+
+def test_a_late_early_row_is_never_shown_for_a_finished_run(run_app):
+    rid = running_run(run_app)
+    finish_run(run_app.pool, rid, "done", None, None, None)
+    with run_app.pool.connection() as conn:  # left over (inserted by hand)
+        conn.execute("INSERT INTO run_early (run_id, body) VALUES (%s, %s)",
+                     (rid, json.dumps(EARLY_BODY)))
+    assert run_app.view(rid).early is None
+
+
+def test_start_up_clears_early_and_fails_pending_intros(run_app):
+    a, b = running_run(run_app), None
+    intro_start(run_app.pool, a)
+    store_early(run_app.pool, a, EARLY_BODY)
+    finish_run(run_app.pool, a, "done", None, None, None)
+    b = running_run(run_app)
+    intro_start(run_app.pool, b)
+    intro_finish(run_app.pool, b, "done", None, "Kept.")
+    with run_app.pool.connection() as conn:
+        conn.execute("INSERT INTO run_early (run_id, body) VALUES (%s, %s)",
+                     (b, json.dumps(EARLY_BODY)))
+    assert stop_unfinished(run_app.pool) == 1
+    assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(0,)]
+    assert dict(rows(run_app.pool, "SELECT run_id, status || '/' || coalesce(reason, '') "
+                                   "FROM run_intros")) == {a: "failed/stale", b: "done/"}
+    assert run_app.view(b).intro == "Kept." and run_app.view(b).early is None

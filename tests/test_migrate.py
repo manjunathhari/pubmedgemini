@@ -349,9 +349,47 @@ def test_0005_applies_over_existing_rows(pool, tmp_path):
     for step in ("researcher", "study_list", "study_list_nudge", "study_list_retry"):
         pool_exec(pool, "INSERT INTO model_calls (model, run_id, step, attempt, status_kind) "
                         "VALUES ('m', %s, %s, 1, 'ok')", (run_id, step))
-    assert apply_migrations(pool, Path("migrations")) == ["0005_answers.sql"]
+    assert apply_migrations(pool, Path("migrations"))[0] == "0005_answers.sql"  # F3c: 0006 next
     assert pool_one(pool, "SELECT count(*) FROM users") == 1
     assert pool_one(pool, "SELECT count(*) FROM runs") == 1
     assert pool_one(pool, "SELECT count(*) FROM run_steps") == 3
     assert pool_one(pool, "SELECT count(*) FROM model_calls") == 4
     assert table_exists(pool, "answers")
+
+
+# ---------- F3c: the Introduction and the early summary (migration 0006) ----------
+
+
+def test_migration_0006_adds_tables_and_the_intro_step(migrated_pool, owner_id):
+    assert table_exists(migrated_pool, "run_intros")
+    assert table_exists(migrated_pool, "run_early")
+    run_id = insert_run(migrated_pool, owner_id, status="running")
+    pool_exec(migrated_pool, "INSERT INTO model_calls (model, run_id, step, attempt, status_kind) "
+                             "VALUES ('m', %s, 'intro', 1, 'ok')", (run_id,))
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pool_exec(migrated_pool, "INSERT INTO model_calls (model, step, attempt, status_kind) "
+                                 "VALUES ('m', 'introx', 1, 'ok')")
+    for step in ("researcher", "study_list_retry", "writer_one_piece_retry"):  # 0005's kept
+        pool_exec(migrated_pool, "INSERT INTO model_calls (model, step, attempt, status_kind) "
+                                 "VALUES ('m', %s, 1, 'ok')", (step,))
+
+
+@pytest.mark.parametrize("sql", [
+    "INSERT INTO run_intros (run_id, status) VALUES (%s, 'skipped')",
+    "INSERT INTO run_intros (run_id, status, reason) VALUES (%s, 'failed', 'Free text!')",
+    "INSERT INTO run_intros (run_id, status, text) VALUES (%s, 'failed', 'x')",
+    "INSERT INTO run_intros (run_id, status) VALUES (%s, 'done')",
+])
+def test_run_intros_checks_refuse_bad_rows(migrated_pool, owner_id, sql):
+    run_id = insert_run(migrated_pool, owner_id, status="running")
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pool_exec(migrated_pool, sql, (run_id,))
+
+
+def test_intro_and_early_rows_go_with_their_run(migrated_pool, owner_id):
+    run_id = insert_run(migrated_pool, owner_id, status="running")
+    pool_exec(migrated_pool, "INSERT INTO run_intros (run_id) VALUES (%s)", (run_id,))
+    pool_exec(migrated_pool, "INSERT INTO run_early (run_id, body) VALUES (%s, '{}')", (run_id,))
+    pool_exec(migrated_pool, "DELETE FROM runs WHERE id = %s", (run_id,))
+    assert pool_one(migrated_pool, "SELECT count(*) FROM run_intros") == 0
+    assert pool_one(migrated_pool, "SELECT count(*) FROM run_early") == 0

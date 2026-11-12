@@ -32,7 +32,7 @@ from psycopg_pool import ConnectionPool
 from pubmedgemini.deid import BlockedIdentifiers, check_question
 from pubmedgemini.lit.cache import get_for_display
 from pubmedgemini.lit.paper import Paper
-from pubmedgemini.lit.text import clean_text
+from pubmedgemini.lit.text import clean_text, drop_invisible
 from pubmedgemini.researcher.loop import SearchEntry, SeenPaper
 from pubmedgemini.researcher.studylist import Validated
 
@@ -185,6 +185,10 @@ class RunView:
     considered: list[ConsideredView]
     contradictions: list[ContradictionView]
     answer: dict | None = None  # the stored AnswerV3 body, None when no answer was stored
+    # F3c: the Introduction's text, only when its row is `done`; the early summary's body,
+    # only while the run is queued or running and has no answer.
+    intro: str | None = None
+    early: dict | None = None
 
     @property
     def lines(self) -> list[str]:
@@ -355,15 +359,18 @@ def save_list(pool: ConnectionPool, run_id: UUID, validated: Validated) -> None:
 def finish_run(pool: ConnectionPool, run_id: UUID, status: str, error_kind: str | None,
                stop_reason: str | None, rounds: int | None) -> bool:
     """The run's outcome, written only while it is still `queued` or `running`, so a late
-    write never overwrites `stopped` (a restart) or an earlier outcome. False, logged by a
-    fixed kind, when no row was changed."""
-    with pool.connection() as conn:
+    write never overwrites `stopped` (a restart) or an earlier outcome. The run's early
+    summary is deleted in the same transaction. False, logged by a fixed kind, when no row was
+    changed."""
+    with pool.connection() as conn, conn.transaction():
         cur = conn.execute(
             "UPDATE runs SET status = %s, error_kind = %s, stop_reason = %s, rounds = %s, "
             "finished_at = now() WHERE id = %s AND status IN ('queued', 'running')",
             (status, error_kind, stop_reason, rounds, run_id),
         )
         applied = cur.rowcount == 1
+        if applied:  # the early summary never outlives the run (F3c)
+            conn.execute(_DELETE_EARLY, (run_id,))
     if not applied:
         log.info("run kind=finish_not_applied run_id=%s", run_id)
     return applied
@@ -377,6 +384,9 @@ def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
     `running`; when it is not (a restart stopped it), nothing is stored and the case is logged
     by a fixed kind. A body the database refuses raises the database error (the status stays
     as it was); the caller decides what to do with it. Nothing of the body is logged.
+
+    The run's early summary is deleted in the same transaction (F3c), so the page never shows
+    it next to the answer, nor loses it while the answer is not stored.
 
     `closing_line` (kind, text), when given, is the run's closing step line ("Answer ready"),
     stored in the same transaction (cut as `add_step` cuts), so the page never shows it for an
@@ -402,19 +412,93 @@ def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
             if closing_line is not None:
                 kind, line = closing_line
                 conn.execute(_INSERT_STEP, (run_id, kind, clip(line, MAX_STEP_LINE), run_id))
+            conn.execute(_DELETE_EARLY, (run_id,))
     if not applied:
         log.info("run kind=finish_not_applied run_id=%s", run_id)
     return applied
 
 
 def stop_unfinished(pool: ConnectionPool) -> int:
-    """At start-up: every queued or running run belonged to the previous process."""
-    with pool.connection() as conn:
+    """At start-up: every queued or running run belonged to the previous process. In the same
+    transaction every early summary is deleted (no run is running now) and every pending
+    Introduction fails `stale` (its thread died with the process). Returns the runs stopped."""
+    with pool.connection() as conn, conn.transaction():
         cur = conn.execute(
             "UPDATE runs SET status = 'stopped', error_kind = 'restarted', finished_at = now() "
             "WHERE status IN ('queued', 'running')"
         )
-        return cur.rowcount
+        stopped = cur.rowcount
+        conn.execute("DELETE FROM run_early")
+        conn.execute("UPDATE run_intros SET status = 'failed', reason = 'stale', "
+                     "finished_at = now() WHERE status = 'pending'")
+    return stopped
+
+
+# ---------- the Introduction and the early summary (F3c) ----------
+
+_DELETE_EARLY = "DELETE FROM run_early WHERE run_id = %s"
+# A write of the early summary waits at most this long (Incisive `EARLY_WRITE_LIMIT`, 2 s).
+EARLY_WRITE_TIMEOUT = "2s"
+INTRO_STATUSES = ("done", "failed")
+
+
+def intro_start(pool: ConnectionPool, run_id: UUID) -> bool:
+    """The run's `pending` Introduction row (Incisive `insert_pending`). False when a row
+    already exists or the run is gone."""
+    with pool.connection() as conn:
+        cur = conn.execute(
+            "INSERT INTO run_intros (run_id) SELECT id FROM runs WHERE id = %s "
+            "ON CONFLICT (run_id) DO NOTHING",
+            (run_id,),
+        )
+        return cur.rowcount == 1
+
+
+def intro_finish(pool: ConnectionPool, run_id: UUID, status: str, reason: str | None,
+                 text: str | None) -> bool:
+    """Ends the Introduction row, only while it is `pending` (Incisive `finish`). `text` is
+    kept only for `done`, cleaned of NUL, lone surrogates, bidi controls and zero-width
+    characters; `reason` is a fixed kind. False when the row is gone or already ended."""
+    if status not in INTRO_STATUSES:
+        raise ValueError("status must be done or failed")
+    kept = drop_invisible(clean_text(text)) if status == "done" and text is not None else None
+    with pool.connection() as conn:
+        cur = conn.execute(
+            "UPDATE run_intros SET status = %s, reason = %s, text = %s, finished_at = now() "
+            "WHERE run_id = %s AND status = 'pending'",
+            (status, reason, kept, run_id),
+        )
+        return cur.rowcount == 1
+
+
+def store_early(pool: ConnectionPool, run_id: UUID, body: dict) -> bool:
+    """Stores (or replaces) the run's early summary, only while the run is `running` and has
+    no answer row. The run's row is locked first, so a store and the run's end never cross:
+    a store after the end finds the run ended, and an end after a store deletes it. The
+    transaction waits at most EARLY_WRITE_TIMEOUT. A body the database refuses raises; the
+    caller logs its class. Nothing of the body is logged."""
+    with pool.connection() as conn, conn.transaction():
+        conn.execute(f"SET LOCAL statement_timeout = '{EARLY_WRITE_TIMEOUT}'")
+        row = conn.execute(
+            "SELECT status, EXISTS (SELECT 1 FROM answers WHERE run_id = runs.id) "
+            "FROM runs WHERE id = %s FOR UPDATE",
+            (run_id,),
+        ).fetchone()
+        if row is None or row[0] != "running" or row[1]:
+            return False
+        conn.execute(
+            "INSERT INTO run_early (run_id, body) VALUES (%s, %s) ON CONFLICT (run_id) "
+            "DO UPDATE SET body = EXCLUDED.body, updated_at = now()",
+            (run_id, Jsonb(body)),
+        )
+        return True
+
+
+def clear_early(pool: ConnectionPool, run_id: UUID) -> None:
+    """Deletes the run's early summary (a writer part failed for good: withdraw)."""
+    with pool.connection() as conn, conn.transaction():
+        conn.execute(f"SET LOCAL statement_timeout = '{EARLY_WRITE_TIMEOUT}'")
+        conn.execute(_DELETE_EARLY, (run_id,))
 
 
 # ---------- reads ----------
@@ -448,6 +532,13 @@ def get_run(pool: ConnectionPool, run_id: UUID, user_id: int) -> RunView | None:
             "ORDER BY role, rank", (run_id,)).fetchall()
         answer_row = conn.execute(
             "SELECT body FROM answers WHERE run_id = %s", (run_id,)).fetchone()
+        intro_row = conn.execute(
+            "SELECT text FROM run_intros WHERE run_id = %s AND status = 'done'",
+            (run_id,)).fetchone()
+        early_row = None
+        if answer_row is None and r[2] in ("queued", "running"):
+            early_row = conn.execute(
+                "SELECT body FROM run_early WHERE run_id = %s", (run_id,)).fetchone()
     chosen = [p for p in papers if p[0] == "selected"]
     records = get_for_display(pool, [p[1] for p in chosen]) if chosen else {}
     selected = []
@@ -461,7 +552,9 @@ def get_run(pool: ConnectionPool, run_id: UUID, user_id: int) -> RunView | None:
                       for role, pmid, _, note in papers if role == "contradiction"]
     return RunView(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], steps,
                    searches, selected, considered, contradictions,
-                   answer_row[0] if answer_row else None)
+                   answer_row[0] if answer_row else None,
+                   intro=intro_row[0] if intro_row else None,
+                   early=early_row[0] if early_row else None)
 
 
 def list_runs(pool: ConnectionPool, user_id: int, limit: int = 20) -> list[RunRow]:
