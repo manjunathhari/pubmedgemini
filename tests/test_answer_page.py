@@ -957,18 +957,105 @@ def test_a_known_study_still_pairs_beside_numbers_with_none():
 
 _VALUES = [0.0, -0.0, 1.0, -1.0, 0.5, 12.5, 20.0, 99.5, 100.0, 140.0, -3.0, 1e-300, 5e-324,
            1e306, 1e307, 1e308, -1e308, 1.7e308, float("nan"), float("inf"), float("-inf")]
-_LABELS = ["Pain", "MD", "Mean difference in pain", "Recurrence (no significant difference)",
-           "Seroma RR", "Robotic minus lap", "Difference", "", "  ", "Ache at 2 y",
-           "Risk difference", "Md. score", "MD Anderson Dysphagia Inventory score",
-           "Difference in pain", "MD, days", "Pain\u200b", "\u202eRecurrence"]
-_ARMS = [None, "", " ", " ", "MD", " md ", "SMD", "risk  difference", "TEP", "tep", "TEP ",
-         "Lichtenstein", "MD Anderson protocol", "Md. Ali technique", "Drain minus",
-         "TEP vs Lichtenstein", "POEM minus PD", "Robotic  TAPP", "robotic TAPP", "MD.",
-         "M.D.", "Difference:", "ARR", "NNT", "difference vs laparoscopic", "\u202eTEP",
-         "TEP\u200b", "\u200b", "\ufeffLichtenstein", "ＴＥＰ"]
+# Independent oracles for the random test (fourth check F6): plain lists of the reviewer's
+# examples from all four checks and a simple re-implementation of "an arm matches a side",
+# written here and never calling the page's own classifiers.
+
+# Arm texts that are never an arm of a drawn pair (a compare row or squares).
+BAD_ARMS = [
+    # markers (re-check H-A)
+    "MD", " md ", "SMD", "WMD", "difference", "Mean difference", "risk  difference",
+    "Absolute difference",
+    # third check M1
+    "difference vs laparoscopic", "TEP vs Lichtenstein", "TEP vs. Lichtenstein",
+    "TEP versus Lichtenstein", "Drain minus", "POEM minus PD", "TEP compared with open",
+    "relative to open", "MD.", "M.D.", "Difference:", "ARR", "RD", "ARD", "NNT", "NNH",
+    # fourth check F1
+    "Δ", "absolute risk reduction", "ARR 5%", "RRR", "delta", "Diff", "mean diff",
+    "TEP – Lichtenstein", "TEP − Lichtenstein", "TEP - Lichtenstein", "TEP/Lichtenstein",
+    "TEP v Lichtenstein", "TEP > Lichtenstein", "NNT 12", "relative risk", "pooled", "overall",
+    "both groups", "OR", "HR", "RR", "odds", "total", "all patients", "combined", "change",
+]
+# Plain arm names (some match no side of the comparisons below).
+GOOD_ARMS = ["TEP", "tep", "TEP ", "Lichtenstein", "MD Anderson protocol", "Md. Ali technique",
+             "Robotic  TAPP", "robotic TAPP", "\u202eTEP", "TEP\u200b", "\ufeffLichtenstein",
+             "ＴＥＰ", "Laparoscopic repair", "Open repair", "diferencia", "TEP at 1 y",
+             "TEP at 5 y", "TEP (n=665)", "Lichtenstein group", "Standard", "TAPP"]
+# Labels with a negation or significance word: never a difference row, whatever the unit.
+NEGATED_LABELS = ["Recurrence (no significant difference)", "Pain, difference not significant",
+                  "No difference in pain", "No mean difference was found; recurrence",
+                  "Recurrence rate (risk difference not significant)",
+                  "Patients without a mean difference in pain",
+                  "Rate difference not reported; pain",
+                  "Risk difference was not computed; event rate", "Risk difference, n.s."]
+# Labels that only mention a difference: a difference row only by its unit or arm marker.
+MENTION_LABELS = ["Differences between groups", "MD Anderson Dysphagia Inventory score",
+                  "MD (Anderson score)", "MD, Anderson score", "MD in Hospital stay", "Md. score",
+                  "md", "Amd score", "MDA levels", "Robotic minus lap",
+                  "Event rate where the risk difference was small", "Recurrence (risk difference)",
+                  "Length of stay (MD)", "Pain", "Seroma RR", "Ache at 2 y"]
+# Labels that name one side of "TEP vs Lichtenstein": never a drawn difference row there.
+ONE_SIDE_LABELS = ["MD in TEP group", "Difference: recurrence in TEP arm",
+                   "Mean difference, Lichtenstein"]
+# Labels that name a difference: never squares (F3) and never a drawn ratio row (F4).
+DIFF_LABELS = ["Risk difference", "Mean difference in pain", "MD", "Difference",
+               "Difference in pain", "MD, days", "Risk difference, wound infection",
+               "Mean difference in pain score"]
+NOT_SQUARES_LABELS = DIFF_LABELS + ["MD in pain", "Pain minus", "Recurrence, risk difference",
+                                    "Difference: recurrence", "Robotic minus lap"]
+_ORACLE_MARKERS = {"md", "smd", "wmd", "difference", "mean difference", "risk difference",
+                   "absolute difference"}
+_ORACLE_UNITS = _ORACLE_MARKERS | {"median difference", "rate difference",
+                                   "weighted mean difference", "standardised mean difference",
+                                   "standardized mean difference"}
+
+
+_O_INVISIBLE = set("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f"
+                   "\u061c\u200b\u200c\u200d\u2060\ufeff")
+
+
+def _o_norm(s):
+    """Oracle: no invisible characters, NFKC, case-folded, spaces squashed."""
+    import unicodedata
+
+    s = unicodedata.normalize("NFKC", "".join(c for c in s or "" if c not in _O_INVISIBLE))
+    return " ".join(s.casefold().split())
+
+
+def _o_words(s):
+    import re
+
+    return [w for w in re.split(r"[\W_]+", _o_norm(s)) if len(w.encode("utf-8")) > 1]
+
+
+def _o_sides(comparison):
+    import re
+
+    parts = re.split(r" (?:vs|vs\.|versus|compared with) ", _o_norm(comparison))
+    if not comparison or len(parts) != 2:
+        return None
+    left, right = set(_o_words(parts[0])), set(_o_words(parts[1]))
+    return (left - right, right - left) if left and right else None
+
+
+def _o_side(arm, comparison):
+    sides = _o_sides(comparison)
+    if sides is None:
+        return None
+    score = sum((w in sides[0]) - (w in sides[1]) for w in _o_words(arm))
+    return 0 if score > 0 else 1 if score < 0 else None
+
+
+_BAD_ARM_KEYS = {_o_norm(a) for a in BAD_ARMS}
+_LABELS = (["Pain", "Seroma RR", "", "  ", "Pain\u200b", "\u202eRecurrence", "Robotic minus lap"]
+           + NEGATED_LABELS + MENTION_LABELS + ONE_SIDE_LABELS + NOT_SQUARES_LABELS)
+_ARMS = [None, "", " ", " ", "\u200b"] + GOOD_ARMS + BAD_ARMS
 _UNITS = [None, "", "%", " % ", "RR", "OR", "HR", "rr", "aHR", "days", "points", "MD"]
 _PMIDS = ["1", "2", " 1 ", "", "  ", "99999999"]
 _P = [None, "", "p", "P < .001", "0.03"]
+_COMPARISONS = ["TEP vs Lichtenstein"] * 4 + ["MD Anderson protocol vs Standard", "",
+                "TEP vs TAPP vs Lichtenstein", "Laparoscopic repair vs Open repair",
+                "TAPP vs Lichtenstein"]
 
 
 def _rand_value(r):
@@ -987,11 +1074,33 @@ def _rand_number(r) -> Number:
                   r.choice(_PMIDS))
 
 
+def _rand_pair(r) -> list[Number]:
+    """Two percentages of one label and study, as an out-of-100 candidate (F6)."""
+    label = r.choice(["Pain", "Ache at 2 y"] if r.random() < 0.5 else _LABELS)
+    arms = [r.choice(GOOD_ARMS if r.random() < 0.7 else _ARMS) for _ in range(2)]
+    if r.random() < 0.3:  # a likely match for "TEP vs Lichtenstein", in either order
+        arms = r.sample([r.choice(["TEP", "ＴＥＰ", "TEP (n=665)", "\u202eTEP"]),
+                         r.choice(["Lichtenstein", "Lichtenstein group", "\ufeffLichtenstein"])], 2)
+    return [Number(label, r.uniform(0, 100), "%", a, None, None, None, "1") for a in arms]
+
+
+def _rand_diff(r) -> Number:
+    """A number with a CI and no arm, as a difference or ratio row candidate (F6)."""
+    lo = r.uniform(-5, 5)
+    hi = lo if r.random() < 0.1 else lo + r.uniform(0, 5)
+    unit = r.choice([None, "%", "days", "MD", "RR", "mean difference"])
+    if unit == "RR":
+        lo, hi = abs(lo) + 0.1, abs(lo) + 0.1 + (hi - lo)
+    return Number(r.choice(_LABELS), (lo + hi) / 2, unit, r.choice([None, "", "MD"]), lo, hi,
+                  None, "1")
+
+
 def _rand_body(r) -> AnswerBody:
-    outs = [outcome(f"Outcome {i}", [_rand_number(r) for _ in range(r.randint(0, 6))],
+    outs = [outcome(f"Outcome {i}", [_rand_number(r) for _ in range(r.randint(0, 6))]
+                    + (_rand_pair(r) if r.random() < 0.6 else [])
+                    + ([_rand_diff(r)] if r.random() < 0.6 else []),
                     r.choice(CERTAINTIES)) for i in range(r.randint(1, 3))]
-    studies = [study("1", r.choice(["TEP vs Lichtenstein", "MD Anderson protocol vs Standard",
-                                    ""]))] if r.random() < 0.7 else []
+    studies = [study("1", r.choice(_COMPARISONS))] if r.random() < 0.8 else []
     w = written(outs, studies)
     refs = [Reference(1, "1", "T1", "J", 2020, None, False),
             Reference(2, "2", "T2", None, None, None, False)]
@@ -1003,44 +1112,65 @@ def _rand_body(r) -> AnswerBody:
 def test_random_answers_keep_the_pages_promises():
     import random
 
-    from pubmedgemini.answer_page import (
-        arm_name,
-        difference_measure,
-        names_an_arm,
-        out_of_100_groups,
-        plain_arm,
-    )
+    from pubmedgemini.answer_page import arm_name, out_of_100_groups
 
     r = random.Random(20261112)
+    squares_seen = diffs_seen = 0
     for case in range(3000):
         body = _rand_body(r)
         w, refs = body.answer, refs_of(body)
+
+        def comparison(n, w=w):  # oracle: the number's own trials row, by its PMID
+            return next((x.comparison for x in w.studies if x.pmid.strip() == n.pmid.strip()),
+                        None)
+
+        def at(o_j, w=w):
+            return w.outcomes[o_j[0]].numbers[o_j[1]]
+
         answer_view(body)  # never raises
         assert shown_at(w, refs) == every_number(w), case  # every number is on the page
         f = forest(w, refs)
         for row in f.ratios + f.diffs:  # a drawn row never carries a reason
             assert (row.problem is None) == row.drawn, case
-        for row in f.diffs:  # d24: no number with an arm name is a difference row
-            assert not names_an_arm(w.outcomes[row.at[0]].numbers[row.at[1]]), case
+            if row.drawn:  # F4: a drawn interval has width
+                n = at(row.at)
+                assert n.ci_low != n.ci_high, case
+        for row in f.ratios:  # F4: a drawn ratio's label names no difference
+            assert not (row.drawn and at(row.at).label in DIFF_LABELS), case
+        for row in f.diffs:
+            n = at(row.at)
+            # d24: no number with an arm name is a difference row (oracle: blank or a marker)
+            assert not _o_norm(n.arm) or _o_norm(n.arm) in _ORACLE_MARKERS, case
+            # M2, F2: no difference row from a negated label, or from a label that only
+            # mentions a difference unless its unit or arm marker names the measure
+            assert n.label not in NEGATED_LABELS, case
+            if n.label in MENTION_LABELS:
+                assert _o_norm(n.unit) in _ORACLE_UNITS or _o_norm(n.arm) in _ORACLE_MARKERS, case
+            # F5: a drawn difference row's label does not name one side
+            if row.drawn and comparison(n) == TEP_VS_L:
+                assert n.label not in ONE_SIDE_LABELS, case
+            diffs_seen += row.drawn
         rows = [row for g in compare(w, refs) for row in g.rows]
         for row in rows:  # every compared value has its own arm name and a known study
-            assert all(arm_name(w.outcomes[o].numbers[j]) for o, j in row.at), case
-            assert all(rust_trim_pmid(w.outcomes[o].numbers[j]) in refs
-                       for o, j in row.at), case
+            assert all(arm_name(at(x)) for x in row.at), case
+            assert all(rust_trim_pmid(at(x)) in refs for x in row.at), case
+            # M1, F1: no compared arm text is a comparison or a marker (oracle list)
+            assert not any(_o_norm(at(x).arm) in _BAD_ARM_KEYS for x in row.at), case
         items = out_of_100(w, refs)
         for it in items:
             assert all(name.strip() for _, name, _ in it.arms), case
         # each out-of-100 candidate is drawn or its compare row gives the reason, never both
         candidates = out_of_100_groups(w, all_groups(w, refs))
         assert len(items) + sum(row.problem is not None for row in rows) == len(candidates), case
-        # third check M1: no drawn pair has an arm that is not a plain arm name
-        for row in rows:
-            assert all(plain_arm(w.outcomes[o].numbers[j]) for o, j in row.at), case
-        for g in candidates:
-            assert all(plain_arm(n) for n in g.nums(w)), case
-        # third check M2: no difference row lacks a named measure
-        for row in f.diffs:
-            assert difference_measure(w.outcomes[row.at[0]].numbers[row.at[1]]), case
+        cand_at = {tuple((g.outcome, j) for j in g.numbers) for g in candidates}
+        squares = [row for row in rows if row.problem is None and row.at in cand_at]
+        assert len(squares) == len(items), case
+        for row in squares:  # F1, F3: squares only for arms on opposite sides, rate labels
+            nums = [at(x) for x in row.at]
+            assert {_o_side(n.arm, comparison(n)) for n in nums} == {0, 1}, case
+            assert not any(_o_norm(n.arm) in _BAD_ARM_KEYS for n in nums), case
+            assert nums[0].label not in NOT_SQUARES_LABELS, case
+            squares_seen += 1
         # third check L1: drawn difference axes have three distinct labels and 0 inside
         for row in f.diffs:
             if row.drawn:
@@ -1052,6 +1182,7 @@ def test_random_answers_keep_the_pages_promises():
         assert not in_rows & {x.at for c in outcome_cards(w, refs) for x in c.listed}, case
         # third check L3: nothing the page draws holds a bidi control or zero-width character
         assert not any(ch in INVISIBLE for t in _strings(answer_view(body)) for ch in t), case
+    assert squares_seen > 50 and diffs_seen > 50  # the oracles were exercised
 
 
 def rust_trim_pmid(n: Number) -> str:

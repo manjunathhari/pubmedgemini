@@ -1085,6 +1085,12 @@ def out_of_100_groups(w: WrittenAnswer, groups: Sequence[NumGroup]) -> list[NumG
                     for n in g.nums(w))]
 
 
+def arms_match_sides(nums: Sequence[Number], comparison: str | None) -> bool:
+    """Two numbers whose arm texts match opposite sides of the comparison (`arm_side`)."""
+    sides = [arm_side(n.arm, comparison) for n in nums]
+    return len(sides) == 2 and None not in sides and set(sides) == {0, 1}
+
+
 @dataclass(frozen=True)
 class OutItem:
     label: str
@@ -1126,8 +1132,7 @@ def out_of_100_problem(w: WrittenAnswer, g: NumGroup, refs: Mapping[str, int]) -
     comparison = comparison_of(w, g.pmid)
     if comparison_sides(comparison) is None:
         return NO_SIDES
-    if sorted(arm_side(n.arm, comparison) for n in nums  # type: ignore[type-var]
-              if arm_side(n.arm, comparison) is not None) != [0, 1]:
+    if not arms_match_sides(nums, comparison):
         return NOT_MATCHED
     if all(c == 0 for c in counts):
         return ALL_ZERO
