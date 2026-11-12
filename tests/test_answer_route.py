@@ -322,11 +322,24 @@ def _rows_of(t, label):
 
 
 def test_a_pair_both_rounding_to_0_shows_its_reason_in_compare(env):  # review L7
-    t = page(env, store(env, _with_numbers(num("Mesh infection", 0.4, "%", "TEP", PMIDS[0]),
-                                           num("Mesh infection", 0.2, "%", "L", PMIDS[0]))))
+    # "Lichtenstein", not "L": a one-letter arm matches no side of the study's comparison
+    # (fourth check F1), which is shown below.
+    t = page(env, store(env, _with_numbers(
+        num("Mesh infection", 0.4, "%", "TEP", PMIDS[0]),
+        num("Mesh infection", 0.2, "%", "Lichtenstein", PMIDS[0]))))
     [row] = _rows_of(t, "Mesh infection")
     assert '<span class="muted">Not drawn: both arms round to 0 of 100.</span>' in row
     assert "of 100 · TEP</span>" in t  # the hernia's own items are still drawn
+    assert "Mesh infection:</b>" not in t
+
+
+def test_a_pair_whose_arms_match_no_side_shows_its_reason_in_compare(env):  # fourth check F1
+    t = page(env, store(env, _with_numbers(num("Mesh infection", 4.0, "%", "TEP", PMIDS[0]),
+                                           num("Mesh infection", 2.0, "%", "L", PMIDS[0]))))
+    [row] = _rows_of(t, "Mesh infection")
+    assert "TEP 4% vs L 2%" in row
+    assert ('<span class="muted">Not drawn: its arms do not match the study&#39;s comparison.'
+            '</span>') in row
     assert "Mesh infection:</b>" not in t
 
 
