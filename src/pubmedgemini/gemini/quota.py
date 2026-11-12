@@ -23,8 +23,8 @@ BYTES_PER_TOKEN = 3
 
 # The most calls one run makes without transport retries (owner decision, 11 Nov 2026, D2):
 # researcher 8 + study list 1 + its JSON nudge 1 + S3 retry 1 + writer parts 4 + part retries 4
-# + one-piece fallback 1 + its retry 1 + Introduction 1 (F3b) + number completion 1 (F4) = 23.
-# F3a itself makes at most 21 of them.
+# + one-piece fallback 1 + its retry 1 + Introduction 1 (F3c) + number completion 1 (F4) = 23.
+# F3a made at most 21 of them; with the Introduction (F3c, one attempt) at most 22.
 RUN_CALLS = 23
 # Room for transport retries.
 CALL_RESERVE = 3

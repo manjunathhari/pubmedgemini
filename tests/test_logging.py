@@ -405,6 +405,7 @@ APP_LINE_PATTERNS = [
      r"bytes=\d+"),
     rf"run kind=early_withdrawn run_id={UUID}",
     r"run kind=early_not_stored error=\w+",
+    r"run page early kind=(?:not_quick|invalid|unserialisable|internal)",
     r"run page answer kind=(?:not_quick|invalid|unserialisable)",
 ]
 
@@ -701,6 +702,11 @@ BLOCK_NOTE = "bm6"     # the message inside a reply Gemini blocked
 ABSTRACT_TAG = "qa7"   # put into the abstract of a selected study
 REFUSED_TAG = "zd8"    # in an answer the database refuses (with a NUL, which JSONB cannot hold)
 WRITER_LEAKS = (*PART_TAGS.values(), PIECE_TAG, BLOCK_NOTE, ABSTRACT_TAG, REFUSED_TAG)
+# F3c: the Introduction's text, Google's message on its failed call, and a blocked reply's note.
+INTRO_TAG = "iq3"
+INTRO_ERROR_TAG = "gi4"
+INTRO_BLOCK_TAG = "bi5"
+INTRO_LEAKS = (INTRO_TAG, INTRO_ERROR_TAG, INTRO_BLOCK_TAG)
 ABSTRACT_SENTENCE = b"There was no difference between the two methods."
 
 
@@ -759,6 +765,24 @@ def refused_by_the_database() -> dict:
     return parts
 
 
+def marked_intro() -> list:
+    from writer_fakes import intro_reply
+
+    return [intro_reply(f"{INTRO_TAG} what the question asks.\n\n{INTRO_TAG} the disease.")]
+
+
+def failing_intro() -> list:
+    """The Introduction's one attempt fails with Google's message carrying a marker."""
+    from gemini_fakes import error
+
+    return [error(503, "UNAVAILABLE", message=f"{INTRO_ERROR_TAG} secret intro text")]
+
+
+def intro_steps(mode: str) -> list:
+    """The Introduction's replies for `tests/ask_app.py` (marked, or one that fails)."""
+    return failing_intro() if mode == "intro_fails" else marked_intro()
+
+
 def scenario(mode: str) -> tuple[list, dict, list]:
     """(researcher script, parts, one piece) of a whole run for `tests/ask_app.py`."""
     if mode == "fallback":
@@ -771,11 +795,11 @@ def scenario(mode: str) -> tuple[list, dict, list]:
 
 def assert_no_private_text(caplog, extra=()) -> None:
     """No captured line, formatted record, exception text or traceback holds a marker."""
-    for leak in (*LEAKS, *WRITER_LEAKS, *extra):
+    for leak in (*LEAKS, *WRITER_LEAKS, *INTRO_LEAKS, *extra):
         assert leak not in caplog.text, leak
     for r in caplog.records:
         assert r.exc_info is None and r.exc_text is None, (r.name, r.getMessage())
-        for leak in (*LEAKS, *WRITER_LEAKS, *extra):
+        for leak in (*LEAKS, *WRITER_LEAKS, *INTRO_LEAKS, *extra):
             assert leak not in r.getMessage() and leak not in str(r.args), leak
 
 
@@ -926,13 +950,93 @@ def test_every_writer_log_line_matches_the_allowlist(db_url, caplog, app_debug):
 
 def test_a_written_run_under_uvicorn_logs_no_writer_text(db_url):
     """The same full run under the real server: stderr holds fixed lines and none of the
-    writer's markers (the parts', the abstract's)."""
+    writer's markers (the parts', the abstract's), nor the Introduction's or the summary
+    part's, which the early summary stored (F3c)."""
+    import re
+
     page, _home, err = _run_question_under_uvicorn(db_url, "happy")
     msgs = _assert_stderr_fixed(err)
     assert PART_TAGS["outcomes"] in page and "Answer ready" in page
-    for leak in (*WRITER_LEAKS, "Traceback"):
+    assert f"<p>{INTRO_TAG} what the question asks.</p>" in page  # the Introduction, folded
+    for leak in (*WRITER_LEAKS, *INTRO_LEAKS, "Traceback"):
         assert leak not in err, leak
     assert "writer part=outcomes attempt=first result=ok kind=none output_tokens=321" in msgs
+    assert any(re.fullmatch(rf"run kind=intro run_id={UUID} status=done reason=none "
+                            r"output_tokens=111", m) for m in msgs), msgs
+    assert any(m.startswith("run kind=early_stored ") and " summary=true " in m for m in msgs)
+
+
+def test_a_failing_introduction_under_uvicorn_leaves_the_run_done(db_url):
+    """The Introduction's one attempt fails (Google's message marked): the run still ends
+    done with its answer, the page shows no Introduction, and stderr holds fixed lines only."""
+    import re
+
+    page, _home, err = _run_question_under_uvicorn(db_url, "intro_fails")
+    msgs = _assert_stderr_fixed(err)
+    assert "Answer ready" in page and "Introduction" not in page
+    assert sum(m.endswith(" status=done error_kind=none") for m in msgs) == 1
+    assert any(re.fullmatch(rf"run kind=intro run_id={UUID} status=failed reason=api "
+                            r"output_tokens=0", m) for m in msgs), msgs
+    assert any(m.startswith("gemini step=intro attempt=1 status=overloaded ") for m in msgs)
+    for leak in (*WRITER_LEAKS, *INTRO_LEAKS, *LEAKS, "Traceback", "Exception in"):
+        assert leak not in err, leak
+
+
+@pytest.mark.parametrize("case", ["marked", "fails", "blocked", "withdrawn"])
+def test_nothing_private_is_logged_with_intro_and_early(db_url, caplog, app_debug, case):
+    """Markers in the question (zq7), the Introduction's reply, Google's message on its failed
+    call, a blocked reply's note and the summary part's text (ps4, stored in the early
+    summary) never reach a log line; every new line matches the allow-list."""
+    from writer_fakes import intro_reply
+
+    intro = {"marked": marked_intro(), "fails": failing_intro(),
+             "blocked": [{"promptFeedback": {"blockReason": "SAFETY",
+                                             "blockReasonMessage": INTRO_BLOCK_TAG},
+                          "usageMetadata": {}}],
+             "withdrawn": [intro_reply(f"{INTRO_TAG} x")]}[case]
+    parts, piece = (piece_after_a_blocked_part() if case == "withdrawn"
+                    else (marked_parts(), []))
+    caplog.set_level(logging.DEBUG)
+    with ask_env_marked(db_url, parts, piece) as env:
+        env.gemini._intro_steps = list(intro)
+        app_debug()
+        r = env.ask(LEAK_QUESTION)
+        page = env.run_page(r.headers["location"]).text
+        status = env.one("SELECT status FROM runs")
+        intro_status = env.one("SELECT status FROM run_intros")
+        sent = env.gemini.intro_sent
+    assert status == "done" and "Answer ready" in page
+    assert len(sent) == 1 and "zq7" in sent[0]["contents"][0]["parts"][0]["text"]
+    assert intro_status == ("done" if case in ("marked", "withdrawn") else "failed")
+    assert (INTRO_TAG in page) == (case in ("marked", "withdrawn"))
+    assert_no_private_text(caplog)
+    msgs = _app_messages(caplog)
+    assert_app_lines_fixed(msgs)
+    assert sum(m.startswith("run kind=intro run_id=") for m in msgs) == 1
+    if case == "withdrawn":
+        assert any(m.startswith("run kind=early_withdrawn run_id=") for m in msgs)
+    else:
+        assert any(m.startswith("run kind=early_stored ") and " summary=true " in m
+                   for m in msgs)
+
+
+def test_an_unreadable_early_summary_logs_its_fixed_kind_only(db_url, caplog, app_debug):
+    from psycopg.types.json import Jsonb
+    from test_ask_page import H, ask_env, insert_run
+
+    caplog.set_level(logging.DEBUG)
+    with ask_env(db_url) as env:
+        app_debug()
+        rid = insert_run(env, status="running", error_kind=None)
+        with env.pool.connection() as conn:
+            conn.execute("INSERT INTO run_early (run_id, body) VALUES (%s, %s)",
+                         (rid, Jsonb({"summary": True, "answer": {"ps4": f"{PART_TAGS['summary']}"}})))
+        page = env.c.get(f"/runs/{rid}", headers=H).text
+    assert "Early" not in page
+    msgs = _app_messages(caplog)
+    assert_app_lines_fixed(msgs)
+    assert "run page early kind=invalid" in msgs
+    assert_no_private_text(caplog)
 
 
 def test_the_one_piece_and_a_refused_answer_under_uvicorn_log_no_writer_text(db_url):

@@ -1,6 +1,13 @@
 # Change log
 
-Live: F0, F1, F2, the look, Library and Activity (merged and deployed on 10 and 11 Nov 2026). F3a (the writer) is on its branch `f3a-writer` and is not merged. Entries start with the first merge to `main` that changes the running app.
+Live: F0, F1, F2, the look, Library and Activity (merged and deployed on 10 and 11 Nov 2026), F3a (the writer) and F3b (the answer page). F3c (the Introduction and the early summary) is on its branch `f3c-introduction-summary` and is not merged. Entries start with the first merge to `main` that changes the running app.
+
+## F3c: the Introduction panel and the early summary (branch `f3c-introduction-summary`, not merged yet)
+
+- While a question runs, a short Introduction appears under the question within about half a minute: what the question asks, why it matters and a few lines on the disease, written by the model from the question alone (Incisive's instructions, word for word). It says so: "Background only, written by the model from your question alone. It is not drawn from the studies and carries no citations." On the finished page it sits folded above the steps. If it cannot be written (Gemini busy, a refusal, a timeout, anything), nothing is shown and the question carries on as before.
+- It is one of the question's 26 Gemini attempts (one try, 30 s, never retried). "Free runs left today" still says about 21 on a fresh day; a typical question now sends 14 requests instead of 13.
+- When the summary part of the answer has been read and its citations checked, the working page shows it marked "Early": At a glance (without its key numbers: "The key numbers are shown with the full answer."), Bottom line, and, once that part is in, Applicability and What would change this answer, with a line saying what is still being written. The full answer replaces it at the next refresh. If a part fails, the early summary is withdrawn at once. It is never kept after the question ends, and an app restart clears it.
+- Answers stored before this change look exactly as they did. Nothing to do on the VPS: the new tables are added at start-up.
 
 ## F1: search tools and the plain results page (branch `f1-search-tools`, not merged yet)
 
