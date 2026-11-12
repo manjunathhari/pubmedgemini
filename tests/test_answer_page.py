@@ -223,7 +223,7 @@ def test_a_difference_row_has_its_own_scale_and_aria():
     d = f.diffs[0]
     assert d.drawn and (d.scale.lo, d.scale.hi) == (-0.2, 0.8)
     assert d.aria == "Mean difference 0.33 days, interval minus 0.03 to 0.7, crossing 0"
-    f = forest(answer_with(num("Pain, difference", 2.0, None, None, lo=1.0, hi=3.0)), REFS)
+    f = forest(answer_with(num("Difference in pain", 2.0, None, None, lo=1.0, hi=3.0)), REFS)
     assert f.diffs[0].aria == "Difference 2, interval 1 to 3, above 0"
 
 
@@ -351,7 +351,9 @@ def test_chart_kinds_follow_the_shape_of_the_numbers():
     assert chart_kind([num("Seroma", 0.4, "HR")]) == "text"
     assert chart_kind([num("LOS", 0.33, "days", "MD", lo=-0.03, hi=0.7)]) == "diff"
     assert chart_kind([num("Mean difference in pain", -1.2, lo=-2.0, hi=-0.4)]) == "diff"
-    assert chart_kind([num("Robotic minus lap", 4.0, "min", lo=1.0, hi=7.0)]) == "diff"
+    # Incisive draws "Robotic minus lap" as a difference; here a difference must name its
+    # measure (third check M2, plan X33, an accepted difference): it is text.
+    assert chart_kind([num("Robotic minus lap", 4.0, "min", lo=1.0, hi=7.0)]) == "text"
     assert chart_kind([num("Amd score", 4.0, lo=1.0, hi=7.0)]) == "text"
     a = num("Discharge", 95.9, "%", "R-TAPP")
     b = num("Discharge", 81.5, "%", "L-TAPP")
@@ -1018,3 +1020,89 @@ def test_a_ratio_with_a_comparison_arm_is_still_a_ratio_row():
     w = answer_with(num("Seroma", 0.5, "RR", "TEP vs Lichtenstein", lo=0.2, hi=0.9))
     [r] = forest(w, REFS).ratios
     assert r.drawn and r.sub.endswith(" · TEP vs Lichtenstein")
+
+
+# ---------- a difference row names its measure (third check M2, plan X33) ----------
+
+NOT_CLEAR_DIFF = "not clearly a difference between arms"
+
+
+@pytest.mark.parametrize("label,unit,arm,term", [
+    ("MD", None, None, "MD"),
+    ("Mean difference in pain", None, None, "mean difference"),
+    ("Return to daily activities, mean difference", "days", None, "mean difference"),
+    ("Risk difference", "%", None, "risk difference"),
+    ("Absolute risk difference in recurrence", "%", None, "risk difference"),
+    ("Standardised mean difference", None, None, "standardised mean difference"),
+    ("Difference", "percentage points", None, "difference"),
+    ("difference in length of stay", "days", None, "difference"),
+    ("Difference: pain", None, None, "difference"),
+    ("Difference (TEP minus Lichtenstein)", None, None, "difference"),
+    ("Difference — pain", None, None, "difference"),
+    ("MD, days", None, None, "MD"),
+    ("MD in VAS pain", None, None, "MD"),
+    ("MD (95% CI)", None, None, "MD"),
+    ("MD: return to work", None, None, "MD"),
+    ("SMD", None, None, "SMD"),
+    ("WMD for pain", None, None, "WMD"),
+    ("MD of LOS", None, None, "MD"),
+    ("Pain", "MD", None, "MD"),
+    ("Pain", "mean difference", None, "mean difference"),
+    ("Pain", " smd ", None, "SMD"),
+    ("LOS", "days", "MD", "MD"),
+    ("LOS", "days", "risk  difference", "risk difference"),
+    ("ＭＤ", None, None, "MD"),
+])
+def test_a_named_difference_measure_is_found(label, unit, arm, term):
+    from pubmedgemini.answer_page import difference_measure
+
+    assert difference_measure(num(label, 1.0, unit, arm)) == term
+
+
+@pytest.mark.parametrize("label,unit", [
+    ("Recurrence (no significant difference)", "%"),
+    ("Pain, difference not significant", None),
+    ("No difference in pain", None),
+    ("Differences between groups", None),
+    ("MD Anderson Dysphagia Inventory score", None),
+    ("MD (Anderson score)", None),
+    ("MD, Anderson score", None),
+    ("MD in Hospital stay", None),  # a capitalised word after MD: not counted (allow-list)
+    ("Md. score", None),
+    ("md", None),  # an abbreviation counts in a label only in capitals
+    ("Amd score", None),
+    ("MDA levels", None),
+    ("Robotic minus lap", "min"),
+    ("Pain", "days"),
+    ("Pain", "difference not significant"),
+    ("Pain", None),
+])
+def test_text_that_only_mentions_a_difference_names_no_measure(label, unit):
+    from pubmedgemini.answer_page import difference_measure
+
+    assert difference_measure(num(label, 1.0, unit)) is None
+
+
+@pytest.mark.parametrize("n", [
+    num("Recurrence (no significant difference)", 12.5, "%", None, lo=8.0, hi=17.0),
+    num("MD Anderson Dysphagia Inventory score", 72.3, None, None, lo=68.0, hi=76.0),
+    num("Robotic minus lap", 4.0, "min", None, lo=1.0, hi=7.0),
+    num("Recurrence (no significant difference)", 12.5, "%", None),
+])
+def test_a_number_that_only_mentions_a_difference_is_listed_not_drawn(n):  # the reviewer's
+    w = answer_with(n)
+    f = forest(w, REFS)
+    assert f.diffs == [] and f.ratios == []
+    assert [(x.at, x.problem) for x in outcome_cards(w, REFS)[0].listed] == [
+        ((0, 0), NOT_CLEAR_DIFF)]
+    assert shown_at(w, REFS) == every_number(w)
+
+
+def test_a_named_measure_without_an_arm_is_drawn_and_named_in_its_aria():
+    f = forest(answer_with(
+        num("Difference in MD Anderson score", 2.0, None, None, lo=1.0, hi=3.0),
+        num("Pain", -1.2, "MD", None, lo=-2.0, hi=-0.4),
+        num("SMD for pain", -0.5, None, None, lo=-0.9, hi=-0.1)), REFS)
+    assert [r.drawn for r in f.diffs] == [True, True, True]
+    assert [r.aria.split(" ")[0:2] for r in f.diffs] == [
+        ["Difference", "2,"], ["Mean", "difference"], ["Difference", "minus"]]

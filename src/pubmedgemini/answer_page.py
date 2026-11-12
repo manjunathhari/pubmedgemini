@@ -331,14 +331,88 @@ def plain_arm(n: Number) -> bool:
     return arm_kind(n) == "name"
 
 
+# The named kinds of difference, as words anywhere in a label (third check M2).
+_NAMED_DIFF = re.compile(
+    r"(?<!\w)(mean|risk|absolute|median|rate|weighted mean|standardi[sz]ed mean)"
+    r" differences?(?!\w)", re.IGNORECASE)
+# A term that counts in a label only standing alone: the whole label, or the start of the
+# label followed by a separator (",", ":", "(", "—", "–" after optional spaces, or " in ",
+# " for ", " of "). The abbreviations count only in capitals.
+_LEAD_TERM = re.compile(
+    r"(?:(?P<abbr>MD|SMD|WMD)|(?P<word>(?i:difference)))"
+    r"(?:$|(?P<sep>\s*[,:(—–]|\s(?:in|for|of)\s)(?P<rest>.*))", re.DOTALL)
+_FIRST_WORD = re.compile(r"[^\W\d_]+")
+_UNIT_TERMS = {"md": "MD", "smd": "SMD", "wmd": "WMD", "difference": "difference"}
+
+
+def _display_key(s: str) -> str:
+    """A text for matching with its case kept: NFKC, trimmed, inner whitespace squashed."""
+    return rust_trim(_SPACES.sub(" ", unicodedata.normalize("NFKC", s)))
+
+
+def _named(m: re.Match[str]) -> str:
+    return f"{m.group(1).lower()} difference"
+
+
+def difference_measure(n: Number) -> str | None:
+    """The difference measure the number names, or None (third check M2; owner rule D3a,
+    decision d24). One rule, on the label and the unit as `_display_key` gives them and the
+    arm as `arm_kind` reads it; the first that applies:
+
+    1. the unit, as a whole and ignoring case, is a measure term: MD, SMD, WMD, "difference"
+       or a named kind of difference ("mean difference", "risk difference", "absolute
+       difference", "median difference", "rate difference", "weighted mean difference",
+       "standardised mean difference");
+    2. the label contains a named kind of difference, as words ("Return to daily
+       activities, mean difference", "Absolute risk difference in recurrence");
+    3. the label is "difference" (any case) or MD, SMD or WMD (in capitals), or starts with
+       one followed by a separator: optional spaces then ",", ":", "(", "—" or "–", or a
+       space, "in", "for" or "of" and a space ("Difference in length of stay", "MD, days").
+       After MD, SMD or WMD, the first word after the separator must not be a capitalised
+       word (a capital then a small letter, as "Anderson"): "MD (Anderson score)" names no
+       measure;
+    4. the arm text is, as a whole, a difference marker (`arm_kind` "marker": Incisive puts
+       "MD" or "difference" in `arm`).
+
+    Merely the word "difference" elsewhere ("Recurrence (no significant difference)"), MD
+    inside a name ("MD Anderson Dysphagia Inventory score"), or "minus" names no measure.
+    Returned: the term, as "MD", "SMD", "WMD", "difference" or "<kind> difference"."""
+    unit = _display_key(n.unit).casefold() if n.unit is not None else ""
+    if unit in _UNIT_TERMS:
+        return _UNIT_TERMS[unit]
+    m = _NAMED_DIFF.fullmatch(unit)
+    if m:
+        return _named(m)
+    label = _display_key(n.label)
+    m = _NAMED_DIFF.search(label)
+    if m:
+        return _named(m)
+    m = _LEAD_TERM.match(label)
+    if m:
+        rest = m.group("rest") or ""
+        word = _FIRST_WORD.search(rest)
+        proper = bool(word) and len(word.group(0)) > 1 and word.group(0)[0].isupper() and \
+            word.group(0)[1].islower()
+        if m.group("word"):
+            return "difference"
+        if not proper:
+            return m.group("abbr")
+    if arm_kind(n) == "marker":
+        k = _key(n.arm or "")
+        return {"md": "MD", "smd": "SMD", "wmd": "WMD"}.get(k, k)
+    return None
+
+
+_MEAN_TERMS = frozenset({"MD", "WMD", "mean difference", "weighted mean difference"})
+
+
 def is_difference(n: Number) -> bool:
-    """A difference for the page: its label reads as one (Incisive's `is_diff` on the label)
-    or its arm text is a marker, AND no arm name. A number with an arm name is one arm's
-    value, never drawn as a difference (review M2, owner decision d24, 12 Nov 2026: an
-    approved difference from Incisive); text inside an arm name never makes a difference."""
-    if names_an_arm(n):
-        return False
-    return bool(_DIFF.search(n.label)) or arm_is_marker(n)
+    """A difference row for the page (allow-list, D3a): no arm text other than a whole marker
+    (`names_an_arm` false; review M2, owner decision d24) AND a named measure
+    (`difference_measure`; third check M2: merely the word "difference" or "minus" is not
+    enough). Both are accepted differences from Incisive, which draws any number whose label
+    or arm matches `is_diff`."""
+    return not names_an_arm(n) and difference_measure(n) is not None
 
 
 def has_ci(n: Number) -> bool:
@@ -550,6 +624,8 @@ def listed_problem(n: Number, group: Sequence[Number], pair: bool = False,
         return ONE_ARM_RATE
     if not is_ratio(n) and _looks_ratio(n):
         return "unit not RR, OR or HR"
+    if not names_an_arm(n) and is_diff(n) and not is_difference(n):
+        return NOT_CLEAR_DIFF
     if (is_ratio(n) or is_difference(n)) and not has_ci(n):
         return "no interval"
     if len(group) == 1:
@@ -561,22 +637,26 @@ def listed_problem(n: Number, group: Sequence[Number], pair: bool = False,
 
 ONE_ARM_RATE = "one arm's rate, not a difference"
 COMPARISON_ARM = "its arm text reads as a comparison, not an arm"
+# A number with no arm whose label or arm reads as a difference by Incisive's rule (`is_diff`)
+# but names no measure (`difference_measure`; third check M2).
+NOT_CLEAR_DIFF = "not clearly a difference between arms"
 OTHER_COMPARISON_ARM = "the other arm's text reads as a comparison, not an arm"
 NO_STUDY = "its study is not in the references"
 # A number whose label or unit names a difference measure and which also carries an arm name:
 # not drawn (d24), and the reason says what is wrong (re-check M-C, coordinator option a).
 ARM_ON_DIFF = "an arm is named on a difference"
 
-# A difference measure named in a label or unit, as the measure (not "no significant
-# difference"): MD, SMD, WMD, a named kind of difference, "minus", or a label that is or
-# starts with "difference".
+# For the reason only, never for drawing (that is `difference_measure`): a label or unit that
+# reads as naming a difference (MD, SMD, WMD, a named kind of difference, "minus", a label
+# starting "difference"), so an arm named on it gets "an arm is named on a difference".
 _DIFF_MEASURE = re.compile(
     r"\b[SW]?MD\b|\b(?:mean|risk|absolute|median|rate|weighted mean|standardi[sz]ed mean)"
     rf"{_WS}+difference\b|\bminus\b|^{_WS}*difference\b", re.IGNORECASE)
 
 
 def labelled_difference(n: Number) -> bool:
-    """The label or the unit names a difference measure (`_DIFF_MEASURE`)."""
+    """The label or the unit reads as naming a difference (`_DIFF_MEASURE`): which reason an
+    armed number gets. Drawing uses `is_difference` only."""
     return any(_DIFF_MEASURE.search(t) for t in (n.label, n.unit or ""))
 
 
@@ -702,7 +782,6 @@ def _spoken(v: float) -> str:
 
 
 _RATIO_NAMES = {"RR": "Risk ratio", "OR": "Odds ratio", "HR": "Hazard ratio"}
-_MEAN_DIFF = re.compile(r"\bMD\b|mean difference", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -786,8 +865,7 @@ def _drawn_row(kind: str, n: Number, scale: Axis, label: str, text: str, sub: li
         past = lo_v < scale.lo or hi_v > scale.hi
     else:
         null_v = 0.0
-        name = ("Mean difference" if _MEAN_DIFF.search(f"{n.label} {n.arm or ''}")
-                else "Difference")
+        name = "Mean difference" if difference_measure(n) in _MEAN_TERMS else "Difference"
         past = False
     left = _pos(kind, lo_v, scale)
     width = max(_pos(kind, hi_v, scale) - left, 0.5)
