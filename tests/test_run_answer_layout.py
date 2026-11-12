@@ -634,7 +634,7 @@ def test_early_summary_marked_and_without_key_numbers(env):
     assert "Chronic pain" not in glance and "RR 0.76" not in t  # the key number held back
     assert "<svg" not in t and 'class="dots"' not in t and 'class="cmp"' not in t
     bottom = t.split("<h2>Bottom line", 1)[1].split("</section>", 1)[0]
-    assert 'ex no clear benefit [<a href="#ref-1">1</a>, <a href="#ref-2">2</a>].' in bottom
+    assert "ex no clear benefit [1, 2]." in bottom  # no references card yet: no links
     assert '<span class="pill mo">Moderate certainty</span>' in bottom
     assert "<p><b>Default choice:</b> ex lap</p>" in bottom
     assert f'<p class="muted">{STILL}</p>' in t
@@ -648,6 +648,19 @@ def test_early_summary_marked_and_without_key_numbers(env):
              "<h2>Early summary", "<h2>At a glance", "<h2>Bottom line", "Still being written"]
     assert [t.index(x) for x in order] == sorted(t.index(x) for x in order)
     assert "<h2>Steps</h2>" not in t and "<h2>References</h2>" not in t
+
+
+def test_early_cards_cite_as_plain_text_and_the_finished_page_still_links(env):
+    """While the run works there is no references card, so an early citation is the plain
+    text [n] (no link to a #ref- anchor that is not there); the finished page keeps its links."""
+    rid = running(env)
+    with_early(env, rid, summary=True, context=True)
+    t = run_page(env, rid)
+    assert "[1, 2]" in t
+    assert 'href="#ref-' not in t
+    _end(env, rid)
+    done = page(env, store(env, hernia()))
+    assert 'href="#ref-' in done and 'id="ref-' in done
 
 
 def test_early_context_cards_only_when_context_arrived(env):

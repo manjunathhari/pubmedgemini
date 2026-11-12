@@ -23,10 +23,10 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 <section class="card">
 <h2>At a glance <span class="tag">Early</span></h2>
 {%- if view.glance.verdict %}
-<p>{{ ans.pieces(view.glance.verdict) }}</p>
+<p>{{ ans.pieces(view.glance.verdict, false) }}</p>
 {%- endif %}
 {%- if view.glance.caveat %}
-<p><b>Main caveat:</b> {{ ans.pieces(view.glance.caveat) }}</p>
+<p><b>Main caveat:</b> {{ ans.pieces(view.glance.caveat, false) }}</p>
 {%- endif %}
 <p class="muted">{{ e.keys_held }}</p>
 </section>
@@ -34,18 +34,18 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 <section class="card">
 <h2>Bottom line <span class="tag">Early</span></h2>
 {%- for para in view.bottom.paragraphs %}
-<p>{{ ans.pieces(para) }}</p>
+<p>{{ ans.pieces(para, false) }}</p>
 {%- endfor %}
-<p><span class="pill {{ view.bottom.pill }}">{{ view.bottom.certainty }} certainty</span>{% if view.bottom.reason %} {{ ans.pieces(view.bottom.reason) }}{% endif %}</p>
+<p><span class="pill {{ view.bottom.pill }}">{{ view.bottom.certainty }} certainty</span>{% if view.bottom.reason %} {{ ans.pieces(view.bottom.reason, false) }}{% endif %}</p>
 {%- for label, text in view.practice %}
-<p>{% if label %}<b>{{ label }}:</b> {% endif %}{{ ans.pieces(text) }}</p>
+<p>{% if label %}<b>{{ label }}:</b> {% endif %}{{ ans.pieces(text, false) }}</p>
 {%- endfor %}
 </section>
 {%- if e.context and view.applicability %}
 <section class="card">
 <h2>Applicability <span class="tag">Early</span></h2>
 {%- for label, text in view.applicability %}
-<p><b>{{ label }}:</b> {{ ans.pieces(text) }}</p>
+<p><b>{{ label }}:</b> {{ ans.pieces(text, false) }}</p>
 {%- endfor %}
 </section>
 {%- endif %}
@@ -54,7 +54,7 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 <h2>What would change this answer <span class="tag">Early</span></h2>
 <ul>
 {%- for c in view.would_change %}
-<li>{{ ans.pieces(c) }}</li>
+<li>{{ ans.pieces(c, false) }}</li>
 {%- endfor %}
 </ul>
 </section>

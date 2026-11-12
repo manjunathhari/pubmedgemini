@@ -2,11 +2,13 @@
 position, count and fold comes from answer_page.py; positions reach SVG attributes only through
 the `pct` filter (numbers only). Model text is only ever escaped text here (autoescape, no |safe).
 No style attribute, no style block, no script. -#}
-{%- macro pieces(ps) -%}
+{#- `link` false (the early summary's cards, F3c): a citation is the plain text [n], since no
+references card is on the page yet. -#}
+{%- macro pieces(ps, link=true) -%}
 {%- for kind, v in ps -%}
 {%- if kind == "text" -%}{{ v }}
 {%- elif kind == "bold" -%}<b>{{ v }}</b>
-{%- elif kind == "cite" -%}[{% for n in v %}<a href="#ref-{{ n }}">{{ n }}</a>{% if not loop.last %}, {% endif %}{% endfor %}]
+{%- elif kind == "cite" -%}[{% for n in v %}{% if link %}<a href="#ref-{{ n }}">{{ n }}</a>{% else %}{{ n }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}]
 {%- else -%}[not in the study list]
 {%- endif -%}
 {%- endfor -%}
