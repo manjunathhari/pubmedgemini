@@ -547,3 +547,48 @@ def test_every_hernia_number_is_on_the_page_and_the_counts_match():
     for i, c in enumerate(outcome_cards(w, HERNIA_REFS)):
         on_page = {j for o, j in shown_at(w, HERNIA_REFS) if o == i}
         assert c.n_numbers.split()[0] == str(len(on_page)), c.title
+
+
+# ---------- numbers no scale can hold (review M5) ----------
+
+def md(v, lo, hi, label="Mean difference in stay") -> Number:
+    return num(label, v, "days", None, "1", lo, hi)
+
+
+@pytest.mark.parametrize("n,problem", [
+    (md(0.0, -1e308, 1e308), "the interval is too wide to draw"),
+    (md(1e308, -1.7e308, 1.7e308), "the interval is too wide to draw"),
+    (md(5e-13, 0.0, 1e-12), "the interval is too narrow to draw"),
+    (md(1e-10, 1e-10, 3e-10), "the interval is too narrow to draw"),
+])
+def test_a_difference_no_scale_can_hold_is_listed_not_drawn(n, problem):
+    [row] = forest(answer_with(n), REFS).diffs
+    assert (row.drawn, row.problem) == (False, problem)
+
+
+@pytest.mark.parametrize("n", [ratio(1e-300, 1e-300, 1e-299), ratio(1e300, 1e299, 1e300),
+                               ratio(5e-324, 5e-324, 1e308), ratio(1.0, 1e-300, 1e300)])
+def test_extreme_ratios_never_raise_and_stay_on_the_scale(n):
+    [row] = forest(answer_with(n), REFS).ratios
+    assert row.drawn and row.sub.endswith("interval runs past the scale")
+    assert all(math.isfinite(x) and 0 <= x <= 100 for x in (row.left, row.width, row.est))
+
+
+def test_a_row_whose_derivation_raises_is_listed_and_logged(monkeypatch, caplog):
+    import pubmedgemini.answer_page as ap
+
+    real = ap._pos
+
+    def boom(kind, x, scale):
+        if kind == "diff":
+            raise ZeroDivisionError("x")
+        return real(kind, x, scale)
+
+    monkeypatch.setattr(ap, "_pos", boom)
+    caplog.set_level("WARNING", logger="pubmedgemini.answer_page")
+    f = forest(answer_with(md(-1.0, -2.0, 0.5), ratio(0.5, 0.2, 0.9)), REFS)
+    assert [(r.drawn, r.problem) for r in f.diffs] == [
+        (False, "the numbers could not be placed on a scale")]
+    assert [r.drawn for r in f.ratios] == [True]
+    assert [m.getMessage() for m in caplog.records] == [
+        "answer_page kind=row_not_derived rows=1"]

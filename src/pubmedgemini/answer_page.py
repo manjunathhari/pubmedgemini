@@ -1,5 +1,6 @@
 """The answer page's derivation: pure functions from a stored answer to the plain values the
-template draws. Nothing here changes the answer, logs anything or reads model text as markup.
+template draws. Nothing here changes the answer or reads model text as markup; the one log
+line is a fixed kind and a count (a forest row whose derivation failed, review M5).
 
 Ports of Incisive (commit 12630f7, `crates/incisive-app/src/`):
 
@@ -22,6 +23,7 @@ at an edge (X16), the out-of-100 sentence (X21), the pills and the fold that kee
 cards of a pair level (X14). Rounding is Rust's `f64::round` (half away from zero).
 """
 
+import logging
 import math
 import re
 from collections.abc import Mapping, Sequence
@@ -53,6 +55,9 @@ PAIRS = (("Why this conclusion", "Every outcome, its numbers and how sure we can
 RATIO_HEADING = "Ratios (RR · OR · HR)"
 DIFF_HEADING = "Differences"
 PAST_SCALE = "interval runs past the scale"
+
+# One line, a fixed kind and a count, when a row's derivation fails (never a number or text).
+log = logging.getLogger("pubmedgemini.answer_page")
 
 # Rust `char::is_whitespace` (Unicode White_Space), as a regex class.
 _WS = "[\t\n\x0b\x0c\r \x85\xa0  -     　]"
@@ -583,6 +588,70 @@ def study_pieces(w: WrittenAnswer, pmid: str, refs: Mapping[str, int]) -> list[P
     return [("text", f"{name} ({NOT_IN_LIST})")]
 
 
+NOT_PLACED = "the numbers could not be placed on a scale"
+_SPAN_SLACK = 1e-6  # of the axis span: float noise allowed where the axis meets the interval
+
+
+def _diff_scale(n: Number) -> Axis | None:
+    """The row's own difference axis, or None when no finite axis with nice steps holds the
+    interval (wider than floats can measure, or narrower than its 9-decimal rounding)."""
+    lo, hi = n.ci_low, n.ci_high
+    assert lo is not None and hi is not None
+    try:
+        a, b, _ = diff_axis(lo, hi)
+    except (ArithmeticError, ValueError):
+        return None
+    span = b - a
+    if not (math.isfinite(span) and span > 0 and a - lo <= _SPAN_SLACK * span
+            and hi - b <= _SPAN_SLACK * span):
+        return None
+    return Axis(a, b, _lin_pos(0, a, b), _signed(a), "0", _signed(b))
+
+
+def _diff_scale_problem(n: Number) -> str:
+    lo, hi = n.ci_low, n.ci_high
+    assert lo is not None and hi is not None
+    span = max(hi, 0.0) - min(lo, 0.0)
+    if not math.isfinite(span) or span >= 1:
+        return "the interval is too wide to draw"
+    return "the interval is too narrow to draw"
+
+
+def _drawn_row(kind: str, n: Number, scale: Axis, label: str, text: str, sub: list[Piece],
+               extra: list[str], at: tuple[int, int]) -> ForestRow | None:
+    """A drawn row on `scale`, or None when a position is not a finite number."""
+    lo_v, hi_v = n.ci_low, n.ci_high
+    assert lo_v is not None and hi_v is not None
+    if kind == "ratio":
+        null_v = 1.0
+        name = _RATIO_NAMES[rust_trim(n.unit or "")]
+        past = lo_v < scale.lo or hi_v > scale.hi
+    else:
+        null_v = 0.0
+        name = ("Mean difference" if _MEAN_DIFF.search(f"{n.label} {n.arm or ''}")
+                else "Difference")
+        past = False
+    left = _pos(kind, lo_v, scale)
+    width = max(_pos(kind, hi_v, scale) - left, 0.5)
+    est = _pos(kind, n.value, scale)
+    if not all(math.isfinite(x) for x in (left, width, est, scale.null)):
+        return None
+    side = ("below" if hi_v < null_v else "above" if lo_v > null_v else "crossing")
+    unit = rust_trim(n.unit or "")
+    value = _spoken(n.value)
+    if kind == "diff" and unit:
+        value += "%" if unit == "%" else f" {unit}"
+    aria = (f"{name} {value}, interval {_spoken(lo_v)} to {_spoken(hi_v)}, {side} "
+            f"{fmt_value(null_v)}")
+    extra = list(extra)
+    if past:
+        aria += f", {PAST_SCALE}"
+        extra.append(PAST_SCALE)
+    sub = sub + [("text", f" · {x}") for x in extra]
+    return ForestRow(label, text, sub, True, None, left, width, est, scale.null, scale, aria,
+                     at)
+
+
 def forest(w: WrittenAnswer, refs: Mapping[str, int]) -> Forest:
     """Every ratio or difference with both CI bounds (Incisive `forest_rows`), ratios then
     differences, each in group order; drawn only when the checks pass."""
@@ -605,47 +674,32 @@ def forest(w: WrittenAnswer, refs: Mapping[str, int]) -> Forest:
         r_axis = Axis(lo, hi, _log_pos(1, lo, hi), fmt_axis(lo), "1", fmt_axis(hi))
     ratios: list[ForestRow] = []
     diffs: list[ForestRow] = []
+    failed = 0
     for (kind, n, o, at), problem in zip(found, problems, strict=True):
         label = rust_trim(n.label) or o.outcome
         sub = study_pieces(w, n.pmid, refs)
         extra = [x for x in (rust_trim(n.arm) if n.arm else "",
                              rust_trim(n.unit) if kind == "diff" and n.unit else "") if x]
         text = ratio_estimate(n) if kind == "ratio" else diff_estimate(n)
-        if problem is not None:
-            sub += [("text", f" · {x}") for x in extra]
-            row = ForestRow(label, text, sub, False, problem, at=at)
-        else:
-            lo_v, hi_v = n.ci_low, n.ci_high
-            assert lo_v is not None and hi_v is not None
-            if kind == "ratio":
-                assert r_axis is not None
-                scale = r_axis
-                null_v = 1.0
-                name = _RATIO_NAMES[rust_trim(n.unit or "")]
-                past = lo_v < scale.lo or hi_v > scale.hi
+        drawn = None
+        if problem is None:
+            scale = r_axis if kind == "ratio" else _diff_scale(n)
+            if scale is None:
+                problem = _diff_scale_problem(n)
             else:
-                a, b, _ = diff_axis(lo_v, hi_v)
-                scale = Axis(a, b, _lin_pos(0, a, b), _signed(a), "0", _signed(b))
-                null_v = 0.0
-                name = ("Mean difference" if _MEAN_DIFF.search(f"{n.label} {n.arm or ''}")
-                        else "Difference")
-                past = False
-            left = _pos(kind, lo_v, scale)
-            width = max(_pos(kind, hi_v, scale) - left, 0.5)
-            side = ("below" if hi_v < null_v else "above" if lo_v > null_v else "crossing")
-            unit = rust_trim(n.unit or "")
-            value = _spoken(n.value)
-            if kind == "diff" and unit:
-                value += "%" if unit == "%" else f" {unit}"
-            aria = (f"{name} {value}, interval {_spoken(lo_v)} to {_spoken(hi_v)}, {side} "
-                    f"{fmt_value(null_v)}")
-            if past:
-                aria += f", {PAST_SCALE}"
-                extra.append(PAST_SCALE)
+                try:
+                    drawn = _drawn_row(kind, n, scale, label, text, sub, extra, at)
+                except (ArithmeticError, ValueError):
+                    drawn = None
+                if drawn is None:
+                    failed += 1
+                    problem = NOT_PLACED
+        if drawn is None:
             sub += [("text", f" · {x}") for x in extra]
-            row = ForestRow(label, text, sub, True, None, left, width,
-                            _pos(kind, n.value, scale), scale.null, scale, aria, at)
-        (ratios if kind == "ratio" else diffs).append(row)
+            drawn = ForestRow(label, text, sub, False, problem, at=at)
+        (ratios if kind == "ratio" else diffs).append(drawn)
+    if failed:
+        log.warning("answer_page kind=row_not_derived rows=%d", failed)
     return Forest(ratios, diffs, r_axis)
 
 

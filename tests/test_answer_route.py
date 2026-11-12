@@ -299,3 +299,13 @@ def test_numbers_not_drawn_are_listed_inside_their_outcome(env):  # review M3
     assert ('<p><b>Seroma</b> <span class="mono">RR 0.4</span></p><p class="muted">'
             'TEP vs Lichtenstein meta-analysis [<a href="#ref-1">1</a>] · '
             'Not drawn: no interval.</p>') in last
+
+
+def test_numbers_no_scale_can_hold_never_500_the_page(env):  # review M5
+    t = page(env, store(env, _with_numbers(
+        num("Mean difference", 0.0, "days", None, PMIDS[0], -1e308, 1e308),
+        num("Mean difference B", 5e-13, "days", None, PMIDS[0], 0.0, 1e-12),
+        num("Seroma", 1e-300, "RR", None, PMIDS[0], 1e-300, 1e-299),
+        num("Pain", 1e300, "OR", None, PMIDS[0], 1e299, 1e300))))
+    assert t.count("Not drawn: the interval is too wide to draw.") == 1
+    assert t.count("Not drawn: the interval is too narrow to draw.") == 1
