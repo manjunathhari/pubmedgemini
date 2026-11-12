@@ -24,7 +24,7 @@ from pubmedgemini.runs import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-MOCK = ROOT / "docs" / "mocks" / "f3-answer-page-v3.html"
+MOCK = ROOT / "docs" / "mocks" / "f3-answer-page-v4.html"
 
 
 def style_block(page: str) -> str:
@@ -297,9 +297,9 @@ def test_numbers_not_drawn_are_listed_inside_their_outcome(env):  # review M3
     last = t[t.rindex('<details class="oc"'):]
     last = last[:last.index("</details>")]
     assert "<span class=\"meta\">1 number</span>" in last
-    assert ('<p><b>Seroma</b> <span class="mono">RR 0.4</span></p><p class="muted">'
-            'TEP vs Lichtenstein meta-analysis [<a href="#ref-1">1</a>] · '
-            'Not drawn: no interval.</p>') in last
+    assert ('<div class="ci"><p class="lab"><b>Seroma</b> <span class="mono">RR 0.4</span></p>'
+            '<p class="muted">TEP vs Lichtenstein meta-analysis [<a href="#ref-1">1</a>] · '
+            'Not drawn: no interval.</p></div>') in last
 
 
 def test_numbers_no_scale_can_hold_never_500_the_page(env):  # review M5
@@ -342,3 +342,20 @@ def test_compare_rows_name_each_arm_with_its_value(env):  # review H1 (d23), the
     assert "18.8% vs 9.4%" not in t.replace("Open repair 18.8% vs Laparoscopic repair 9.4%", "")
     for r in re.findall(r'<div class="row">.*?</div>', t):  # no bare "x% vs y%" anywhere
         assert not re.search(r'<span class="mono">[\d.]+%? vs', r), r
+
+
+def test_long_numbers_sit_where_the_v4_wrap_rule_applies(env):  # review M6 (d25)
+    rule = ".ci .lab .mono,.row .mono{white-space:normal;overflow-wrap:anywhere}"
+    t = page(env, store(env, _with_numbers(
+        num("Pain score difference", -1.2345, "points on the VAS (0 to 10)", None, PMIDS[0],
+            -1.9876, -0.5432),
+        num("Tiny ratio", 1e-300, "RR", None, PMIDS[0], 1e-300, 1e-299),
+        num("Tiny listed", 1e-300, "RR", None, PMIDS[0]))))
+    assert rule in style_block(t)
+    assert ('<span class="mono">−1.2345 points on the VAS (0 to 10) (−1.9876 to −0.5432)'
+            '</span>') in t
+    # every .mono is inside a .ci .lab or a .row, so the rule reaches every long number
+    for m in re.finditer(r'<span class="mono">', t):
+        before = t[:m.start()]
+        assert (before.rfind('<p class="lab">') > before.rfind("</p>")
+                or before.rfind('<div class="row">') > before.rfind("</div>")), t[m.start():][:60]
