@@ -257,9 +257,33 @@ def pieces_text(pieces: Sequence[Piece]) -> str:
 # ---------- chart kinds and groups ----------
 
 
+# R1 (owner decision N5, 12 Nov 2026): with a blank unit, a ratio named at the very start of
+# its label, after at most one of the qualifiers "stratified", "adjusted" or "pooled" (case
+# ignored, on `_display_key`). The live writer stores hazard ratios so ("Hazard ratio for ...",
+# unit null). A ratio named anywhere else in the label is not one ("Recurrence, hazard ratio").
+_LABEL_RATIO = re.compile(
+    r"(?:(?:stratified|adjusted|pooled) )?(hazard ratio|odds ratio|risk ratio|relative risk"
+    r"|rate ratio)(?!\w)", re.IGNORECASE)
+_LABEL_RATIO_UNITS = {"hazard ratio": "HR", "odds ratio": "OR", "risk ratio": "RR",
+                      "relative risk": "RR", "rate ratio": "IRR"}
+
+
+def ratio_unit(n: Number) -> str | None:
+    """The ratio a number is, as a unit: "RR", "OR" or "HR" when its unit is exactly one of
+    them (the unit always decides when it is not blank); else, only when the unit is blank,
+    the ratio its label names at its start (R1: "RR", "OR", "HR", or "IRR" for a rate ratio);
+    else None. Every draw check still applies to such a ratio."""
+    u = rust_trim(n.unit) if n.unit is not None else ""
+    if u:
+        return u if u in ("RR", "OR", "HR") else None
+    m = _LABEL_RATIO.match(_display_key(n.label))
+    return _LABEL_RATIO_UNITS[m.group(1).lower()] if m else None
+
+
 def is_ratio(n: Number) -> bool:
-    """A ratio: unit RR, OR or HR."""
-    return n.unit is not None and rust_trim(n.unit) in ("RR", "OR", "HR")
+    """A ratio: unit RR, OR or HR, or (R1) a blank unit and a ratio named at the label's
+    start (`ratio_unit`)."""
+    return ratio_unit(n) is not None
 
 
 _DIFF = re.compile(r"difference|\bMD\b|minus", re.IGNORECASE)
@@ -910,7 +934,8 @@ def _spoken(v: float) -> str:
     return fmt_value(v).replace("−", "minus ")
 
 
-_RATIO_NAMES = {"RR": "Risk ratio", "OR": "Odds ratio", "HR": "Hazard ratio"}
+_RATIO_NAMES = {"RR": "Risk ratio", "OR": "Odds ratio", "HR": "Hazard ratio",
+                "IRR": "Rate ratio"}
 
 
 @dataclass(frozen=True)
@@ -992,7 +1017,7 @@ def _drawn_row(kind: str, n: Number, scale: Axis, label: str, text: str, sub: li
     assert lo_v is not None and hi_v is not None
     if kind == "ratio":
         null_v = 1.0
-        name = _RATIO_NAMES[rust_trim(n.unit or "")]
+        name = _RATIO_NAMES[ratio_unit(n) or ""]
         past = lo_v < scale.lo or hi_v > scale.hi
     else:
         null_v = 0.0
