@@ -257,27 +257,89 @@ def pieces_text(pieces: Sequence[Piece]) -> str:
 # ---------- chart kinds and groups ----------
 
 
-# R1 (owner decision N5, 12 Nov 2026): with a blank unit, a ratio named at the very start of
-# its label, after at most one of the qualifiers "stratified", "adjusted" or "pooled" (case
-# ignored, on `_display_key`). The live writer stores hazard ratios so ("Hazard ratio for ...",
-# unit null). A ratio named anywhere else in the label is not one ("Recurrence, hazard ratio").
-_LABEL_RATIO = re.compile(
-    r"(?:(?:stratified|adjusted|pooled) )?(hazard ratio|odds ratio|risk ratio|relative risk"
-    r"|rate ratio)(?!\w)", re.IGNORECASE)
-_LABEL_RATIO_UNITS = {"hazard ratio": "HR", "odds ratio": "OR", "risk ratio": "RR",
-                      "relative risk": "RR", "rate ratio": "IRR"}
+# R1 (owner decision N5, 12 Nov 2026; strict shape after review A1): with a blank unit, a label
+# that is plainly one ratio. On the label as `_display_key` gives it, case-folded:
+#   1. it STARTS with at most one qualifier (`_R1_QUALIFIERS`) and a space, then one ratio
+#      name (`_R1_NAMES`), and what follows the name is the end of the label or a separator:
+#      ",", ":", "(", "—", "–" (each after at most one space), or " for ", " of ", " in ",
+#      " at " (`_LABEL_RATIO`);
+#   2. AND the whole label holds, as a token, none of `_R1_BANNED`: a change word (reduction,
+#      increase, change, gain, excess, delta, Δ ...), a difference word (difference, diff,
+#      minus, MD, SMD, WMD), a negation or significance word (no, not, non, without, none,
+#      neither, nor, NS, n.s., nonsignificant, insignificant, NR, NE, NA, n/a; so "not
+#      reported", "not estimable", "not reached", "non-significant" too), or a measure
+#      abbreviation (HR, RR, IRR, aHR, aOR, ARR, RRR, NNT, NNH; OR only in capitals,
+#      `_UPPER_OR`);
+#   3. AND it names one measure only: "ratio" and "relative risk" occur once in all
+#      (`_R1_SECOND`).
+# The live writer stores hazard ratios so ("Hazard ratio for ...", unit null). Anything else is
+# no ratio by its label: "Relative risk reduction ...", "Hazard ratio not reported; ...",
+# "Odds ratio difference", "HR for ...", "Recurrence, hazard ratio". A label with a blank unit
+# that names a ratio anywhere but fails is also no difference row (`r1_refused`), whatever its
+# arm marker says: it is listed, "Not drawn: unit not RR, OR or HR.", as before R1.
+_R1_QUALIFIERS = ("stratified", "adjusted", "unadjusted", "pooled", "crude", "multivariable",
+                  "multivariate")
+_R1_NAMES = {"hazard ratio": "HR", "odds ratio": "OR", "risk ratio": "RR",
+             "relative risk": "RR", "rate ratio": "IRR"}
+_R1_START = (r"(?:(?:" + "|".join(_R1_QUALIFIERS) + r") )?("
+             + "|".join(re.escape(x) for x in _R1_NAMES) + ")")
+_LABEL_RATIO = re.compile(_R1_START + r"(?=$| ?[,:(—–]| (?:for|of|in|at) )")
+_LABEL_RATIO_ANYWHERE = re.compile(
+    r"(?<!\w)(?:" + "|".join(re.escape(x) for x in _R1_NAMES) + r")(?!\w)")
+_R1_BANNED = frozenset({
+    # change words (the change part of `_CHANGE_WORDS`, with plurals)
+    "reduction", "reductions", "reduced", "increase", "increases", "increased", "decrease",
+    "decreases", "decreased", "change", "changes", "changed", "improvement", "improvements",
+    "gain", "gains", "excess", "delta", "δ", "∆",
+    # difference words
+    "difference", "differences", "diff", "minus", "md", "smd", "wmd",
+    # negation and significance words (`_NEGATION`, and NR, NE, NA, n/a)
+    "no", "not", "non", "without", "none", "neither", "nor", "ns", "n.s", "nonsignificant",
+    "insignificant", "nr", "ne", "na", "n/a",
+    # a measure abbreviation (a second measure, or one the label does not spell out)
+    "hr", "rr", "irr", "ahr", "aor", "arr", "rrr", "nnt", "nnh"})
+_R1_TOKEN = re.compile(r"[\w./]+|[δ∆]")
+_R1_SECOND = re.compile(r"ratio|relative risk")
+
+
+def _r1_tokens(key: str) -> set[str]:
+    return {t.rstrip(".") for t in _R1_TOKEN.findall(key)}
+
+
+def label_ratio(label: str) -> str | None:
+    """R1: the ratio a label alone names, as a unit ("HR", "OR", "RR", or "IRR" for a rate
+    ratio), when the label is plainly one ratio (the three rules above); else None."""
+    shown = _display_key(label)
+    key = shown.casefold()
+    m = _LABEL_RATIO.match(key)
+    if m is None:
+        return None
+    if _r1_tokens(key) & _R1_BANNED or _UPPER_OR.search(shown):
+        return None
+    if len(_R1_SECOND.findall(key)) != 1:
+        return None
+    return _R1_NAMES[m.group(1)]
+
+
+def r1_refused(n: Number) -> bool:
+    """A blank unit and a label that names a ratio anywhere (a ratio name as whole words) but
+    is not plainly one (`label_ratio`): never a forest row of any kind (review A1)."""
+    u = rust_trim(n.unit) if n.unit is not None else ""
+    if u:
+        return False
+    key = _display_key(n.label).casefold()
+    return _LABEL_RATIO_ANYWHERE.search(key) is not None and label_ratio(n.label) is None
 
 
 def ratio_unit(n: Number) -> str | None:
     """The ratio a number is, as a unit: "RR", "OR" or "HR" when its unit is exactly one of
     them (the unit always decides when it is not blank); else, only when the unit is blank,
-    the ratio its label names at its start (R1: "RR", "OR", "HR", or "IRR" for a rate ratio);
-    else None. Every draw check still applies to such a ratio."""
+    the ratio its label plainly names (R1, `label_ratio`); else None. Every draw check still
+    applies to such a ratio."""
     u = rust_trim(n.unit) if n.unit is not None else ""
     if u:
         return u if u in ("RR", "OR", "HR") else None
-    m = _LABEL_RATIO.match(_display_key(n.label))
-    return _LABEL_RATIO_UNITS[m.group(1).lower()] if m else None
+    return label_ratio(n.label)
 
 
 def is_ratio(n: Number) -> bool:
@@ -527,6 +589,8 @@ def forest_kind(n: Number) -> Literal["ratio", "diff"] | None:
         return None
     if is_ratio(n):
         return "ratio"
+    if r1_refused(n):  # starts like a ratio, is not plainly one: listed (review A1)
+        return None
     return "diff" if is_difference(n) else None
 
 

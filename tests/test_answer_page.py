@@ -1118,24 +1118,87 @@ def _o_group(arm, comparison):
 
 
 def _o_ratio(n):
-    """Oracle (R1, owner decision N5): a unit exactly RR, OR or HR; or a blank unit and a label
-    that starts with a ratio's name, after at most one of stratified, adjusted, pooled."""
-    import re
-
+    """Oracle (R1, owner decision N5, strict shape after review A1): a unit exactly RR, OR or
+    HR; or a blank unit and `_o_r1_label`."""
     u = (n.unit or "").strip()
     if u:
         return u in ("RR", "OR", "HR")
-    return re.match(r"(?:(?:stratified|adjusted|pooled) )?(?:hazard ratio|odds ratio|risk "
-                    r"ratio|relative risk|rate ratio)(?![\w])", _o_norm(n.label)) is not None
+    return _o_r1_label(n.label)
+
+
+_O_QUALIFIERS = ["stratified", "adjusted", "unadjusted", "pooled", "crude", "multivariable",
+                 "multivariate"]
+_O_RATIO_NAMES = ["hazard ratio", "odds ratio", "risk ratio", "relative risk", "rate ratio"]
+_O_AFTER = [",", ":", "(", "\u2014", "\u2013", " ,", " :", " (", " \u2014", " \u2013", " for ",
+            " of ", " in ", " at "]
+_O_R1_BANNED = ["reduction", "reductions", "reduced", "increase", "increases", "increased",
+                "decrease", "decreases", "decreased", "change", "changes", "changed",
+                "improvement", "improvements", "gain", "gains", "excess", "delta", "\u03b4",
+                "\u2206", "difference", "differences", "diff", "minus", "md", "smd", "wmd",
+                "no", "not", "non", "without", "none", "neither", "nor", "ns", "n.s",
+                "nonsignificant", "insignificant", "nr", "ne", "na", "n/a",
+                "hr", "rr", "irr", "ahr", "aor", "arr", "rrr", "nnt", "nnh"]
+
+
+def _o_tokens(s):
+    """Oracle: the label's tokens (runs of letters, digits, "." and "/"; trailing dots off)."""
+    import re
+
+    return {t.rstrip(".") for t in re.findall(r"[\w./]+|[\u03b4\u2206]", s)}
+
+
+def _o_r1_label(label):
+    """Oracle (R1): the label, cleaned and case-folded, is an optional qualifier then one ratio
+    name, then the end of the label or a separator; and holds no change, difference or
+    negation word, no measure abbreviation (OR only in capitals), and no second ratio name."""
+    k = _o_norm(label)
+    for q in _O_QUALIFIERS:
+        if k.startswith(q + " "):
+            k = k[len(q) + 1:]
+            break
+    name = next((x for x in _O_RATIO_NAMES if k.startswith(x)), None)
+    if name is None:
+        return False
+    rest = k[len(name):]
+    if rest and not any(rest.startswith(a) for a in _O_AFTER):
+        return False
+    import re
+
+    whole = _o_norm(label)
+    if _o_tokens(whole) & set(_O_R1_BANNED):
+        return False
+    if re.search(r"(?<![\w])OR(?![\w])", label):
+        return False
+    names = whole.count("ratio") + whole.count("relative risk")
+    return names == 1
 
 
 R1_LABELS = ["Hazard ratio for death", "Stratified hazard ratio for relapse",
              "adjusted odds ratio", "Rate ratio of readmission",
              "Recurrence, hazard ratio not significant", "Hazard ratios for death",
-             "Unadjusted hazard ratio"]
+             "Unadjusted hazard ratio", "Crude odds ratio: example outcome",
+             "Hazard ratio at 3 years", "Multivariable hazard ratio (example)"]
+# The reviewer's A1/B1 labels (12 Nov 2026): never a ratio row, never a drawn row of any kind.
+R1_REFUSED = ["Relative risk reduction for recurrence", "Relative risk reduction",
+              "Relative risk increase in leak", "Hazard ratio not reported; recurrence 12%",
+              "Odds ratio difference", "Risk ratio difference in example outcome",
+              "Hazard ratio change from baseline", "Hazard ratio (NS)",
+              "Hazard ratio, not significant", "Hazard ratio not significant for DFS",
+              "Hazard ratio, n.s.", "Hazard ratio not estimable", "Hazard ratio not reached",
+              "Hazard ratio, non-significant", "Hazard ratio, nonsignificant",
+              "Hazard ratio insignificant", "Odds ratio without adjustment", "Hazard ratio: none",
+              "Relative risk, reduced", "Odds ratio decrease", "Hazard ratio improvement",
+              "Odds ratio gain", "Risk ratio, excess", "Hazard ratio delta", "Hazard ratio \u0394",
+              "Hazard ratio, mean difference", "Odds ratio, risk difference",
+              "Relative risk, absolute risk difference", "Hazard ratio minus one",
+              "Hazard ratio, odds ratio", "Hazard ratio for death (relative risk)",
+              "Odds ratio (HR)", "Hazard ratio, NNT", "Hazard ratio OR odds", "Hazard ratio NR",
+              "Hazard ratio-adjusted death", "Hazard ratio overall survival",
+              "Stratified adjusted hazard ratio", "Hazard ratio for difference in pain"]
 _BAD_ARM_KEYS = {_o_norm(a) for a in BAD_ARMS}
 _LABELS = (["Pain", "Seroma RR", "", "  ", "Pain\u200b", "\u202eRecurrence", "Robotic minus lap"]
-           + NEGATED_LABELS + MENTION_LABELS + ONE_SIDE_LABELS + NOT_SQUARES_LABELS + R1_LABELS)
+           + NEGATED_LABELS + MENTION_LABELS + ONE_SIDE_LABELS + NOT_SQUARES_LABELS + R1_LABELS
+           + R1_REFUSED)
 _ARMS = [None, "", " ", " ", "\u200b"] + GOOD_ARMS + BAD_ARMS
 _UNITS = [None, "", "%", " % ", "RR", "OR", "HR", "rr", "aHR", "days", "points", "MD"]
 _PMIDS = ["1", "2", " 1 ", "", "  ", "99999999"]
@@ -1214,8 +1277,8 @@ def test_random_answers_keep_the_pages_promises():
     from pubmedgemini.answer_page import arm_name, out_of_100_groups
 
     r = random.Random(20261112)
-    squares_seen = diffs_seen = r1_seen = s1_seen = s2_seen = 0
-    for case in range(3000):
+    squares_seen = diffs_seen = r1_seen = r1_refused_seen = s1_seen = s2_seen = 0
+    for case in range(4000):
         body = _rand_body(r)
         w, refs = body.answer, refs_of(body)
 
@@ -1244,6 +1307,12 @@ def test_random_answers_keep_the_pages_promises():
                     if _o_ratio(n) and finite(n.ci_low) and finite(n.ci_high)}
         assert {row.at for row in f.ratios} == expected, case
         r1_seen += sum(row.drawn and not (at(row.at).unit or "").strip() for row in f.ratios)
+        for row in f.ratios + f.diffs:  # A1: a refused ratio label with no unit is never drawn
+            n = at(row.at)
+            assert not (n.label in R1_REFUSED and not (n.unit or "").strip()), case
+        r1_refused_seen += sum(n.label in R1_REFUSED and not (n.unit or "").strip()
+                               and finite(n.ci_low) and finite(n.ci_high)
+                               for o in w.outcomes for n in o.numbers)
         for row in f.diffs:
             n = at(row.at)
             # d24: no number with an arm name is a difference row (oracle: blank or a marker)
@@ -1292,6 +1361,7 @@ def test_random_answers_keep_the_pages_promises():
         # third check L3: nothing the page draws holds a bidi control or zero-width character
         assert not any(ch in INVISIBLE for t in _strings(answer_view(body)) for ch in t), case
     assert squares_seen > 50 and diffs_seen > 50 and r1_seen > 20 and s1_seen > 5 and s2_seen > 5
+    assert r1_refused_seen > 20
     # (the oracles were exercised)
 
 
@@ -1941,13 +2011,24 @@ def _hr_row(label, unit=None, v=0.7, lo=0.5, hi=0.9, arm=None):
     ("Stratified hazard ratio for relapse", "Hazard ratio"),
     ("Adjusted odds ratio of wound infection", "Odds ratio"),
     ("Pooled risk ratio: recurrence", "Risk ratio"), ("Relative risk of pain", "Risk ratio"),
-    ("Rate ratio of readmission", "Rate ratio"), ("  HAZARD RATIO (95% CI)", "Hazard ratio")])
+    ("Rate ratio of readmission", "Rate ratio"), ("  HAZARD RATIO (95% CI)", "Hazard ratio"),
+    # review A1: the labels that must still be drawn under the strict shape
+    ("Hazard ratio for overall survival", "Hazard ratio"),
+    ("Stratified hazard ratio for disease-free survival", "Hazard ratio"),
+    ("Odds ratio, example outcome at 3 years", "Odds ratio"),
+    ("Relative risk of recurrence", "Risk ratio"), ("Rate ratio", "Rate ratio"),
+    ("Unadjusted hazard ratio", "Hazard ratio"), ("Crude odds ratio: example outcome", "Odds ratio"),
+    ("Multivariable hazard ratio (example)", "Hazard ratio"),
+    ("Multivariate odds ratio in example patients", "Odds ratio"),
+    ("Hazard ratio at 3 years", "Hazard ratio"), ("Hazard ratio \u2014 example", "Hazard ratio"),
+    ("Risk ratio\u2013example outcome", "Risk ratio")])
 @pytest.mark.parametrize("unit", [None, "", "  "])
 def test_ratio_named_at_label_start_is_drawn(label, name, unit):
     from pubmedgemini.answer_page import ratio_unit
 
     n = _hr_row(label, unit)
     assert ratio_unit(n) is not None
+    assert _o_ratio(n)  # the oracle agrees
     f = forest(answer_with(n), REFS)
     [row] = f.ratios
     assert row.drawn and row.problem is None
@@ -1963,9 +2044,9 @@ NOT_MARKED = "not marked as a ratio or a difference"
     ("Recurrence, hazard ratio", "unit not RR, OR or HR"),
     ("Death (hazard ratio)", "unit not RR, OR or HR"),
     ("Overall survival hazard ratio", "unit not RR, OR or HR"),
-    ("Unadjusted hazard ratio", "unit not RR, OR or HR"),
     ("Stratified adjusted hazard ratio", "unit not RR, OR or HR"),
     ("HR for death", "unit not RR, OR or HR"),
+    ("HR for overall survival", "unit not RR, OR or HR"),
     ("Hazard ratios for death", NOT_MARKED), ("Hazardratio", NOT_MARKED),
     ("Hazard rate", NOT_MARKED), ("Ratio of hazards", NOT_MARKED)])
 def test_ratio_named_later_is_not(label, reason):
@@ -1978,12 +2059,37 @@ def test_ratio_named_later_is_not(label, reason):
     assert [x.problem for x in c.listed] == [reason]
 
 
-@pytest.mark.parametrize("label", ["Hazard ratio, mean difference", "Odds ratio, risk difference",
-                                   "Relative risk, absolute risk difference"])
-def test_ratio_label_with_a_difference_still_refused(label):
-    [row] = forest(answer_with(_hr_row(label)), REFS).ratios
-    assert not row.drawn
-    assert row.problem == "the label names a difference but the unit is a ratio"
+@pytest.mark.parametrize("label", R1_REFUSED)
+@pytest.mark.parametrize("v,lo,hi", [(0.35, 0.2, 0.5), (35.0, 20.0, 48.0), (72.0, 65.0, 79.0)])
+@pytest.mark.parametrize("unit", [None, ""])
+def test_r1_refuses_what_is_not_plainly_one_ratio(label, v, lo, hi, unit):  # review A1, B1
+    from pubmedgemini.answer_page import ratio_unit
+
+    n = num(label, v, unit, None, "1", lo, hi)
+    assert ratio_unit(n) is None and not _o_ratio(n)
+    w = answer_with(n)
+    f = forest(w, REFS)
+    assert f.ratios == [] and f.diffs == []  # no row of any kind: listed, as before R1
+    [c] = outcome_cards(w, REFS)
+    assert [x.problem for x in c.listed] == ["unit not RR, OR or HR"]
+    assert shown_at(w, REFS) == every_number(w)
+
+
+def test_r1_refused_label_with_a_difference_marker_arm_is_not_a_difference_row():
+    # "Hazard ratio, mean difference" names a ratio and a difference: neither is drawn
+    n = num("Hazard ratio, mean difference", 0.35, None, "MD", "1", 0.2, 0.5)
+    f = forest(answer_with(n), REFS)
+    assert f.ratios == [] and f.diffs == []
+
+
+@pytest.mark.parametrize("label", ["Relative risk reduction for recurrence",
+                                   "Hazard ratio not reported; recurrence 12%",
+                                   "Hazard ratio change from baseline", "Odds ratio (NS)"])
+@pytest.mark.parametrize("unit", ["RR", "OR", "HR"])
+def test_a_given_ratio_unit_keeps_the_existing_rule(label, unit):
+    # The unit decides as before R1; only the draw checks (F4 and the value checks) apply.
+    [row] = forest(answer_with(num(label, 0.35, unit, None, "1", 0.2, 0.5)), REFS).ratios
+    assert row.drawn and row.problem is None
 
 
 def test_unit_wins_over_label():
