@@ -74,7 +74,7 @@ _LABELS = {
 # ask.rs BLOCKED_MESSAGE, with this app's name where Incisive names itself (as the plan did
 # for the long-question message).
 BLOCKED_MESSAGE = (
-    "PubMed Quick found details that could identify a patient. Please remove them and resend "
+    "PubMed Ai found details that could identify a patient. Please remove them and resend "
     "your question."
 )
 

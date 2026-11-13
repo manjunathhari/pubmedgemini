@@ -31,7 +31,7 @@ PRIVACY = ("Google may use what you type here, and its reviewers may read it (Ge
 NO_KEY = "Questions are not set up yet: the Gemini key is missing on the server."
 CROSS_SITE = "This request did not come from this page. Open the page and search again."
 ACTIVE = "A question is already running. Please wait for it to finish, then ask again."
-BLOCKED = ("PubMed Quick found details that could identify a patient. Please remove them and "
+BLOCKED = ("PubMed Ai found details that could identify a patient. Please remove them and "
            "resend your question.")
 
 
@@ -172,7 +172,7 @@ def test_home_has_both_boxes_and_no_script(env):
     assert "<h2>Key-word search</h2>" in r.text
     assert "Searches PubMed and Europe PMC with exactly what you type. No model." in r.text
     assert '<label for="q">Search PubMed and Europe PMC</label>' in r.text  # F1's form
-    assert "Written answers arrive in the next stage." in r.text
+    assert "Written answers arrive in the next stage." not in r.text
     assert "Answers written from these papers" not in r.text
     assert "Daily free limit reached" not in r.text
 

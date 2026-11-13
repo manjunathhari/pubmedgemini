@@ -73,7 +73,7 @@ def test_home_has_one_box_and_no_script(client_dev):
     assert 'maxlength="1000"' in r.text and '<button type="submit">Search</button>' in r.text
     assert ("What you type is sent to PubMed and Europe PMC as the search. "
             "Do not type anything that identifies a patient.") in r.text
-    assert "Written answers arrive in the next stage." in r.text
+    assert "Written answers arrive in the next stage." not in r.text
     # client_dev has no Gemini key: the question box is replaced by the not-set-up line.
     assert 'name="question"' not in r.text
     assert "Questions are not set up yet: the Gemini key is missing on the server." in r.text

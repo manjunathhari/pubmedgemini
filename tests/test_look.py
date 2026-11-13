@@ -240,7 +240,7 @@ def test_header_on_every_page(pages):
         assert len(blocks) == 1, name
         head = blocks[0]
         assert re.search(r'<div class="tile"[^>]*>SAi</div>', head), name
-        assert ">PubMed Quick<" in head, name
+        assert ">PubMed Ai<" in head, name
         assert "pubmedgemini" not in pages[name].text.split("</header>")[0], name
         assert ">Educational tool only<" in head, name
 
@@ -396,3 +396,22 @@ def test_text_on_its_background_is_readable_in_both_looks(look):
 def test_ask_button_sits_10px_below_the_question_box():
     # the owner, 13 Nov: no space at all between the question box and the Ask button
     assert re.search(r"(^|\n)form p > textarea\s*\{\s*margin-bottom:\s*10px;\s*\}", css())
+
+
+DESCRIPTION = ('An AI search agent for clinical questions. It searches PubMed and Europe PMC, picks the studies '
+               'that answer your question, and sets out what they show in one clear, readable answer, with every point linked to its source.')
+
+
+def test_ask_page_says_what_pubmed_ai_is(pages):
+    # the owner, 13 Nov (Mock Board, "PubMed Ai: name and description", frozen)
+    text = pages["home"].text
+    assert text.index("<h1>PubMed Ai</h1>") < text.index(f'<p class="lead">{DESCRIPTION}</p>') \
+        < text.index("Signed in as")
+
+
+def test_headings_labels_and_buttons_use_the_landing_pages_weight():
+    rules = {" ".join(sel.split()): body for sel, body in _rules()}
+    assert "font-weight: 500" in rules["h1"] and "font-weight: 500" in rules["h2"]
+    assert "font-weight: 500" in rules["label"]
+    assert "font-weight: 500" in rules["button"]
+    assert "color: var(--muted)" in rules[".lead"] and "margin-top: 6px" in rules[".lead"]

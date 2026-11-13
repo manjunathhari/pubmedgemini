@@ -110,8 +110,9 @@ main {
   gap: 14px;
 }
 h1, h2, h3, p, ul { margin: 0; }
-h1 { font-size: 20px; line-height: 1.25; }
-h2 { font-size: 17px; line-height: 1.3; }
+h1 { font-size: 20px; line-height: 1.25; font-weight: 500; }
+h2 { font-size: 17px; line-height: 1.3; font-weight: 500; }
+.lead { color: var(--muted); margin-top: 6px; }
 h3 { font-size: 15px; line-height: 1.35; }
 p { font-family: "Source Serif 4", Georgia, serif; }
 p + p, form p + p { margin-top: 10px; }
@@ -171,7 +172,7 @@ th.num, td.num { text-align: right; }
 label, button, input, textarea, select {
   font-family: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
-label { font-weight: 600; }
+label { font-weight: 500; }
 textarea, input[type="text"] {
   display: block;
   width: 100%;
@@ -196,7 +197,7 @@ button {
   background: var(--btn);
   color: var(--btn-ink);
   line-height: inherit;
-  font-weight: 600;
+  font-weight: 500;
   font-size: 16px;
   cursor: pointer;
 }

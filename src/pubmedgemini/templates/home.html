@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>PubMed Quick</h1>
+<h1>PubMed Ai</h1>
+<p class="lead">An AI search agent for clinical questions. It searches PubMed and Europe PMC, picks the studies that answer your question, and sets out what they show in one clear, readable answer, with every point linked to its source.</p>
 <p>Signed in as {{ email }}</p>
 {% include "_ask_form.html" %}
 <section class="card">
@@ -8,5 +9,4 @@
 <p>Searches PubMed and Europe PMC with exactly what you type. No model.</p>
 {% include "_search_form.html" %}
 </section>
-<p class="muted">Written answers arrive in the next stage.</p>
 {% endblock %}

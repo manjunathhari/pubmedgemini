@@ -15,8 +15,9 @@ NOT_SET_UP = (
 def test_home_shows_signed_in_email(client_dev):
     r = client_dev.get("/", headers={"x-dev-user-email": "owner@example.com"})
     assert r.status_code == 200 and "Signed in as owner@example.com" in r.text
-    assert "PubMed Quick" in r.text
-    assert "Written answers arrive in the next stage." in r.text
+    assert "PubMed Ai" in r.text
+    assert "Written answers arrive in the next stage." not in r.text
+    assert '<p class="lead">An AI search agent for clinical questions.' in r.text
 
 
 def test_home_matches_gate_email_in_any_case_and_spaces(client_prod):  # Review Focus 3
