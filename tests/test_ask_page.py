@@ -171,9 +171,10 @@ def test_home_has_both_boxes_and_no_script(env):
     assert '<textarea id="question" name="question" maxlength="4000" required rows="4">' in r.text
     assert '<button type="submit">Ask</button>' in r.text
     assert "Free runs left today: about 21" in r.text and PRIVACY in r.text
-    assert "<h2>Key-word search</h2>" in r.text
-    assert "Searches PubMed and Europe PMC with exactly what you type. No model." in r.text
-    assert '<label for="q">Search PubMed and Europe PMC</label>' in r.text  # F1's form
+    # the owner, 13 Nov: "No AI model" after the heading; the old line and the visible label go
+    assert '<h2>Key-word search <span class="sai-aside">No AI model</span></h2>' in r.text
+    assert "with exactly what you type" not in r.text
+    assert '<label for="q">Search PubMed and Europe PMC</label>' in r.text  # kept for screen readers
     assert "Written answers arrive in the next stage." not in r.text
     assert "Answers written from these papers" not in r.text
     assert "Daily free limit reached" not in r.text

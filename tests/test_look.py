@@ -713,10 +713,10 @@ def test_ask_and_search_sit_side_by_side_on_desktop(pages):
     # the owner, 13 Nov: "make this side by side; user can choose whichever"
     home = pages["home"].text
     pair = home.index('<div class="sai-pair">')
-    assert home.index("<h2>Key-word search</h2>") < home.index("</div>", pair) \
+    assert home.index("<h2>Key-word search") < home.index("</div>", pair) \
         < home.index("</main>")  # both cards inside the pair
     assert home.index("Signed in as") < pair < home.index('<label for="question"') \
-        < home.index("<h2>Key-word search</h2>")
+        < home.index("<h2>Key-word search")
     assert "display: grid" in _rule_body(".sai-pair", css())  # stacked on phones
     wide = css().split("@media (min-width: 900px)", 1)[1]
     assert "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)" in _rule_body(".sai-pair", wide)
@@ -732,3 +732,14 @@ def test_the_two_cards_end_level(pages):
     assert home.index(runs) < home.index('<p class="sai-note">Google may use')
     assert home.index(where) < home.index('<p class="sai-note">What you type is sent')
     assert "margin-top: auto" in _rule_body(".sai-pair .card > .sai-runs", css())
+
+
+def test_search_card_says_no_ai_model_and_hides_its_label_on_the_ask_page(pages):
+    home = pages["home"].text
+    assert '<h2>Key-word search <span class="sai-aside">No AI model</span></h2>' in home
+    assert "with exactly what you type" not in home
+    rule = _rule_body(".sai-pair label[for=\"q\"]", css())  # read by screen readers, not shown
+    for bit in ("position: absolute", "width: 1px", "height: 1px", "overflow: hidden", "clip-path: inset(50%)"):
+        assert bit in rule, bit
+    assert "color: var(--muted)" in _rule_body(".sai-aside", css())
+    assert "font-weight: 400" in _rule_body(".sai-aside", css())
