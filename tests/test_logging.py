@@ -407,6 +407,11 @@ APP_LINE_PATTERNS = [
     rf"run kind=early_not_stored run_id={UUID} error=\w+",
     r"run page early kind=(?:not_quick|invalid|unserialisable|internal)",
     r"run page answer kind=(?:not_quick|invalid|unserialisable)",
+    # F4a: the completeness check (run ids, four counts, fixed kinds, an error's class).
+    (rf"run kind=check run_id={UUID} status=done numbers_found=\d+ numbers_total=\d+ "
+     r"names_match=\d+ names_total=\d+"),
+    rf"run kind=check run_id={UUID} status=failed reason=(?:internal|store) error=\w+",
+    rf"run kind=check_not_started run_id={UUID} error=\w+",
 ]
 
 # What must never reach a log line: the question (zq7 and its words), the model's note (yq8),

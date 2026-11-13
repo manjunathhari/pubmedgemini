@@ -37,6 +37,12 @@ The writer's `on_part` is an `EarlyStore`: the summary and context parts, citati
 the final answer is, stored while the run works (`runs.store_early`), deleted on a withdraw;
 `finish_run` and `finish_with_answer` delete it when the run ends.
 
+F4a: a written answer is stored together with its `pending` completeness-check row, and right
+after that, on this same thread, `completeness.run_check` counts the answer's numbers and
+trial names against the records the run holds (code only: no model call, no network call, no
+step line). The run is already final by then; the check never raises and can neither fail,
+delay nor change the run or its stored answer.
+
 A run is a plain function on one daemon thread (the writer adds four part threads of its
 own): every client below is synchronous, and the POST that starts it never waits for it. Logs
 hold run ids, counts and fixed kinds only; an exception is logged by its class name only.
@@ -55,6 +61,7 @@ from uuid import UUID
 
 from psycopg_pool import ConnectionPool
 
+from pubmedgemini.completeness import run_check
 from pubmedgemini.gemini.caller import ModelCaller, RunCapReached
 from pubmedgemini.gemini.structured import rust_trim
 from pubmedgemini.intro import TIME_LIMIT_SECONDS as INTRO_TIME_LIMIT
@@ -303,9 +310,10 @@ class _Run:
         return self.clock() >= self.timing.hard_stop_at
 
     def end(self, a: _Answer, written: WrittenAnswer | None, empty_reason: str | None,
-            status: str, kind: str | None) -> None:
+            status: str, kind: str | None, check: bool = False) -> bool:
         """`finish` (`t.rs:229-243`): the time taken, the answer stored with the final status
-        and the line `Answer ready`, together (`finish_with_answer`)."""
+        and the line `Answer ready`, together (`finish_with_answer`). `check` (F4a) stores the
+        `pending` completeness-check row with them. True when the answer was stored."""
         r = self.r
         elapsed = max(0, int(self.clock() - self.timing.started))
         failed = None
@@ -317,7 +325,8 @@ class _Run:
                 notes=a.notes,
             ).to_body()
             applied = finish_with_answer(self.pool, self.run_id, status, kind, r.stop,
-                                         r.rounds, body, closing_line=("present", ANSWER_READY))
+                                         r.rounds, body, closing_line=("present", ANSWER_READY),
+                                         check=check)
         except Exception as e:  # noqa: BLE001 - psycopg's text can hold a piece of the body
             failed = type(e).__name__
         if failed is not None:
@@ -332,6 +341,7 @@ class _Run:
         if applied:
             log.info("run kind=finished run_id=%s status=%s error_kind=%s", self.run_id,
                      status, kind or "none")
+        return applied
 
     def go(self) -> None:
         r = self.r = research(self.question, tools=self.tools, caller=self.caller,
@@ -426,8 +436,10 @@ class _Run:
             (design_class(d) for i, d in designs if i == p), None))
         self.progress.line("check", citation_check_line(a.integrity))
         # R-S2b: an answer after research stopped by a limit is done; a failed turn: partial.
-        return self.end(a, written, None, "partial" if r.stop == "turn_failed" else "done",
-                        None)
+        if self.end(a, written, None, "partial" if r.stop == "turn_failed" else "done",
+                    None, check=True):
+            # F4a: the answer is stored and the run is final; the check counts, code only.
+            run_check(self.pool, self.run_id, written, papers)
 
 
 def _failed(pool: ConnectionPool, run_id: UUID, kind: str) -> None:

@@ -1961,3 +1961,293 @@ def test_an_early_store_for_a_run_not_running_logs_its_run_id(run_app, caplog):
     assert f"run kind=early_not_stored run_id={rid} error=NotRunning" in [
         r.getMessage() for r in caplog.records]
     assert rows(run_app.pool, "SELECT count(*) FROM run_early") == [(0,)]
+
+
+# ---------- F4a Task 3: the run checks its stored answer (code only) ----------
+
+MADE_UP_ABSTRACT = "Made-up: the ratio was 0.76 (95% CI 0.49 to 1.10) in 120 patients."
+
+
+def made_up_records(real, pmids):
+    """The fixtures' records with made-up authors, years and abstracts (so the counts below
+    are known by hand)."""
+    from dataclasses import replace
+
+    got = real(pmids)
+    return {
+        ID2: replace(got[ID2], title="Made-up title one", authors=["Firstname AB", "Other C"],
+                     year=2019, abstract="Made-up: nothing printed here but 60 patients."),
+        ID1: replace(got[ID1], title="Made-up title two", authors=["Secondname CD"],
+                     year=2021, abstract=MADE_UP_ABSTRACT),
+    }
+
+
+def made_up_answer():
+    """The fake whole answer with a second number (not printed in its study's abstract) and
+    two trial names: the first is PubMed's first author and year, the second is not."""
+    from writer_fakes import whole_answer
+
+    w = whole_answer()
+    w["outcomes"][0]["numbers"].append(
+        {"label": "Made-up", "value": 33.3, "unit": "%", "arm": None, "ci_low": None,
+         "ci_high": None, "p": None, "pmid": ID2})
+    w["studies"][0]["label"] = "Firstname 2019, Example Journal"
+    w["studies"][1]["label"] = "Othername 2021, Example Journal"
+    return w
+
+
+def checked_run(run_app, **kw):
+    from writer_fakes import good_parts
+
+    return run_app.start(parts=good_parts(made_up_answer()),
+                         tools=tools_with(run_app.pool, run_app.upstream, made_up_records),
+                         **kw)
+
+
+def check_of(pool, rid):
+    got = rows(pool, "SELECT status, reason, numbers_found, numbers_total, names_match, "
+                     "names_total FROM run_checks WHERE run_id = %s", (rid,))
+    return got[0] if got else None
+
+
+def test_a_written_run_ends_with_a_done_check(run_app):
+    from pubmedgemini.completeness import Counts, check_answer
+
+    rid = checked_run(run_app)
+    v = run_app.view(rid)
+    assert (v.status, v.error_kind) == ("done", None)
+    assert check_of(run_app.pool, rid) == ("done", None, 1, 2, 1, 2)
+    assert rows(run_app.pool, "SELECT started_at IS NOT NULL, finished_at IS NOT NULL, "
+                              "started_at >= created_at, finished_at >= started_at "
+                              "FROM run_checks") == [(True, True, True, True)]
+    # the same counts from the stored answer and the same made-up records
+    papers = made_up_records(run_app.tools.fetch_papers, [ID2, ID1])
+    assert check_answer(answer_of(v).answer, papers) == Counts(1, 2, 1, 2)
+    assert v.check.status == "done" and v.check.numbers_total == 2
+
+
+def test_the_default_fake_run_is_checked_too(run_app):
+    from pubmedgemini.completeness import check_answer
+
+    rid = run_app.start()
+    v = run_app.view(rid)
+    c = check_answer(answer_of(v).answer, run_app.tools.fetch_papers([ID2, ID1]))
+    assert check_of(run_app.pool, rid) == (
+        "done", None, c.numbers_found, c.numbers_total, c.names_match, c.names_total)
+    assert (c.numbers_total, c.names_total) == (1, 2)
+
+
+def _no_written_cases(run_app):
+    bad = reply([{"text": "not json"}])
+    cut = reply([{"text": '{"studies": [{"pmid": "'}], finish="MAX_TOKENS")
+
+    def late(real, pmids):
+        out = real(pmids)
+        run_app.clock.t = HARD_STOP_AT - 10
+        return out
+
+    def fail(real, pmids):
+        raise ToolFailed("made-up", "network")
+
+    def with_tools(fetch):
+        return {"tools": tools_with(run_app.pool, run_app.upstream, fetch)}
+
+    return {
+        "nothing_selected": ({"script": NOTHING_SELECTED}, "done", True),
+        "empty_selection": ({"script": EMPTY_TWICE}, "partial", True),
+        "researcher_incomplete": ({"script": UNREADABLE_TWICE}, "partial", True),
+        "unfetched": (with_tools(lambda real, pmids: {}), "partial", True),
+        "no_time": (with_tools(late), "partial", True),
+        "truncated": ({"parts": _parts(trials=[cut, cut]), "one_piece": [cut, cut]},
+                      "partial", True),
+        "unreadable": ({"parts": _parts(trials=[bad, bad]), "one_piece": [bad, bad]},
+                       "partial", True),
+        "failed_lit": (with_tools(fail), "failed", False),
+        "failed_model": ({"script": TURN1_402}, "failed", False),
+        "failed_writer": ({"parts": _parts(outcomes=[error(402, "X")])}, "failed", False),
+    }
+
+
+@pytest.mark.parametrize("case", [
+    "nothing_selected", "empty_selection", "researcher_incomplete", "unfetched", "no_time",
+    "truncated", "unreadable", "failed_lit", "failed_model", "failed_writer"])
+def test_runs_without_a_written_answer_have_no_check_row(run_app, case):
+    kw, status, has_answer_row = _no_written_cases(run_app)[case]
+    rid = run_app.start(**kw)
+    v = run_app.view(rid)
+    assert v.status == status and (v.answer is not None) is has_answer_row
+    if has_answer_row:
+        assert answer_of(v).answer is None  # an answer row, but nothing written
+    assert rows(run_app.pool, "SELECT count(*) FROM run_checks") == [(0,)]
+    assert v.check is None
+
+
+def _run_facts(run_app, rid):
+    """Everything of a run the check must never change (ids and times aside)."""
+    v = run_app.view(rid)
+    body = rows(run_app.pool, "SELECT body::text FROM answers WHERE run_id = %s", (rid,))
+    stored = json.loads(body[0][0])
+    for volatile in ("created_at", "elapsed_s"):
+        stored.pop(volatile)
+    return {"status": v.status, "error_kind": v.error_kind, "stop_reason": v.stop_reason,
+            "rounds": v.rounds, "steps": [(s.kind, s.line) for s in v.steps],
+            "answer": stored, "finished": v.finished_at is not None,
+            "calls": sorted(steps_of(run_app.pool, rid)),  # the four parts race
+            "intro": v.intro,
+            "selected": [s.pmid for s in v.selected]}
+
+
+def _break_check_answer(monkeypatch):
+    import pubmedgemini.completeness as mod
+
+    def boom(*a, **k):
+        raise KeyError("zq7 private model text")
+
+    monkeypatch.setattr(mod, "check_answer", boom)
+
+
+def _break_check_begin(monkeypatch):
+    import pubmedgemini.completeness as mod
+
+    def boom(*a, **k):
+        raise psycopg.OperationalError("zq7 private")
+
+    monkeypatch.setattr(mod, "check_begin", boom)
+
+
+def _break_first_check_finish(monkeypatch):
+    import pubmedgemini.completeness as mod
+
+    real, calls = mod.check_finish, []
+
+    def once(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise psycopg.OperationalError("zq7 private")
+        return real(*a, **k)
+
+    monkeypatch.setattr(mod, "check_finish", once)
+
+
+def _break_every_check_finish(monkeypatch):
+    import pubmedgemini.completeness as mod
+
+    def boom(*a, **k):
+        raise psycopg.OperationalError("zq7 private")
+
+    monkeypatch.setattr(mod, "check_finish", boom)
+
+
+def _refuse_the_row(monkeypatch):
+    """The database refuses the pending row: `finish_with_answer` finds one already there."""
+    import pubmedgemini.runner as runner_mod
+
+    real = runner_mod.finish_with_answer
+
+    def taken(pool, run_id, *a, **k):
+        with pool.connection() as conn:
+            conn.execute("INSERT INTO run_checks (run_id, status, reason) "
+                         "VALUES (%s, 'failed', 'stale')", (run_id,))
+        return real(pool, run_id, *a, **k)
+
+    monkeypatch.setattr(runner_mod, "finish_with_answer", taken)
+
+
+FAILING_CHECKS = {
+    "check_answer": (_break_check_answer, ("failed", "internal"),
+                     "status=failed reason=internal error=KeyError"),
+    "check_begin": (_break_check_begin, ("failed", "internal"),
+                    "status=failed reason=internal error=OperationalError"),
+    "check_finish_once": (_break_first_check_finish, ("failed", "store"),
+                          "status=failed reason=store error=OperationalError"),
+    "check_finish_always": (_break_every_check_finish, ("running", None),
+                            "status=failed reason=store error=OperationalError"),
+    "row_refused": (_refuse_the_row, ("failed", "stale"), None),
+}
+
+
+@pytest.mark.parametrize("case", list(FAILING_CHECKS))
+def test_a_failing_check_never_changes_the_run(run_app, monkeypatch, caplog, case):
+    untouched = _run_facts(run_app, checked_run(run_app))
+    assert untouched["status"] == "done" and untouched["steps"][-1] == ("present", READY)
+    breaker, row, line = FAILING_CHECKS[case]
+    breaker(monkeypatch)
+    caplog.set_level(logging.DEBUG)
+    caplog.clear()  # the untouched run's own lines
+    rid = checked_run(run_app)
+    assert _run_facts(run_app, rid) == untouched
+    assert check_of(run_app.pool, rid)[:2] == row
+    assert check_of(run_app.pool, rid)[2:] == (None, None, None, None)
+    msgs = [r.getMessage() for r in caplog.records]
+    check_lines = [m for m in msgs if m.startswith("run kind=check")]
+    if line is None:  # the row was never ours: one line from the store, none from the check
+        assert check_lines == [f"run kind=check_not_started run_id={rid} error=UniqueViolation"]
+    else:
+        assert check_lines == [f"run kind=check run_id={rid} {line}"]
+    assert f"run kind=finished run_id={rid} status=done error_kind=none" in msgs
+    assert not any(m.startswith("run kind=internal") for m in msgs)
+    assert "zq7" not in caplog.text and "Traceback" not in caplog.text
+    # the next question is not held up
+    assert active_run(run_app.pool) is None
+
+
+def test_run_check_never_raises_and_does_nothing_without_a_row(run_app, caplog):
+    from pubmedgemini.completeness import run_check
+
+    caplog.set_level(logging.DEBUG)
+    rid = running_run(run_app)
+    assert run_check(run_app.pool, rid, None, {}) is None  # no row: nothing read, no line
+    finish_with_answer(run_app.pool, rid, "done", None, None, None, BODY, check=True)
+    assert run_check(run_app.pool, rid, None, {}) is None  # not an answer: fails, quietly
+    assert check_of(run_app.pool, rid)[:2] == ("failed", "internal")
+    assert [r.getMessage() for r in caplog.records if "kind=check" in r.getMessage()] == [
+        f"run kind=check run_id={rid} status=failed reason=internal error=AttributeError"]
+    assert run_check(run_app.pool, rid, None, {}) is None  # already ended: untouched
+    assert run_app.view(rid).answer == BODY
+
+
+def test_the_stored_answer_is_byte_identical_with_and_without_the_check(run_app, monkeypatch):
+    import pubmedgemini.runner as runner_mod
+
+    def body_text(rid):
+        (text,), = rows(run_app.pool, "SELECT body::text FROM answers WHERE run_id = %s",
+                        (rid,))
+        made = json.loads(text)["created_at"]
+        return text.replace(made, "CREATED")
+
+    with_check = checked_run(run_app)
+    assert check_of(run_app.pool, with_check)[0] == "done"
+    monkeypatch.setattr(runner_mod, "run_check", lambda *a, **k: None)
+    without = checked_run(run_app)
+    assert check_of(run_app.pool, without)[0] == "pending"  # the no-op never began it
+    assert body_text(with_check) == body_text(without)
+    assert '"numbers_checked": 0' in body_text(with_check)  # the answer's own fields stay
+
+
+def test_the_check_adds_no_step_line_and_no_model_call(run_app):
+    rid = checked_run(run_app)
+    v = run_app.view(rid)
+    assert check_of(run_app.pool, rid)[0] == "done"
+    assert v.lines[-3:] == [WRITER_LINE_2, CITATIONS_OK, READY]
+    assert not any("check" in s.line.lower() and "citation" not in s.line.lower()
+                   for s in v.steps)
+    assert calls_of(run_app.pool, rid) == 14
+    assert run_app.gemini.writer.count() == 4
+    fetches = [r for r in run_app.upstream.sent if "efetch" in r.url.path]
+    assert len(fetches) <= 1  # the records were fetched once, for the writer
+
+
+def test_a_restart_before_the_check_leaves_it_stale_and_the_answer_stored(run_app, monkeypatch):
+    import pubmedgemini.completeness as mod
+
+    real = mod.check_begin
+
+    def restarted_first(pool, run_id):
+        stop_unfinished(pool)  # a new process started before the check began
+        return real(pool, run_id)
+
+    monkeypatch.setattr(mod, "check_begin", restarted_first)
+    rid = checked_run(run_app)
+    v = run_app.view(rid)
+    assert v.status == "done" and v.answer is not None and v.lines[-1] == READY
+    assert check_of(run_app.pool, rid) == ("failed", "stale", None, None, None, None)

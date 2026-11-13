@@ -25,8 +25,12 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+from uuid import UUID
+
+from psycopg_pool import ConnectionPool
 
 from pubmedgemini.lit.paper import Paper
+from pubmedgemini.runs import check_begin, check_finish
 from pubmedgemini.writer.answer import Number, WrittenAnswer
 
 log = logging.getLogger("pubmedgemini.completeness")
@@ -209,3 +213,39 @@ def check_answer(w: WrittenAnswer, papers: Mapping[str, Paper]) -> Counts:
                 found += 1
     match = sum(1 for s in w.studies if trial_name_matches(s.label, papers.get(s.pmid)))
     return Counts(found, total, match, len(w.studies))
+
+
+# ---------- the run's check ----------
+
+
+def run_check(pool: ConnectionPool, run_id: UUID, w: WrittenAnswer,
+              papers: Mapping[str, Paper]) -> None:
+    """Checks the run's stored answer and stores the four counts. Called on the run's own
+    thread right after the answer is stored, with the answer and the records the run holds in
+    memory. Never raises, and never touches the run or its answer.
+
+    No `pending` row (the answer was stored without one, or a restart ended it first): nothing
+    is done. Otherwise the row goes `running`, then `done` with the counts. Any error ends the
+    row `failed` with a fixed reason (`internal`; `store` when the finishing write is what
+    failed) and is logged by its class only. If that write fails too, the row stays as it is
+    and the run page stops waiting for it by its own cap."""
+    reason = "internal"
+    try:
+        if not check_begin(pool, run_id):
+            return
+        c = check_answer(w, papers)
+        reason = "store"
+        if check_finish(pool, run_id, reason=None, counts=(
+                c.numbers_found, c.numbers_total, c.names_match, c.names_total)):
+            log.info("run kind=check run_id=%s status=done numbers_found=%d numbers_total=%d "
+                     "names_match=%d names_total=%d", run_id, c.numbers_found,
+                     c.numbers_total, c.names_match, c.names_total)
+        return
+    except Exception as e:  # noqa: BLE001 - the check never fails a run; the class only
+        error = type(e).__name__
+    try:
+        check_finish(pool, run_id, counts=None, reason=reason)
+    except Exception:  # noqa: BLE001, S110 - the row stays; the page's cap takes over
+        pass
+    log.warning("run kind=check run_id=%s status=failed reason=%s error=%s", run_id, reason,
+                error)
