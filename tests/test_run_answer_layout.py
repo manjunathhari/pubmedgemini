@@ -584,9 +584,9 @@ def test_working_page_shows_the_introduction_open_with_its_labels(env):
     # order: Question, Introduction, Steps; the 5 s refresh while working
     # the step list is now folded under the researcher drawing (owner, 13 Nov)
     assert t.index("<h2>Question</h2>") < t.index("<h2>Introduction</h2>") < t.index(
-        "<summary>Steps (")
+        'class="card sai-scene-card"')
     assert '<meta http-equiv="refresh" content="5">' in t
-    assert t.count("<details") == 1 and "Early" not in t
+    assert "<details" not in t and "Early" not in t
 
 
 @pytest.mark.parametrize("case", ["no_row", "failed", "pending"])
@@ -609,9 +609,8 @@ def test_no_introduction_row_no_panel(env, case):
 def test_working_page_without_an_introduction_is_as_before(env):
     rid = running(env)
     t = run_page(env, rid)
-    # the step list sits folded under the researcher drawing (owner, 13 Nov)
-    assert ('<details class="fold"><summary>Steps (1)</summary>\n<ul>\n<li>Researcher: searching '
-            'PubMed and Europe PMC</li>\n</ul></details>') in t
+    # the researcher drawing with the latest step takes the step list's place (owner, 13 Nov)
+    assert '<p class="sai-scene-line">Researcher: searching PubMed and Europe PMC</p>' in t
 
 
 def test_introduction_text_is_escaped_and_never_linked(env):
@@ -654,8 +653,9 @@ def test_early_summary_marked_and_without_key_numbers(env):
     assert ('<section class="card">\n<details class="fold"><summary>Introduction</summary>\n'
             f'<p class="sub">{intro_words.TAG_FINISHED}</p>\n<p class="muted">{BG}</p>') in t
     assert intro_words.CLOSING not in t
-    assert '<details class="fold"><summary>Steps (2)</summary>' in t
-    order = ["<h2>Question</h2>", "<summary>Introduction</summary>", "<summary>Steps (2)",
+    # the researcher drawing (writing) takes the folded step list's place (owner, 13 Nov)
+    assert "<summary>Steps (" not in t and 'src="/static/researcher-write.svg"' in t
+    order = ["<h2>Question</h2>", "<summary>Introduction</summary>", 'class="card sai-scene-card"',
              "<h2>Early summary", "<h2>At a glance", "<h2>Bottom line", "Still being written"]
     assert [t.index(x) for x in order] == sorted(t.index(x) for x in order)
     assert "<h2>Steps</h2>" not in t and "<h2>References</h2>" not in t
@@ -696,7 +696,7 @@ def test_context_alone_shows_no_early_summary(env):
     with_early(env, rid, summary=False, context=True)
     t = run_page(env, rid)
     assert "Early" not in t and "<h2>Applicability" not in t
-    assert "<h2>Introduction</h2>" in t and "<summary>Steps (" in t
+    assert "<h2>Introduction</h2>" in t and "sai-scene-card" in t
 
 
 def test_early_without_at_a_glance_has_no_glance_card(env):
@@ -714,7 +714,7 @@ def test_an_unreadable_early_body_is_ignored(env, caplog):
                                   "answer": {"version": 3, "SECRET-EARLY-TEXT": "x"}})))
     with caplog.at_level("WARNING"):
         t = run_page(env, rid)
-    assert "Early" not in t and "<summary>Steps (" in t
+    assert "Early" not in t and "sai-scene-card" in t
     assert "SECRET-EARLY-TEXT" not in t and "SECRET-EARLY-TEXT" not in caplog.text
     assert "run page early kind=invalid" in caplog.text
 

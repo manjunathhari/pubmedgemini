@@ -15,7 +15,8 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 {%- endmacro -%}
 {%- macro scene_card(stage) -%}
 {#- The researcher at work (Mock Board "Run animation: researcher at work", v3 frozen): the drawing
-    is a file with its own animation; the step list stays one tap away. -#}
+    is a file with its own animation, with only the latest step beside it (owner, 13 Nov: no step
+    list in the animation card). -#}
 <section class="card sai-scene-card">
 {%- if stage == "search" %}
 <p class="sai-label">Researching</p>
@@ -31,12 +32,6 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 <p class="sai-scene-line">The answer is ready. It is below.</p>
 {%- else %}
 <p class="sai-scene-line">{{ run.lines[-1] if run.lines else "Waiting to start." }}</p>
-<details class="fold"><summary>Steps ({{ run.lines|length }})</summary>
-<ul>
-{%- for line in run.lines %}
-<li>{{ line }}</li>
-{%- endfor %}
-</ul></details>
 {%- endif %}
 </section>
 {%- endmacro %}

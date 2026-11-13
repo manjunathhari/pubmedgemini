@@ -34,8 +34,7 @@ def test_searching_shows_the_books_and_the_last_step_with_the_list_folded(env):
     card = t.split('<section class="card sai-scene-card">', 1)[1].split("</section>", 1)[0]
     assert '<p class="sai-label">Researching</p>' in card
     assert '<p class="sai-scene-line">Researcher: 4 searches so far (turn 1 of 8)</p>' in card
-    assert '<details class="fold"><summary>Steps (2)</summary>' in card
-    assert "<li>Researcher: searching PubMed and Europe PMC</li>" in card
+    assert "Steps" not in card and "<details" not in card  # owner, 13 Nov: no step list here
     assert "<h2>Steps</h2>" not in t
 
 
@@ -86,3 +85,9 @@ def test_the_report_rises_only_while_the_answer_has_just_arrived(env):
     settled = store(env, hernia())
     with_check(env, settled, "done")
     assert REPORT not in page(env, settled)
+
+
+def test_the_drawing_sits_in_a_band_beside_the_words():
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    assert ".card.sai-scene-card { display: grid; grid-template-columns: 128px minmax(0, 1fr);" in css
+    assert ".sai-scene { grid-row: 1 / span 2; display: block; width: 128px; height: auto; }" in css

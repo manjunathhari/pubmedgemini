@@ -224,9 +224,11 @@ main.home .sai-hero .lead { margin-top: 4px; }
 /* the runs line and the note box sit at the foot of each card, so the two note boxes line up side by side */
 .sai-pair .card > .sai-runs { margin-top: auto; }
 /* the researcher at work on the run page: a drawing file with its own animation, the latest step under it */
-.sai-scene-card { gap: 8px; }
-.sai-scene { display: block; width: 100%; max-width: 400px; height: auto; margin: 0 auto; }
-.sai-scene-line { font-size: 16px; line-height: 1.45; text-align: center; }
+/* a band the height of the old Steps card: the drawing on the left, the stage, the latest step and the
+   folded list on the right; only the stage the run is at is shown */
+.card.sai-scene-card { display: grid; grid-template-columns: 128px minmax(0, 1fr); align-items: center; align-content: center; column-gap: 14px; row-gap: 2px; padding-top: 10px; padding-bottom: 10px; }
+.sai-scene { grid-row: 1 / span 2; display: block; width: 128px; height: auto; }
+.sai-scene-line { font-size: 16px; line-height: 1.4; }
 /* "No AI model" after the search card's heading, quieter than the heading */
 .sai-aside { margin-left: 8px; color: var(--muted); font-size: 15px; font-weight: 400; letter-spacing: 0; }
 /* on the Ask page the search box's label is read by screen readers but not shown (the heading says what it is) */
@@ -262,6 +264,8 @@ main.home .sai-hero .lead { margin-top: 4px; }
   main.home > .sai-hero { max-width: none; }
   .sai-pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
   main.home > .sai-pair { max-width: none; }
+  .card.sai-scene-card { grid-template-columns: 168px minmax(0, 1fr); column-gap: 20px; }
+  .sai-scene { width: 168px; }
   /* side by side, the search box lines up with the question box and Search with Ask */
   .sai-pair p:has(> label[for="q"]) { position: absolute; }
   .sai-pair textarea, .sai-pair input#q { height: 116px; }
