@@ -349,3 +349,45 @@ def test_steps_rules_are_the_mocks():
             "docs/mocks/f4a-completeness-v3.html ---- */")
     assert css().rstrip().endswith(rules[".steps .sub[data-x]"])  # the block is the file's end
     assert css().index(head) < css().index(rules[".steps"])
+
+
+def _lum(hexc: str) -> float:
+    def ch(v: int) -> float:
+        c = v / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(hexc[i:i + 2], 16) for i in (1, 3, 5))
+    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
+
+
+def _ratio(a: str, b: str) -> float:
+    la, lb = sorted((_lum(a), _lum(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+# (rule selector, property, background property, floor): text that must stay readable
+PAIRS = [
+    (".site-name", "color", "--head", 4.5),
+    (".site-note", "color", "--head", 4.5),
+    (".site-header nav a", "color", "--head", 4.5),
+    (".site-header a:focus-visible", "outline-color", "--head", 3.0),
+    ("main a", "color", "--card", 4.5),
+    ("button", "color", "--btn", 4.5),
+    ("button:hover", "background", "--btn-ink", 4.5),
+    ("body", "color", "--page", 4.5),
+]
+
+
+def _prop_of(selector: str, prop: str) -> str:
+    for sel, body in _rules():
+        if selector in [" ".join(x.split()) for x in sel.split(",")]:
+            m = re.search(rf"(?:^|;|\s){re.escape(prop)}\s*:\s*var\((--[a-z0-9-]+)\)", body)
+            if m:
+                return m.group(1)
+    raise AssertionError(f"{selector} has no {prop}: var(--...)")
+
+
+@pytest.mark.parametrize("look", [LOOK_A, LOOK_B], ids=["day", "night"])
+def test_text_on_its_background_is_readable_in_both_looks(look):
+    for selector, prop, bg, floor in PAIRS:
+        fg = _prop_of(selector, prop)
+        assert _ratio(look[fg], look[bg]) >= floor, (selector, prop)

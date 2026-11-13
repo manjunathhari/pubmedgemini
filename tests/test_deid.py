@@ -1004,7 +1004,7 @@ def test_marks_on_both_engines_give_the_same_verdict():
 
 
 def test_blocked_message_is_incisives_with_this_apps_name():
-    assert BLOCKED_MESSAGE == ("pubmedgemini found details that could identify a patient. "
+    assert BLOCKED_MESSAGE == ("PubMed Quick found details that could identify a patient. "
                                "Please remove them and resend your question.")
     # ask.rs blocked_message: each distinct kind's hint, as a sentence, once.
     assert blocked_message(["phone", "person_name"]) == BLOCKED_MESSAGE
@@ -1081,7 +1081,7 @@ def test_hidden_characters_blocked_before_gate(migrated_pool, owner):
     assert out.categories == (("unusual_characters", 1),)
     assert out.labels == ("hidden or unusual characters",)
     assert out.message == (
-        "pubmedgemini found details that could identify a patient. Please remove them and "
+        "PubMed Quick found details that could identify a patient. Please remove them and "
         "resend your question. Please retype the question without copy-pasted special "
         "characters (use plain hyphens, colons and spaces).")
     assert set(_stored(migrated_pool).values()) == {0}

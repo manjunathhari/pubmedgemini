@@ -93,6 +93,7 @@ body {
   font-size: 14px;
 }
 .site-header nav a:hover { color: var(--head-ink); }
+.site-header a:focus-visible { outline-color: var(--head-ink); }
 .site-header nav a.current {
   color: var(--head-ink);
   font-weight: 700;

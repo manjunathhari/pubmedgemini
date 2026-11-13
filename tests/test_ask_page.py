@@ -31,7 +31,7 @@ PRIVACY = ("Google may use what you type here, and its reviewers may read it (Ge
 NO_KEY = "Questions are not set up yet: the Gemini key is missing on the server."
 CROSS_SITE = "This request did not come from this page. Open the page and search again."
 ACTIVE = "A question is already running. Please wait for it to finish, then ask again."
-BLOCKED = ("pubmedgemini found details that could identify a patient. Please remove them and "
+BLOCKED = ("PubMed Quick found details that could identify a patient. Please remove them and "
            "resend your question.")
 
 
