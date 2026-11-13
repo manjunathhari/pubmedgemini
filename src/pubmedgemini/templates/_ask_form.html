@@ -17,7 +17,7 @@
 {{ question }}</textarea></p>
 <p><button type="submit">Ask</button></p>
 </form>
-<p>Free runs left today: about {{ runs_left }}</p>
+<p class="sai-runs">Free runs left today: about {{ runs_left }}</p>
 {% if runs_left < 1 %}
 <p>Daily free limit reached. Resets at {{ reset_time }} IST.</p>
 {% endif %}

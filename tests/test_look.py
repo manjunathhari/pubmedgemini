@@ -721,3 +721,14 @@ def test_ask_and_search_sit_side_by_side_on_desktop(pages):
     wide = css().split("@media (min-width: 900px)", 1)[1]
     assert "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)" in _rule_body(".sai-pair", wide)
     assert "max-width: none" in _rule_body("main.home > .sai-pair", wide)
+
+
+def test_the_two_cards_end_level(pages):
+    # the owner, 13 Nov: the two note boxes line up; the search card says where its searches run
+    home = pages["home"].text
+    runs = '<p class="sai-runs">Free runs left today: about '
+    where = '<p class="sai-runs">All searches run on regular PubMed and Europe PMC.</p>'
+    assert runs in home and where in home
+    assert home.index(runs) < home.index('<p class="sai-note">Google may use')
+    assert home.index(where) < home.index('<p class="sai-note">What you type is sent')
+    assert "margin-top: auto" in _rule_body(".sai-pair .card > .sai-runs", css())
