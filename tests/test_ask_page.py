@@ -13,6 +13,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from gemini_fakes import FAKE_KEY, QUOTA_FAILURE, call, error
+from page_scripts import HEAD_LINKS, without_theme_scripts
 from test_runs import BUSY_RUN, END, HAPPY_RUN, ID1, ID2, ID3, Q1, list_reply, turn
 from writer_fakes import RunGemini
 
@@ -160,8 +161,9 @@ def test_home_has_both_boxes_and_no_script(env):
     r = env.c.get("/", headers=H)
     assert r.status_code == 200
     assert r.text.count('name="question"') == 1 and r.text.count('name="q"') == 1
-    assert "<script" not in r.text and "src=" not in r.text
-    assert re.findall(r"<link[^>]*>", r.text) == ['<link rel="stylesheet" href="/static/app.css">']
+    bare = without_theme_scripts(r.text)  # the day/night switch's two scripts, pinned
+    assert "<script" not in bare and "src=" not in bare
+    assert re.findall(r"<link[^>]*>", r.text) == HEAD_LINKS
     assert r.text.index("Ask a question") < r.text.index("Key-word search")
     assert "Your questions" not in r.text  # moved to the Library page
     assert '<form method="post" action="/ask">' in r.text
@@ -490,7 +492,8 @@ def test_model_text_is_escaped_on_the_run_page(db_url, upstream):
         contradictions=[{"pmid": ID3, "note": "<a href='javascript:x'>n</a>"}])
     with ask_env(db_url, upstream, [turn(call("search_pubmed", Q1)), END, hostile]) as env:
         page = env.run_page(env.ask(QUESTION).headers["location"]).text
-    assert "&lt;script&gt;alert(1)&lt;/script&gt; why" in page and "<script" not in page
+    assert "&lt;script&gt;alert(1)&lt;/script&gt; why" in page
+    assert "<script" not in without_theme_scripts(page)
     assert "&lt;img src=x onerror=alert(2)&gt;" in page and "<img" not in page
     assert "javascript:" not in page.replace("&lt;a href=&#39;javascript:x&#39;&gt;", "")
 
@@ -792,13 +795,14 @@ def test_answer_text_is_escaped(env):
                            "setting": "s", "comparison": "c", "key_results": "k",
                            "appraisal": "<script>alert(1)</script>"}])
     page = answered(env, written=w)
-    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "<script" not in page
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
+    assert "<script" not in without_theme_scripts(page)
 
 
 def test_page_has_no_script_and_no_new_css(env):
     page = answered(env, written=_written())
     plain = env.run_page(f"/runs/{insert_run(env)}").text  # a run with no answer
-    assert "<script" not in page.lower() and "style=" not in page.lower()
+    assert "<script" not in without_theme_scripts(page).lower() and "style=" not in page.lower()
     assert "<style" not in page.lower() and page.count("<link") == plain.count("<link")
 
 

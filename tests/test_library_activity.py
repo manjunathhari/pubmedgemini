@@ -7,6 +7,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
+from page_scripts import without_theme_scripts
 from test_ask_page import HAPPY_RUN, MODEL, H, HoldStarter, ask_env, insert_run
 
 from pubmedgemini.runs import daily_question_counts
@@ -58,7 +59,7 @@ def test_menu_on_signed_in_pages(env):
                                                  ("/activity", "Activity")], name
         assert current_of(r.text) == [current], name
         assert 'class="current"' in nav_of(r.text), name
-        assert r.text.count("<nav") == 1 and "<script" not in r.text, name
+        assert r.text.count("<nav") == 1 and "<script" not in without_theme_scripts(r.text), name
 
 
 def test_nav_is_inside_the_header(env):
@@ -266,4 +267,4 @@ def test_activity_does_not_show_another_users_counts_or_email(env):
 
 def test_no_script_tags_on_new_pages(env):
     for path in ("/library", "/activity"):
-        assert "<script" not in env.c.get(path, headers=H).text.lower(), path
+        assert "<script" not in without_theme_scripts(env.c.get(path, headers=H).text).lower(), path

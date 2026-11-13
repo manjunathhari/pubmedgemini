@@ -4,13 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PubMed Ai</title>
+<script>try{var t=localStorage.getItem("surgeryai-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 {% block head %}{% endblock %}
 <link rel="stylesheet" href="/static/app.css">
+<link rel="icon" type="image/svg+xml" href="/static/icons/sai-badge-day.svg" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/svg+xml" href="/static/icons/sai-badge-night.svg" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="/static/icons/sai-badge-day-180.png">
 </head>
 <body>
 <header class="site-header"><div class="site-header-inner">
-<div class="tile" aria-hidden="true">SAi</div>
-<div><div class="site-name">PubMed Ai</div><div class="site-note">Educational tool only</div></div>
+<div class="sai-brand">
+<span class="sai-badge" aria-hidden="true"><span class="sai-badge-in"><span class="sai-s">S</span>Ai</span></span>
+<div><div class="sai-wm" role="img" aria-label="PubMed Ai"><span class="sai-wm-base">PubMed</span><span class="sai-wm-ai">Ai</span></div><div class="site-note">Educational tool only</div></div>
+</div>
+<button type="button" class="sai-daynight" aria-label="Switch between day and night"><span data-for="day" aria-hidden="true"></span><span data-for="night" aria-hidden="true"></span></button>
 </div>
 {% if nav is defined %}
 <nav aria-label="Main">
@@ -23,5 +30,6 @@
 <main{% block main_class %}{% endblock %}>
 {% block content %}{% endblock %}
 </main>
+<script>document.querySelector(".sai-daynight").addEventListener("click",function(){var r=document.documentElement,s=r.getAttribute("data-theme"),n=s?s==="dark":matchMedia("(prefers-color-scheme: dark)").matches,x=n?"light":"dark";r.setAttribute("data-theme",x);try{localStorage.setItem("surgeryai-theme",x)}catch(e){}});</script>
 </body>
 </html>

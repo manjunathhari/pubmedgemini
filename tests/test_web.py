@@ -3,6 +3,7 @@ from pathlib import Path
 
 import psycopg
 from fastapi.testclient import TestClient
+from page_scripts import without_theme_scripts
 
 from pubmedgemini.main import create_app
 
@@ -94,7 +95,7 @@ def test_second_start_does_not_fail(settings_prod):  # Review Focus 5
 
 def test_pages_are_plain_html(client_dev):
     r = client_dev.get("/", headers={"x-dev-user-email": "owner@example.com"})
-    assert "<script" not in r.text and "http://" not in r.text and "https://" not in r.text
+    assert "<script" not in without_theme_scripts(r.text) and "http://" not in r.text and "https://" not in r.text
     assert r.text.count("<main") == 1
     css = Path(__file__).resolve().parent.parent / "src" / "pubmedgemini" / "static" / "app.css"
     assert "42rem" in css.read_text(encoding="utf-8")

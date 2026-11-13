@@ -72,6 +72,7 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 {% block content %}
 {% if wide %}
 {#- A finished run with a stored answer: the answer page (owner decision N1 A, mock v6). -#}
+<p class="sai-label">PubMed Ai answer</p>
 <h1>{% for para in question_paragraphs %}{{ para }}{% if not loop.last %}<br>{% endif %}{% endfor %}</h1>
 <p class="sub">{{ status_word }} · Quick · Decision support. The clinician decides.</p>
 {% if intro_paragraphs -%}

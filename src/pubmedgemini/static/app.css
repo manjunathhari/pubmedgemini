@@ -1,5 +1,7 @@
-/* The SurgeryAi look (Look A by day, Look B by night, from the phone's setting), two self-hosted fonts. Phone first. Elements are styled by tag and place because
-   the pages keep their plain markup. */
+/* The SurgeryAi look (the style kit of 13 Nov: tokens.css and components.css), day and night, two self-hosted fonts.
+   Night follows the phone's setting unless the day/night switch has set <html data-theme>. Phone first. Elements are
+   styled by tag and place because the pages keep their plain markup; the kit's own parts are prefixed sai-.
+   Weights are 300, 400 and 500 only: the 600/700 inside the two frozen mock blocks are overridden further down. */
 
 @font-face {
   font-family: "Hanken Grotesk";
@@ -17,24 +19,42 @@
   font-display: swap;
 }
 
-/* the two looks: every colour on the site is one of these (frozen on the Mock Board, 13 Nov) */
+/* the two looks: every colour on the site is one of these (the kit's tokens.css, under the app's names) */
 :root {
   color-scheme: light dark;
-  --page: #EEF0F3; --card: #FFFFFF; --line: #DDE3EA; --line2: #BAC5D1;
-  --faint: #7D8A98; --muted: #5B6773; --strong: #2C3E52; --ink: #101A24;
-  --head: #13263C; --head-line: #13263C; --head-ink: #F7F4EC;
-  --head-muted: #93A0AD; --head-accent: #5AA0EE; --accent: #1F6BD0;
+  --page: #F7F4EC; --card: #FFFFFF; --line: #EEE8DC; --line2: #E4DED0;
+  --faint: #8A94A0; --muted: #5B6773; --strong: #2C3E52; --ink: #101A24;
+  --head: #F7F4EC; --head-line: #E4DED0; --head-ink: #101A24;
+  --head-muted: #1F6BD0; --head-accent: #1F6BD0; --accent: #1F6BD0;
   --btn: #13263C; --btn-hover: #101A24; --btn-ink: #FFFFFF;
+  --note: #E3EDF8; --accent-fill: #1E5AA0; --on-accent-fill: #FFFFFF;
+  --dots: url(stipple-day.svg); --hero-art: url(sai-hero-day-pale.webp); --hero-fade: 1;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
-    --page: #1B2836; --card: #223142; --line: #2F4053; --line2: #46586C;
-    --faint: #8392A1; --muted: #A3B0BD; --strong: #C8D1DA; --ink: #E8EDF2;
-    --head: #101A24; --head-line: #2F4053; --head-ink: #F7F4EC;
-    --head-muted: #93A0AD; --head-accent: #5AA0EE; --accent: #5AA0EE;
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #101A24; --card: #16222E; --line: #1C2A38; --line2: #22303E;
+    --faint: #7D8B99; --muted: #93A0AD; --strong: #C8D1DA; --ink: #EEF2F6;
+    --head: #101A24; --head-line: #22303E; --head-ink: #EEF2F6;
+    --head-muted: #5AA0EE; --head-accent: #5AA0EE; --accent: #5AA0EE;
     --btn: #5AA0EE; --btn-hover: #7CB4F2; --btn-ink: #0A1420;
+    --note: #17283B; --accent-fill: #1E5AA0; --on-accent-fill: #FFFFFF;
+    --dots: url(stipple-night.svg); --hero-art: url(sai-hero-night.webp); --hero-fade: .7;
   }
 }
+/* night chosen with the switch: the same values, and it wins over a phone set to day */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #101A24; --card: #16222E; --line: #1C2A38; --line2: #22303E;
+  --faint: #7D8B99; --muted: #93A0AD; --strong: #C8D1DA; --ink: #EEF2F6;
+  --head: #101A24; --head-line: #22303E; --head-ink: #EEF2F6;
+  --head-muted: #5AA0EE; --head-accent: #5AA0EE; --accent: #5AA0EE;
+  --btn: #5AA0EE; --btn-hover: #7CB4F2; --btn-ink: #0A1420;
+  --note: #17283B; --accent-fill: #1E5AA0; --on-accent-fill: #FFFFFF;
+  --dots: url(stipple-night.svg); --hero-art: url(sai-hero-night.webp); --hero-fade: .7;
+}
+/* day chosen with the switch on a phone set to night: form controls follow the page */
+:root[data-theme="light"] { color-scheme: light; }
 
 * { box-sizing: border-box; }
 
@@ -44,37 +64,82 @@ body {
   color: var(--ink);
   font-family: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 15px;
+  font-weight: 400;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
+/* the kit's faint dot sprinkle: a fixed layer, so it stays still while the page scrolls */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--dots) 0 0 / 480px 480px repeat;
+}
+b, strong { font-weight: 500; }
 
-/* header */
-.site-header { background: var(--head); border-bottom: 1px solid var(--head-line); }
+/* header: the round SAi badge, the wordmark, the day/night switch; the menu row beneath */
+.site-header { border-bottom: 1px solid var(--head-line); }
 .site-header-inner {
   max-width: 42rem;
   margin: 0 auto;
-  padding: 12px 16px;
+  padding: 10px 16px 6px;
+  min-height: 48px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 12px;
 }
-.tile {
-  width: 32px;
-  height: 32px;
+.sai-brand { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--head-ink); }
+/* 34px disc in the text colour, letters in the page colour, the S at 1.18x */
+.sai-badge {
   flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
   background: var(--head-ink);
   color: var(--head);
-  border-radius: 999px;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
 }
-.site-name { font-weight: 500; font-size: 16px; line-height: 1.2; letter-spacing: 0.04em; color: var(--head-ink); }
-.site-note { font-size: 12px; color: var(--head-muted); line-height: 1.2; }
+.sai-badge-in { display: inline-flex; align-items: baseline; line-height: 1; }
+.sai-s { font-size: 1.18em; }
+/* "PUBMED" in light wide-spaced capitals, a very small gap, then "Ai" kept tight */
+.sai-wm { display: inline-flex; align-items: baseline; white-space: nowrap; font-size: 19px; font-weight: 300; line-height: 1.2; }
+.sai-wm-base { text-transform: uppercase; letter-spacing: .08em; }
+.sai-wm-ai { margin-left: .02em; letter-spacing: -.01em; }
+.site-note { font-size: 12px; color: var(--muted); line-height: 1.2; }
+/* the kit's day/night switch: a 44px ring, a moon by day (tap for night), a sun at night (tap for day) */
+.sai-daynight {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  min-height: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line2);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--head-ink);
+}
+.sai-daynight:hover { background: transparent; color: var(--accent); }
+.sai-daynight span { width: 19px; height: 19px; background: currentColor; }
+.sai-daynight [data-for="day"] { mask: url(icons/moon.svg) center / 19px 19px no-repeat; -webkit-mask: url(icons/moon.svg) center / 19px 19px no-repeat; }
+.sai-daynight [data-for="night"] { display: none; mask: url(icons/sun.svg) center / 19px 19px no-repeat; -webkit-mask: url(icons/sun.svg) center / 19px 19px no-repeat; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sai-daynight [data-for="day"] { display: none; }
+  :root:not([data-theme="light"]) .sai-daynight [data-for="night"] { display: block; }
+}
+:root[data-theme="dark"] .sai-daynight [data-for="day"] { display: none; }
+:root[data-theme="dark"] .sai-daynight [data-for="night"] { display: block; }
+@media (max-width: 359px) { .sai-wm { font-size: 16px; } }
 
-/* menu: a row of equal items under the header, the current one bold and underlined */
+/* menu: a row of equal links in the accent under the header, the current one underlined */
 .site-header nav {
   max-width: 42rem;
   margin: 0 auto;
@@ -90,13 +155,11 @@ body {
   color: var(--head-muted);
   text-decoration: none;
   font-weight: 500;
-  font-size: 14px;
+  font-size: 15px;
 }
 .site-header nav a:hover { color: var(--head-ink); }
-.site-header a:focus-visible { outline-color: var(--head-ink); }
 .site-header nav a.current {
   color: var(--head-ink);
-  font-weight: 700;
   box-shadow: inset 0 -2px 0 var(--head-accent);
 }
 
@@ -110,14 +173,64 @@ main {
   gap: 14px;
 }
 h1, h2, h3, p, ul { margin: 0; }
-h1 { font-size: 20px; line-height: 1.25; font-weight: 500; }
-h2 { font-size: 17px; line-height: 1.3; font-weight: 500; }
+/* page titles and section headings are light; card titles are medium */
+h1 { font-size: 30px; line-height: 1.15; font-weight: 300; letter-spacing: -0.01em; }
+h2 { font-size: 22px; line-height: 1.2; font-weight: 300; letter-spacing: -0.01em; }
+.card h2, main > article > h2 { font-size: 17px; line-height: 1.3; font-weight: 500; letter-spacing: 0; }
 .lead { color: var(--muted); margin-top: 6px; }
-h3 { font-size: 15px; line-height: 1.35; }
+h3 { font-size: 15px; line-height: 1.35; font-weight: 500; }
 p { font-family: "Source Serif 4", Georgia, serif; }
+/* reading text is the serif at 17px (the kit's body size); classed secondary lines keep their smaller sizes */
+:where(main, .card, article, details) > p { font-size: 17px; line-height: 1.45; }
 p + p, form p + p { margin-top: 10px; }
 ul { padding-left: 1.25rem; }
 li + li { margin-top: 6px; }
+
+/* the blue capital label above a page title */
+.sai-label {
+  margin: 0;
+  color: var(--accent);
+  font-family: "Hanken Grotesk", system-ui, sans-serif;
+  font-size: 11.5px;
+  line-height: 1.3;
+  font-weight: 500;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.sai-label + h1 { margin-top: -6px; }
+
+/* the Ask page's title block, with the SAi artwork faded in behind it (the kit's masks, README item 4). The kit's
+   700px box is for the landing hero; here a 300px box (380px from 900px) beside the title, its top on the header line.
+   The night file is much brighter than the pale day file, so night is faded to .7 (--hero-fade); day stays at 1. */
+.sai-hero {
+  position: relative;
+  isolation: isolate;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
+.sai-hero .sai-label + h1 { margin-top: 0; }
+.sai-hero-art {
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  top: -16px;
+  right: -16px;
+  width: 300px;
+  height: 300px;
+  opacity: var(--hero-fade);
+  background: var(--hero-art) center top / auto 300px no-repeat;
+  -webkit-mask-image: radial-gradient(ellipse 60% 55% at 60% 38%, var(--ink) 40%, transparent 100%), linear-gradient(to bottom, var(--ink) 50%, transparent 92%);
+  -webkit-mask-composite: source-in;
+  mask-image: radial-gradient(ellipse 60% 55% at 60% 38%, var(--ink) 40%, transparent 100%), linear-gradient(to bottom, var(--ink) 50%, transparent 92%);
+  mask-composite: intersect;
+}
+@media (min-width: 900px) {
+  .sai-hero { min-height: 260px; }
+  .sai-hero-art { top: -16px; right: -40px; width: 400px; height: 380px; background-size: auto 380px; }
+}
 
 a { color: var(--ink); }
 a:hover { color: var(--muted); }
@@ -134,7 +247,7 @@ main a:hover { color: var(--ink); }
 .card, main > article {
   background: var(--card);
   border: 1px solid var(--line2);
-  border-radius: 14px;
+  border-radius: 18px;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -147,10 +260,33 @@ main a:hover { color: var(--ink); }
 article { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card article { border-top: 1px solid var(--line); padding-top: 10px; }
 .card > h2 + article { border-top: 0; padding-top: 0; }
-.muted { color: var(--muted); }
+.muted { color: var(--muted); font-size: 15px; }
 .item p + p { margin-top: 0; }
 .item { border-top: 1px solid var(--line); padding-top: 10px; }
 .card > h2 + .item, .card > .item:first-child { border-top: 0; padding-top: 0; }
+
+/* the kit's note box: a patient-details warning, with the kit's lock */
+.sai-note {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--note);
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.45;
+}
+.sai-note::before {
+  content: "";
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  background: currentColor;
+  mask: url(icons/lock.svg) center / 16px 16px no-repeat;
+  -webkit-mask: url(icons/lock.svg) center / 16px 16px no-repeat;
+}
 
 /* the Activity table; it scrolls inside its card if it is ever too wide */
 .table-scroll { overflow-x: auto; }
@@ -159,7 +295,7 @@ th {
   text-align: left;
   font-family: "Hanken Grotesk", system-ui, sans-serif;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--muted);
   padding: 6px 4px;
   border-bottom: 1px solid var(--faint);
@@ -186,14 +322,14 @@ textarea, input[type="text"] {
 }
 textarea { resize: vertical; }
 
-/* buttons: the pages' submit buttons are the primary ones */
+/* buttons: the pages' submit buttons are the kit's main pill button */
 button {
   display: block;
   width: 100%;
-  min-height: 48px;
-  padding: 0 16px;
+  min-height: 52px;
+  padding: 0 22px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 26px;
   background: var(--btn);
   color: var(--btn-ink);
   line-height: inherit;
@@ -206,20 +342,24 @@ input[type="text"] + button, input[type="text"] ~ button { margin-top: 10px; }
 /* the question box and its Ask button sit in two paragraphs whose gap a card sets to 0 */
 form p > textarea { margin-bottom: 10px; }
 
-/* small labels */
+/* small labels (Early, Retracted): the kit's filled pill */
 .tag, article strong {
   display: inline-block;
-  border: 1px solid var(--faint);
-  border-radius: 4px;
-  padding: 1px 6px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  background: var(--accent-fill);
+  color: var(--on-accent-fill);
   font-family: "Hanken Grotesk", system-ui, sans-serif;
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 500;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  vertical-align: 2px;
 }
 
-/* focus */
+/* focus: the accent ring on everything you can tab to */
 a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible {
-  outline: 3px solid var(--ink);
+  outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -294,6 +434,19 @@ main.wide > h1 { overflow-wrap: anywhere; }
 .ci p + p, details.oc .body p + p, .cp p + p { margin-top: 0; }
 details.fold > summary + article { border-top: 0; padding-top: 0; }
 details.fold > article + article { margin-top: 10px; }
+
+/* ---- the kit's weights over the two frozen mock blocks (left word for word): every 600 or 700 in them is
+   brought to 300, 400 or 500 here by a more specific selector; labels in the kit's blue; the focus ring in
+   the accent. ---- */
+main .eyebrow { font-size: 11.5px; font-weight: 500; letter-spacing: .16em; color: var(--accent); }
+main .pill { font-weight: 500; }
+main details.oc .t { font-weight: 500; }
+main .big { font-weight: 300; }
+main .cmp b { font-weight: 500; }
+main details.fold > summary { font-weight: 500; }
+main summary:focus-visible { outline-color: var(--accent); }
+.card .steps .name { font-weight: 500; }
+.card .steps .st.now { font-weight: 500; }
 
 /* ---- the completeness check (F4a): the .steps rules of docs/mocks/f4a-completeness-v3.html ---- */
 .steps{display:flex;flex-wrap:wrap;align-items:center;gap:3px;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:13px}

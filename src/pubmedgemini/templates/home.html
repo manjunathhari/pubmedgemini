@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
+<div class="sai-hero">
+<div class="sai-hero-art" aria-hidden="true"></div>
+<p class="sai-label">Ask the evidence</p>
 <h1>PubMed Ai</h1>
+</div>
 <p class="lead">An AI search agent for clinical questions. It searches PubMed and Europe PMC, picks the studies that answer your question, and sets out what they show in one clear, readable answer, with every point linked to its source.</p>
 <p>Signed in as {{ email }}</p>
 {% include "_ask_form.html" %}

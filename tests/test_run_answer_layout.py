@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from page_scripts import HEAD_LINKS, without_theme_scripts
 from psycopg.types.json import Jsonb
 from test_answer_page import PMIDS, hernia, num, outcome
 from test_ask_page import HAPPY_RUN, OWNER, QUESTION, RUN_NOT_FOUND, H, ask_env, insert_run
@@ -91,8 +92,8 @@ def test_no_style_no_script_no_new_link(env, url):
     t = page(env, url)
     plain = env.run_page(f"/runs/{insert_run(env)}").text  # a run with no answer
     assert "style=" not in t and "<style" not in t
-    assert "<script" not in t.lower() and not re.search(r"\son[a-z]+=", t)
-    assert t.count("<link") == plain.count("<link") == 1
+    assert "<script" not in without_theme_scripts(t).lower() and not re.search(r"\son[a-z]+=", t)
+    assert t.count("<link") == plain.count("<link") == len(HEAD_LINKS)
 
 
 def test_svg_rows_carry_code_numbers_only(env, url):
@@ -245,7 +246,8 @@ def _hostile():
 def test_model_text_escaped_everywhere(env):
     t = page(env, store(env, _hostile()))
     assert "&#34;&gt;&lt;img src=x onerror=1&gt;" in t and "<img" not in t
-    assert "&lt;script&gt;x&lt;/script&gt;&lt;/details&gt;" in t and "<script" not in t
+    assert "&lt;script&gt;x&lt;/script&gt;&lt;/details&gt;" in t
+    assert "<script" not in without_theme_scripts(t)
     assert "&lt;b&gt;" in t and "&lt;i&gt;" in t and "&lt;/p&gt;&lt;details open&gt;" in t
     assert "&lt;svg onload=1&gt;" in t
     # code's details only: 3 folds at the end, 1 for the steps, 6 outcomes, 2 "Show N more"
@@ -614,7 +616,8 @@ def test_introduction_text_is_escaped_and_never_linked(env):
     with_intro(env, rid, text="<script>alert(1)</script> see [90000001] and "
                               "[PMID 90000002]\u202e\u200b.")
     t = run_page(env, rid)
-    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in t and "<script" not in t
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in t
+    assert "<script" not in without_theme_scripts(t)
     sec = t.split("<h2>Introduction</h2>", 1)[1].split("</section>", 1)[0]
     assert "[90000001]" in sec and "<a" not in sec
     assert "\u202e" not in t and "\u200b" not in t
@@ -721,7 +724,8 @@ def test_early_text_is_escaped(env):
         body["answer"]["answer"]["bottom_line"]["text"] = "<script>x</script>\u202e"
         conn.execute("UPDATE run_early SET body = %s", (Jsonb(body),))
     t = run_page(env, rid)
-    assert "&lt;script&gt;x&lt;/script&gt;" in t and "<script" not in t and "\u202e" not in t
+    assert "&lt;script&gt;x&lt;/script&gt;" in t and "\u202e" not in t
+    assert "<script" not in without_theme_scripts(t)
 
 
 def test_finished_page_never_shows_the_early_summary(env):
@@ -794,7 +798,8 @@ def test_new_states_have_no_script_and_no_new_css(env):
         assert 'class="steps"' in states[-1]
     for t in (working, early, done, *states):
         low = t.lower()
-        assert "<script" not in low and "style=" not in low and "<style" not in low
+        assert "<script" not in without_theme_scripts(t).lower()
+        assert "style=" not in low and "<style" not in low
         assert t.count("<link") == plain.count("<link")
         for cls in set(re.findall(r'class="([^"]+)"', t)):
             for c in cls.split():
@@ -1024,4 +1029,4 @@ def test_box_holds_only_fixed_words_and_counts(env):
                             "7 of 9 numbers found · 2 of 3 trial names match")
     for marker in ("ZQ7", "98765", "98,765", "2019", "<b>"):
         assert marker not in box
-    assert "<script" not in t.lower() and "style=" not in t.lower()
+    assert "<script" not in without_theme_scripts(t).lower() and "style=" not in t.lower()

@@ -15,6 +15,7 @@ from lit_fakes import (
     fixture,
     pubmed_routes,
 )
+from page_scripts import LINK_HREFS, without_theme_scripts
 
 from pubmedgemini.lit.europepmc import strip_markup
 from pubmedgemini.lit.tools import ToolInputError
@@ -68,7 +69,7 @@ def epmc_reply_with(edit) -> httpx.Response:
 def test_home_has_one_box_and_no_script(client_dev):
     r = client_dev.get("/", headers=H)
     assert r.text.count('name="q"') == 1 and 'method="post" action="/search"' in r.text
-    assert "<script" not in r.text
+    assert "<script" not in without_theme_scripts(r.text)
     assert '<label for="q">Search PubMed and Europe PMC</label>' in r.text
     assert 'maxlength="1000"' in r.text and '<button type="submit">Search</button>' in r.text
     assert ("What you type is sent to PubMed and Europe PMC as the search. "
@@ -351,10 +352,10 @@ class _LinksAndClasses(HTMLParser):
 
 PAGE_TAGS = {"html", "head", "meta", "title", "style", "body", "main", "h1", "h2", "p", "form",
              "label", "input", "button", "article", "a", "strong",
-             "link", "header", "div", "section", "nav"}
+             "link", "header", "div", "section", "nav", "span"}
 PAGE_ATTRS = {"lang", "charset", "name", "content", "method", "action", "for", "id", "type",
               "maxlength", "required", "value", "href", "class", "rel", "aria-hidden",
-              "aria-label", "aria-current"}
+              "aria-label", "aria-current", "media", "role", "data-for"}
 
 
 def test_nothing_from_upstream_is_rendered_as_html(client_for):
@@ -375,7 +376,7 @@ def test_nothing_from_upstream_is_rendered_as_html(client_for):
     r = c.post("/search", data={"q": "mesh"}, headers=H)
     assert r.status_code == 200
     parser = _Tags()
-    parser.feed(r.text)
+    parser.feed(without_theme_scripts(r.text))  # the day/night switch's two scripts, pinned
     assert parser.tags <= PAGE_TAGS, parser.tags - PAGE_TAGS
     assert parser.attrs <= PAGE_ATTRS, parser.attrs - PAGE_ATTRS
     assert "&lt;h4&gt;" in r.text and "<h4>" not in r.text
@@ -384,7 +385,7 @@ def test_nothing_from_upstream_is_rendered_as_html(client_for):
     assert "<style" not in r.text
     seen = _LinksAndClasses()
     seen.feed(r.text)
-    assert seen.link_hrefs == ["/static/app.css"]
+    assert seen.link_hrefs == LINK_HREFS
     assert seen.classes and all(re.fullmatch(r"[A-Za-z0-9 -]+", c) for c in seen.classes)
     assert "https://doi.org/10.1/%22%3E%3Cscript%3E" in r.text
 
