@@ -1171,3 +1171,168 @@ def test_an_unreadable_answer_logs_its_fixed_kind_only(db_url, upstream, caplog,
         for word in ("AnswerInvalid", "ValidationError", "Traceback", "invalid'", "('"):
             assert word not in caplog.text, word
         assert all(rec.exc_info is None and rec.exc_text is None for rec in caplog.records)
+
+
+# ---------- F4a Task 5: the completeness check logs counts and fixed kinds only ----------
+
+CHECK_NUMBER_TAG = "zc1"   # in a number's label
+CHECK_LABEL_TAG = "zc2"    # in each trial label
+CHECK_AUTHOR = "Zcfour"    # a made-up first author, put into PubMed's record
+CHECK_ERROR_TAG = "zc9"    # in the text of an error raised inside the check
+CHECK_LEAKS = (CHECK_NUMBER_TAG, CHECK_LABEL_TAG, CHECK_AUTHOR, CHECK_AUTHOR.lower(),
+               CHECK_ERROR_TAG)
+CHECK_DONE_LINE = (rf"run kind=check run_id={UUID} status=done numbers_found=(\d+) "
+                   r"numbers_total=(\d+) names_match=(\d+) names_total=(\d+)")
+
+
+def check_upstream():
+    """`marked_upstream` (the marker in one abstract) with a made-up first author on the first
+    selected study's PubMed record."""
+    import json
+
+    from lit_fakes import EUTILS_HOST, EUTILS_PATH, fixture
+
+    up = marked_upstream()
+    summary = json.loads(fixture("esummary.json"))
+    summary["result"][LEAK_ID2]["authors"][0]["name"] = f"{CHECK_AUTHOR} AB"
+    up.routes[(EUTILS_HOST, EUTILS_PATH + "esummary.fcgi")] = httpx.Response(
+        200, content=json.dumps(summary).encode(), headers={"content-type": "application/json"})
+    return up
+
+
+def check_parts(year: int) -> dict:
+    """The writer's parts with a marker in the number's label and in both trial labels; the
+    first label names the made-up first author and the record's year, the second does not."""
+    from writer_fakes import good_parts, whole_answer
+
+    w = whole_answer("mq2 written", ids=(LEAK_ID2, LEAK_ID1))
+    w["outcomes"][0]["numbers"][0]["label"] = f"{CHECK_NUMBER_TAG} ratio"
+    w["studies"][0]["label"] = f"{CHECK_LABEL_TAG} {CHECK_AUTHOR} {year}, Example Journal"
+    w["studies"][1]["label"] = f"{CHECK_LABEL_TAG} Othername 1987"
+    return good_parts(w, copies=2)
+
+
+@contextmanager
+def check_env(db_url):
+    import json
+
+    from lit_fakes import fixture
+    from test_ask_page import ask_env
+
+    # the year PubMed's record gives the first selected study (its `pubdate` starts with it)
+    year = int(json.loads(fixture("esummary.json"))["result"][LEAK_ID2]["pubdate"][:4])
+    with ask_env(db_url, check_upstream(), leak_script(), key="gk-q7",
+                 parts=check_parts(year)) as env:
+        yield env
+
+
+CHECK_RID = "00000000-0000-4000-8000-000000000000"
+CHECK_HEAD = f"run kind=check run_id={CHECK_RID} "
+COUNTS_TAIL = "numbers_total=12 names_match=3 names_total=4"
+ODD_CHECK_LINES = [
+    CHECK_HEAD + f"status=done numbers_found=1 {COUNTS_TAIL} label=made-up",
+    CHECK_HEAD + f"status=done numbers_found=1.5 {COUNTS_TAIL}",
+    CHECK_HEAD + "status=failed reason=internal error=KeyError: made-up",
+    CHECK_HEAD + "status=failed reason=Free text error=KeyError",
+    CHECK_HEAD + "status=running",
+    f"run kind=check_not_started run_id={CHECK_RID} error=a b",
+    "run kind=check made-up words",
+]
+
+
+@pytest.mark.parametrize("odd", ODD_CHECK_LINES)
+def test_the_check_lines_are_fixed_shapes(odd):
+    import re
+
+    with pytest.raises(AssertionError):
+        assert_app_lines_fixed([odd])
+    good = CHECK_HEAD + f"status=done numbers_found=0 {COUNTS_TAIL}"
+    assert_app_lines_fixed([
+        good,
+        CHECK_HEAD + "status=failed reason=internal error=KeyError",
+        CHECK_HEAD + "status=failed reason=store error=OperationalError",
+        f"run kind=check_not_started run_id={CHECK_RID} error=UniqueViolation"])
+    assert re.fullmatch(CHECK_DONE_LINE, good).groups() == ("0", "12", "3", "4")
+
+
+def test_nothing_private_is_logged_by_the_check(db_url, caplog, app_debug):
+    """Markers in a number's label, the trial labels, an abstract and a made-up author name:
+    the check reads them all (the author's name is what makes one trial name match) and none
+    reaches a log line; the one line it writes holds the run id and the four counts."""
+    import re
+
+    caplog.set_level(logging.DEBUG)
+    with check_env(db_url) as env:
+        app_debug()
+        caplog.clear()
+        r = env.ask(LEAK_QUESTION)
+        page = env.run_page(r.headers["location"]).text
+        row = env.rows("SELECT status, numbers_found, numbers_total, names_match, names_total "
+                       "FROM run_checks")
+        stored = env.one("SELECT body::text FROM answers")
+        authors = env.one("SELECT authors FROM papers WHERE pmid = %s", (LEAK_ID2,))
+        abstracts = " ".join(a or "" for (a,) in env.rows("SELECT abstract FROM papers"))
+    # the private texts really were in the run, and the check really read the author
+    assert CHECK_NUMBER_TAG in stored and CHECK_LABEL_TAG in stored and CHECK_AUTHOR in stored
+    assert authors[0] == f"{CHECK_AUTHOR} AB" and ABSTRACT_TAG in abstracts
+    assert row == [("done", row[0][1], 1, 1, 2)] and CHECK_LABEL_TAG in page
+    assert_no_private_text(caplog, extra=CHECK_LEAKS)
+    msgs = _app_messages(caplog)
+    assert_app_lines_fixed(msgs)
+    lines = [m for m in msgs if m.startswith("run kind=check")]
+    assert len(lines) == 1
+    m = re.fullmatch(CHECK_DONE_LINE, lines[0])
+    assert m and tuple(int(g) for g in m.groups()) == row[0][1:]
+    # the box on the page: fixed words and the counts, none of the markers
+    box = page.split('<div class="steps">', 1)[1].split("</section>", 1)[0]
+    assert f"{row[0][1]} of 1 numbers found · 1 of 2 trial names match" in box
+    for leak in (*CHECK_LEAKS, "mq2", ABSTRACT_TAG):
+        assert leak not in box, leak
+
+
+def test_a_failed_check_logs_only_its_class(db_url, caplog, app_debug, monkeypatch):
+    """An error inside the check whose text holds a label and a number: one line with the
+    error's class; its text, a traceback or an exception object never reach a record. The run
+    is done and its answer stored. (Mutation-checked: a version of `run_check` that logs
+    `str(e)`, `repr(e)` or `exc_info` fails here.)"""
+    import re
+
+    import pubmedgemini.completeness as mod
+
+    def boom(w, papers):
+        raise ValueError(f"{CHECK_ERROR_TAG} {w.studies[0].label} 0.76")
+
+    monkeypatch.setattr(mod, "check_answer", boom)
+    caplog.set_level(logging.DEBUG)
+    with check_env(db_url) as env:
+        app_debug()
+        caplog.clear()
+        r = env.ask(LEAK_QUESTION)
+        page = env.run_page(r.headers["location"]).text
+        rid = env.one("SELECT id FROM runs")
+        assert env.rows("SELECT status, reason FROM run_checks") == [("failed", "internal")]
+        assert env.one("SELECT status FROM runs") == "done"
+        assert env.one("SELECT count(*) FROM answers") == 1
+    assert_no_private_text(caplog, extra=CHECK_LEAKS)
+    assert "Traceback" not in caplog.text and "0.76" not in caplog.text
+    msgs = _app_messages(caplog)
+    assert_app_lines_fixed(msgs)
+    assert [m for m in msgs if m.startswith("run kind=check")] == [
+        f"run kind=check run_id={rid} status=failed reason=internal error=ValueError"]
+    assert f"run kind=finished run_id={rid} status=done error_kind=none" in msgs
+    assert not any(re.match(r"run kind=internal", m) for m in msgs)
+    assert "The check could not be completed. The answer is unchanged." in page
+    assert "Answer ready" in page and "http-equiv" not in page
+
+
+def test_a_written_run_under_uvicorn_logs_the_check_counts_only(db_url):
+    """The same full run under the real server: the run page stops refreshing only once the
+    check is Done, and stderr holds the check's one fixed line."""
+    import re
+
+    page, _home, err = _run_question_under_uvicorn(db_url, "happy")
+    msgs = _assert_stderr_fixed(err)
+    lines = [m for m in msgs if m.startswith("run kind=check")]
+    assert len(lines) == 1 and re.fullmatch(CHECK_DONE_LINE, lines[0]), lines
+    assert '<span class="st now">Done</span>' in page and "numbers found" in page
+    assert "http-equiv" not in page

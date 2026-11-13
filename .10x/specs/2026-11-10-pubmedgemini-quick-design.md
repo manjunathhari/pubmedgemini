@@ -101,7 +101,7 @@ The same steps as Incisive Quick (`agent/team.rs`, `agent/researcher.rs`, `agent
 | 2. **Study list.** One structured call over the transcript: up to 10 `selected` (PMID, design, why), plus `considered_not_selected` and `possible_contradictions` | Flash-Lite | 1 |
 | 3. **Writer** (built in F3a). Four parts at once on threads over the same input: summary (at a glance, bottom line, clinical practice), context (applicability, what would change), trials (trials, conflicting evidence, notable findings), outcomes. Incisive's prompts word for word; a part that cannot be read or is cut off gets one retry with Incisive's nudge line; code merges the four, and builds the references | Flash-Lite | 4 (up to 8 with retries; 2 more for the one piece) |
 | 4. **Citation check** (moved into F3a, owner decision D4, 11 Nov 2026). Every citation, number and trial row must point to a study that was selected and fetched; those that do not are **removed** and counted, and one line ("Citation check: ...") is shown. As Incisive (`answer_v3.rs`) | Code | 0 |
-| 5. **Number check.** Each number in the answer is traced to the abstract text; the rest are marked "not traced". Nothing is removed | Code | 0 |
+| 5. **Completeness check** (built in F4a, 13 Nov 2026; owner decisions F4a-1 to F4a-5 and O1 to O6). After the answer is stored and shown, code counts (a) how many of the answer's structured outcome numbers are printed in the abstract of the study each one cites (the same figure, or the abstract's figure rounded to the answer's decimals; each given interval end too) and (b) how many trial names agree with PubMed's record (its year, and its first author's surname or a name printed in the study's own title or abstract). **Counts only:** nothing is marked "not traced" on the page, nothing is named, removed or changed, and no re-run is started or offered. A count means "this figure is printed somewhere in the cited abstract", not "this figure is right" (the rule does not read the unit, the arm or the sign). Numbers inside prose, the participant counts and p values are not checked | Code | 0 |
 | 6. **Number completion.** One call to fill untraced numbers from the reference | Flash-Lite | 1 |
 
 Rules carried over from Incisive, unchanged:
@@ -160,12 +160,13 @@ Up to F2: plain HTML (headings, paragraphs, simple lists). Readable on a phone. 
   9. **Details:** Conflicting evidence, Applicability, What would change this answer, The trials (with study details), Other notable findings, Search trail, References.
 - **Not carried over (10 Nov):** the chat button, the introduction panel, the progress panel's styling, filters, tabs, pop-up study cards and "Copy as text". **From 11 Nov only the chat button stays out;** the rest come in with the Incisive layout (§2a nos. 1 and 3).
 - **References:** numbered, each a link to PubMed.
-- **Untraced numbers** carry the words "not traced" beside them.
+- **Untraced numbers** carry the words "not traced" beside them. (Not in F4a: by owner decision F4a-5 the completeness check shows counts only and marks nothing on the page.)
+- **Completeness check box (F4a, 13 Nov 2026; mock `docs/mocks/f4a-completeness-v3.html`).** The last box of the answer page, after References and the folds, before the closing lines: "Completeness check", then Pending › Running › Done with the current step dark, and at Done one line, for example "16 of 16 numbers found · 4 of 4 trial names match" ("No numbers to check" / "No trial names to check" when there are none). If the check broke, was cut off by a restart, or is not done 60 s after the answer was stored: no dark step and "The check could not be completed. The answer is unchanged." The page keeps its 5 s refresh after the answer shows only while the check is pending or running, 60 s at most. An answer stored before F4a, and a run with no written answer, show no box. Fixed words and counts only; no script.
 - **Layout reference:** the Incisive Quick output the owner supplied on 10 Nov (bile leak, robotic vs laparoscopic cholecystectomy in acute cholecystitis).
 
 ## 7. What is stored
 
-Tables as built (F0 to F3c; brought in line with the migrations on 11 Nov 2026 and 12 Nov 2026):
+Tables as built (F0 to F4a; brought in line with the migrations on 11 Nov 2026, 12 Nov 2026 and 13 Nov 2026):
 
 | Table | Holds | Migration |
 |---|---|---|
@@ -180,6 +181,7 @@ Tables as built (F0 to F3c; brought in line with the migrations on 11 Nov 2026 a
 | `run_papers` | Which papers a run selected (with the design label and why), only considered (with the reason) or flagged as a possible contradiction (with the note) | `0004_runs.sql` |
 
 | `run_intros` | One row per run's Introduction: status (pending, done, failed), a fixed reason, the text (only when done), times. Pending rows fail `stale` at start-up | `0006_intro_early.sql` (also the `model_calls` step `intro`) |
+| `run_checks` | One row per run whose written answer was stored: the completeness check's status (pending, running, done, failed), a fixed reason when failed, the four counts when done, times. No text. Inserted pending in the answer's own transaction; pending and running rows fail `stale` at start-up; the check is not run again | `0007_run_checks.sql` |
 | `run_early` | The early summary while the run works: the checked summary and context parts as an answer body. Deleted when the run ends and at start-up | `0006_intro_early.sql` |
 | `answers` | The finished answer as JSON, in the shape of Incisive's `AnswerV3` (Quick fields only): the written answer or the plain reason none was written, the references, the search trail, the citation-check counts, the time taken. Written in one transaction with the run's final status and the line "Answer ready". The number-check results join it in F4 | `0005_answers.sql` (also the step kinds `check` and `present`, and the writer's `model_calls` steps) |
 
@@ -214,6 +216,7 @@ Each stage is a small batch on its own branch and pull request, signed off by th
 | **F3a** | Writer in four parts with the one-piece fallback, the citation check (moved here), the stored answer, the cap of 26 and 21 runs, and the answer on the run page in plain sections. **Built** on `f3a-writer`, not merged | A full written answer is on the page |
 | **F3b** | The answer page to the Incisive layout from a mockup, the search trail under Details (§2a no. 1). Live. **F3c:** the Introduction and the early summary (§2a no. 3, D8), built on `f3c-introduction-summary` | The page matches the mockup the owner signed off |
 | **Doctors** | The owner's add/remove page, 10 searches a day each, Library and Activity pages (§2a no. 5). Needs the gate decision first | A doctor the owner added can sign in, ask, and see only their own questions |
+| **F4a** | The completeness check, code only: counts of numbers printed in the cited abstract and of trial names agreeing with PubMed's record, in one box at the foot of the answer page. No model call; the answer is never changed. **Built** on `f4a-completeness-check`, not merged | The owner compares a count with the abstracts by eye and finds it fair |
 | **F4** | Citation check, number check, number completion, empty-list retry | Matches Incisive's checks |
 | **F5** | Side by side with Incisive Quick on the benchmarks: quality and time | The owner judges the gap |
 
