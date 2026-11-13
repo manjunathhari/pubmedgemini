@@ -202,6 +202,8 @@ button {
 }
 button:hover { background: var(--btn-hover); }
 input[type="text"] + button, input[type="text"] ~ button { margin-top: 10px; }
+/* the question box and its Ask button sit in two paragraphs whose gap a card sets to 0 */
+form p > textarea { margin-bottom: 10px; }
 
 /* small labels */
 .tag, article strong {

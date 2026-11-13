@@ -391,3 +391,8 @@ def test_text_on_its_background_is_readable_in_both_looks(look):
     for selector, prop, bg, floor in PAIRS:
         fg = _prop_of(selector, prop)
         assert _ratio(look[fg], look[bg]) >= floor, (selector, prop)
+
+
+def test_ask_button_sits_10px_below_the_question_box():
+    # the owner, 13 Nov: no space at all between the question box and the Ask button
+    assert re.search(r"(^|\n)form p > textarea\s*\{\s*margin-bottom:\s*10px;\s*\}", css())
