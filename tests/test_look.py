@@ -22,7 +22,7 @@ H = {"x-dev-user-email": "owner@example.com"}
 # set once for each look; the dots, the SAi artwork and its fade follow the look too.
 LOOK_A = {
     "--page": "#f7f4ec", "--card": "#ffffff", "--line": "#eee8dc", "--line2": "#e4ded0",
-    "--faint": "#8a94a0", "--muted": "#5b6773", "--strong": "#2c3e52", "--ink": "#101a24",
+    "--faint": "#6e7884", "--muted": "#5b6773", "--strong": "#2c3e52", "--ink": "#101a24",
     "--head": "#f7f4ec", "--head-line": "#e4ded0", "--head-ink": "#101a24",
     "--head-muted": "#1f6bd0", "--head-accent": "#1f6bd0", "--accent": "#1f6bd0",
     "--btn": "#13263c", "--btn-hover": "#101a24", "--btn-ink": "#ffffff",
@@ -681,3 +681,9 @@ def test_dot_background():
     for bit in ("position: fixed", "z-index: -1", "pointer-events: none",
                 "background: var(--dots) 0 0 / 480px 480px repeat"):
         assert bit in rule, bit
+
+
+def test_labels_in_reading_text_are_the_sans():
+    # serif at 500 hardly differs from 400; the labels at the start of answer lines must stand out
+    rules = {" ".join(sel.split()): body for sel, body in _rules()}
+    assert "Hanken Grotesk" in rules["p b, li b, p strong, li strong"]

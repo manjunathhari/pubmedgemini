@@ -23,7 +23,7 @@
 :root {
   color-scheme: light dark;
   --page: #F7F4EC; --card: #FFFFFF; --line: #EEE8DC; --line2: #E4DED0;
-  --faint: #8A94A0; --muted: #5B6773; --strong: #2C3E52; --ink: #101A24;
+  --faint: #6E7884; --muted: #5B6773; --strong: #2C3E52; --ink: #101A24;
   --head: #F7F4EC; --head-line: #E4DED0; --head-ink: #101A24;
   --head-muted: #1F6BD0; --head-accent: #1F6BD0; --accent: #1F6BD0;
   --btn: #13263C; --btn-hover: #101A24; --btn-ink: #FFFFFF;
@@ -78,6 +78,8 @@ body::before {
   background: var(--dots) 0 0 / 480px 480px repeat;
 }
 b, strong { font-weight: 500; }
+/* in reading text the labels ("Chronic pain:") are the sans at 500, so they stand out from the serif */
+p b, li b, p strong, li strong { font-family: "Hanken Grotesk", system-ui, sans-serif; }
 
 /* header: the round SAi badge, the wordmark, the day/night switch; the menu row beneath */
 .site-header { border-bottom: 1px solid var(--head-line); }
