@@ -365,6 +365,18 @@ Size (Estimate): about 190 lines of code, 420 of tests, 20 of SQL, 8 of CSS.
 
 **O6. The cap on waiting:** the page gives up refreshing 60 s after the answer is stored and then shows O3's line. (a) 60 s; (b) 30 s; (c) 120 s. **Suggestion: (a).**
 
+### Answered by the owner, 13 Nov
+
+The owner said "Yes" to every suggestion, and added: "The answer should not change. Keep the answer, no need for rerun."
+
+- **O1:** (b) the exact figure, or the abstract's figure rounded to the answer's decimals. Scope (i): the outcome numbers only.
+- **O2:** T2: the year, and PubMed's first-author surname or a name printed in that study's own title or abstract.
+- **O3:** (a) the same row with no dark step and one line: "The check could not be completed. The answer is unchanged."
+- **O4:** (a) older answers with no check show no box.
+- **O5:** (a) "No numbers to check" / "No trial names to check".
+- **O6:** (a) the refresh stops at most 60 seconds after the answer is stored.
+- **Added by the owner:** the stored answer is never changed by the check, and the check never starts or offers a re-run.
+
 ## 9. Not in this stage
 
 - **Prose numbers:** figures inside `effect_text`, `key_results`, the bottom line, clinical practice, notable findings and the At a glance key numbers (`value_text`) are not checked. They are text; tracing them is the spec's later number work.
