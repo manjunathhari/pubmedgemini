@@ -38,6 +38,8 @@ from pubmedgemini.runs import (
     add_search,
     add_seen,
     add_step,
+    check_begin,
+    check_finish,
     clear_early,
     clip,
     create_run,
@@ -1457,6 +1459,125 @@ def test_start_up_clears_early_and_fails_pending_intros(run_app):
     assert dict(rows(run_app.pool, "SELECT run_id, status || '/' || coalesce(reason, '') "
                                    "FROM run_intros")) == {a: "failed/stale", b: "done/"}
     assert run_app.view(b).intro == "Kept." and run_app.view(b).early is None
+
+
+# ---------- F4a Task 1: the completeness check's row (migration 0007) ----------
+
+
+def check_rows(pool):
+    return {r[0]: r[1:] for r in rows(
+        pool, "SELECT run_id, status, reason, numbers_found, numbers_total, names_match, "
+              "names_total FROM run_checks")}
+
+
+def test_answer_with_check_stores_a_pending_row_together(run_app):
+    a = running_run(run_app)
+    assert finish_with_answer(run_app.pool, a, "done", None, "end_turn", 9, BODY,
+                              check=True) is True
+    assert check_rows(run_app.pool) == {a: ("pending", None, None, None, None, None)}
+    v = run_app.view(a)
+    assert v.answer == BODY and v.check is not None
+    assert (v.check.status, v.check.numbers_found, v.check.numbers_total, v.check.names_match,
+            v.check.names_total) == ("pending", None, None, None, None)
+    assert 0 <= v.check.age_s < 30
+    b = running_run(run_app)  # the default: no check row
+    assert finish_with_answer(run_app.pool, b, "done", None, "end_turn", 9, BODY) is True
+    assert run_app.view(b).check is None and set(check_rows(run_app.pool)) == {a}
+    c = running_run(run_app)  # a run no longer running: neither the answer nor the row
+    stop_unfinished(run_app.pool)
+    assert finish_with_answer(run_app.pool, c, "done", None, "end_turn", 9, BODY,
+                              check=True) is False
+    assert run_app.view(c).answer is None and c not in check_rows(run_app.pool)
+
+
+def test_a_refused_check_row_still_stores_the_answer(run_app, caplog):
+    rid = running_run(run_app)
+    with run_app.pool.connection() as conn:  # the insert will hit the primary key
+        conn.execute("INSERT INTO run_checks (run_id, status, reason) "
+                     "VALUES (%s, 'failed', 'stale')", (rid,))
+    caplog.set_level(logging.INFO)
+    assert finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, BODY,
+                              closing_line=("present", "Answer ready"), check=True) is True
+    v = run_app.view(rid)
+    assert (v.status, v.answer, v.lines[-1]) == ("done", BODY, "Answer ready")
+    assert check_rows(run_app.pool) == {rid: ("failed", "stale", None, None, None, None)}
+    lines = [r.getMessage() for r in caplog.records if "check_not_started" in r.getMessage()]
+    assert lines == [f"run kind=check_not_started run_id={rid} error=UniqueViolation"]
+
+
+def test_an_answer_the_database_refuses_leaves_no_check_row(run_app):
+    rid = running_run(run_app)
+    with pytest.raises(psycopg.Error):
+        finish_with_answer(run_app.pool, rid, "done", None, "end_turn", 9, REFUSED, check=True)
+    assert check_rows(run_app.pool) == {} and answers(run_app.pool) == 0
+    assert run_app.view(rid).status == "running"
+
+
+def test_check_moves_pending_running_done_once(run_app):
+    rid = running_run(run_app)
+    assert check_begin(run_app.pool, rid) is False  # no row yet
+    finish_with_answer(run_app.pool, rid, "done", None, None, None, BODY, check=True)
+    assert check_begin(run_app.pool, rid) is True
+    assert rows(run_app.pool, "SELECT status, started_at IS NOT NULL, finished_at FROM "
+                              "run_checks") == [("running", True, None)]
+    assert check_begin(run_app.pool, rid) is False
+    assert check_finish(run_app.pool, rid, counts=(16, 16, 4, 4), reason=None) is True
+    assert check_finish(run_app.pool, rid, counts=(1, 2, 3, 4), reason=None) is False
+    assert check_finish(run_app.pool, rid, counts=None, reason="internal") is False
+    assert check_rows(run_app.pool) == {rid: ("done", None, 16, 16, 4, 4)}
+    assert rows(run_app.pool, "SELECT finished_at IS NOT NULL FROM run_checks") == [(True,)]
+    c = run_app.view(rid).check
+    assert (c.status, c.numbers_found, c.numbers_total, c.names_match, c.names_total) == (
+        "done", 16, 16, 4, 4)
+    assert run_app.view(rid).answer == BODY  # untouched
+
+
+def test_check_finish_failed_keeps_no_counts(run_app):
+    rid = running_run(run_app)
+    finish_with_answer(run_app.pool, rid, "done", None, None, None, BODY, check=True)
+    assert check_finish(run_app.pool, rid, counts=None, reason="internal") is True  # from pending
+    assert check_rows(run_app.pool) == {rid: ("failed", "internal", None, None, None, None)}
+    assert rows(run_app.pool, "SELECT finished_at IS NOT NULL FROM run_checks") == [(True,)]
+    c = run_app.view(rid).check
+    assert (c.status, c.numbers_found, c.names_total) == ("failed", None, None)
+    assert check_begin(run_app.pool, rid) is False
+
+
+@pytest.mark.parametrize("counts,reason", [(None, None), ((1, 1, 1, 1), "internal")])
+def test_check_finish_needs_counts_or_reason(run_app, counts, reason):
+    rid = running_run(run_app)
+    finish_with_answer(run_app.pool, rid, "done", None, None, None, BODY, check=True)
+    with pytest.raises(ValueError):
+        check_finish(run_app.pool, rid, counts=counts, reason=reason)
+    assert check_rows(run_app.pool) == {rid: ("pending", None, None, None, None, None)}
+
+
+def test_start_up_fails_unfinished_checks(run_app):
+    ids = []
+    for _ in range(3):
+        rid = running_run(run_app)
+        finish_with_answer(run_app.pool, rid, "done", None, None, None, BODY, check=True)
+        ids.append(rid)
+    pending, running, done = ids
+    check_begin(run_app.pool, running)
+    check_begin(run_app.pool, done)
+    check_finish(run_app.pool, done, counts=(2, 3, 1, 2), reason=None)
+    assert stop_unfinished(run_app.pool) == 0
+    assert check_rows(run_app.pool) == {
+        pending: ("failed", "stale", None, None, None, None),
+        running: ("failed", "stale", None, None, None, None),
+        done: ("done", None, 2, 3, 1, 2)}
+    assert rows(run_app.pool, "SELECT count(*) FROM run_checks WHERE finished_at IS NULL") == [
+        (0,)]
+    assert [run_app.view(r).status for r in ids] == ["done"] * 3  # the runs are untouched
+
+
+def test_a_deleted_run_takes_its_check_row(run_app):
+    rid = running_run(run_app)
+    finish_with_answer(run_app.pool, rid, "done", None, None, None, BODY, check=True)
+    with run_app.pool.connection() as conn:
+        conn.execute("DELETE FROM runs WHERE id = %s", (rid,))
+    assert check_rows(run_app.pool) == {}
 
 
 # ---------- F3c Task 3: the run writes the Introduction and stores the early summary ----------

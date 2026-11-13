@@ -573,6 +573,8 @@ def test_no_model_text_in_any_table_but_the_reviewed_ones(migrated_pool):
         # F3c: the Introduction's fixed status and reason, its text, and the early summary.
         ("run_intros", "status"), ("run_intros", "reason"), ("run_intros", "text"),
         ("run_early", "body"),
+        # F4a: the completeness check's fixed status and reason (counts only, no text).
+        ("run_checks", "status"), ("run_checks", "reason"),
     }, sorted(cols)
 
 

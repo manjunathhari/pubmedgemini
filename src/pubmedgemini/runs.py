@@ -168,6 +168,19 @@ class ContradictionView:
 
 
 @dataclass(frozen=True)
+class CheckRow:
+    """The run's completeness check (F4a), as stored: a fixed status and, when `done`, four
+    counts. `age_s` is the seconds since the row was created, by the database's clock."""
+
+    status: str  # pending, running, done or failed
+    numbers_found: int | None
+    numbers_total: int | None
+    names_match: int | None
+    names_total: int | None
+    age_s: float
+
+
+@dataclass(frozen=True)
 class RunView:
     id: UUID
     question: str
@@ -189,6 +202,9 @@ class RunView:
     # only while the run is queued or running and has no answer.
     intro: str | None = None
     early: dict | None = None
+    # F4a: the completeness check's row; None for a run without one (every run before F4a,
+    # and every run with no written answer).
+    check: CheckRow | None = None
 
     @property
     def lines(self) -> list[str]:
@@ -378,7 +394,8 @@ def finish_run(pool: ConnectionPool, run_id: UUID, status: str, error_kind: str 
 
 def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
                        error_kind: str | None, stop_reason: str | None, rounds: int | None,
-                       body: dict, closing_line: tuple[str, str] | None = None) -> bool:
+                       body: dict, closing_line: tuple[str, str] | None = None,
+                       check: bool = False) -> bool:
     """The run's outcome and its written answer, in one transaction: both are stored or
     neither. As `finish_run`, the outcome is written only while the run is still `queued` or
     `running`; when it is not (a restart stopped it), nothing is stored and the case is logged
@@ -394,11 +411,18 @@ def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
     stored in the same transaction (cut as `add_step` cuts), so the page never shows it for an
     answer that was not stored, nor a stored answer without it.
 
+    `check` (F4a), when true, also inserts the run's `pending` completeness-check row in the
+    same transaction, inside a savepoint: the first page that shows the answer shows the row.
+    If that insert alone is refused, it is rolled back on its own, one line is logged by the
+    error's class, and the answer is stored all the same: the check never keeps an answer
+    from being stored.
+
     True only when the outcome and the answer were both stored; False when the run was no
     longer queued or running. A `status` that is not final raises ValueError before anything
     is written."""
     if status not in FINAL_STATUSES:
         raise ValueError("status must be final")
+    check_error: str | None = None
     with _STEP_LOCK, pool.connection() as conn, conn.transaction():
         cur = conn.execute(
             "UPDATE runs SET status = %s, error_kind = %s, stop_reason = %s, rounds = %s, "
@@ -415,6 +439,14 @@ def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
                 kind, line = closing_line
                 conn.execute(_INSERT_STEP, (run_id, kind, clip(line, MAX_STEP_LINE), run_id))
             conn.execute(_DELETE_EARLY, (run_id,))
+            if check:
+                try:
+                    with conn.transaction():  # a savepoint: rolled back alone when refused
+                        conn.execute("INSERT INTO run_checks (run_id) VALUES (%s)", (run_id,))
+                except psycopg.Error as e:
+                    check_error = type(e).__name__
+    if check_error is not None:
+        log.warning("run kind=check_not_started run_id=%s error=%s", run_id, check_error)
     if not applied:
         log.info("run kind=finish_not_applied run_id=%s", run_id)
     return applied
@@ -422,8 +454,10 @@ def finish_with_answer(pool: ConnectionPool, run_id: UUID, status: str,
 
 def stop_unfinished(pool: ConnectionPool) -> int:
     """At start-up: every queued or running run belonged to the previous process. In the same
-    transaction every early summary is deleted (no run is running now) and every pending
-    Introduction fails `stale` (its thread died with the process). Returns the runs stopped."""
+    transaction every early summary is deleted (no run is running now), every pending
+    Introduction fails `stale` (its thread died with the process) and every pending or running
+    completeness check fails `stale` (F4a: it ran on the run's thread; it is not run again).
+    Returns the runs stopped."""
     with pool.connection() as conn, conn.transaction():
         cur = conn.execute(
             "UPDATE runs SET status = 'stopped', error_kind = 'restarted', finished_at = now() "
@@ -433,6 +467,8 @@ def stop_unfinished(pool: ConnectionPool) -> int:
         conn.execute("DELETE FROM run_early")
         conn.execute("UPDATE run_intros SET status = 'failed', reason = 'stale', "
                      "finished_at = now() WHERE status = 'pending'")
+        conn.execute("UPDATE run_checks SET status = 'failed', reason = 'stale', "
+                     "finished_at = now() WHERE status IN ('pending', 'running')")
     return stopped
 
 
@@ -504,6 +540,47 @@ def clear_early(pool: ConnectionPool, run_id: UUID) -> None:
         conn.execute(_DELETE_EARLY, (run_id,))
 
 
+# ---------- the completeness check (F4a) ----------
+
+
+def check_begin(pool: ConnectionPool, run_id: UUID) -> bool:
+    """The run's check row from `pending` to `running`. False when there is no pending row
+    (the answer was not stored with one, or a restart ended it first)."""
+    with pool.connection() as conn:
+        cur = conn.execute(
+            "UPDATE run_checks SET status = 'running', started_at = now() "
+            "WHERE run_id = %s AND status = 'pending'",
+            (run_id,),
+        )
+        return cur.rowcount == 1
+
+
+def check_finish(pool: ConnectionPool, run_id: UUID, *,
+                 counts: tuple[int, int, int, int] | None, reason: str | None) -> bool:
+    """Ends the run's check row, only while it is `pending` or `running`: `counts` (numbers
+    found, numbers in all, names matching, names in all) make it `done`; else `reason`, a
+    fixed kind, makes it `failed` with no counts. Exactly one of the two must be given, else
+    ValueError before any write. False when the row is gone or already ended."""
+    if (counts is None) == (reason is None):
+        raise ValueError("counts or reason, one of the two")
+    with pool.connection() as conn:
+        if counts is not None:
+            found, total, match, names = counts
+            cur = conn.execute(
+                "UPDATE run_checks SET status = 'done', numbers_found = %s, "
+                "numbers_total = %s, names_match = %s, names_total = %s, finished_at = now() "
+                "WHERE run_id = %s AND status IN ('pending', 'running')",
+                (found, total, match, names, run_id),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE run_checks SET status = 'failed', reason = %s, finished_at = now() "
+                "WHERE run_id = %s AND status IN ('pending', 'running')",
+                (reason, run_id),
+            )
+        return cur.rowcount == 1
+
+
 # ---------- reads ----------
 
 
@@ -542,6 +619,10 @@ def get_run(pool: ConnectionPool, run_id: UUID, user_id: int) -> RunView | None:
         if answer_row is None and r[2] in ("queued", "running"):
             early_row = conn.execute(
                 "SELECT body FROM run_early WHERE run_id = %s", (run_id,)).fetchone()
+        check_row = conn.execute(
+            "SELECT status, numbers_found, numbers_total, names_match, names_total, "
+            "EXTRACT(EPOCH FROM now() - created_at) FROM run_checks WHERE run_id = %s",
+            (run_id,)).fetchone()
     chosen = [p for p in papers if p[0] == "selected"]
     records = get_for_display(pool, [p[1] for p in chosen]) if chosen else {}
     selected = []
@@ -557,7 +638,9 @@ def get_run(pool: ConnectionPool, run_id: UUID, user_id: int) -> RunView | None:
                    searches, selected, considered, contradictions,
                    answer_row[0] if answer_row else None,
                    intro=intro_row[0] if intro_row else None,
-                   early=early_row[0] if early_row else None)
+                   early=early_row[0] if early_row else None,
+                   check=CheckRow(check_row[0], check_row[1], check_row[2], check_row[3],
+                                  check_row[4], float(check_row[5])) if check_row else None)
 
 
 def list_runs(pool: ConnectionPool, user_id: int, limit: int = 20) -> list[RunRow]:

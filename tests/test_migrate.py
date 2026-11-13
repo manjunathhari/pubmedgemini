@@ -393,3 +393,56 @@ def test_intro_and_early_rows_go_with_their_run(migrated_pool, owner_id):
     pool_exec(migrated_pool, "DELETE FROM runs WHERE id = %s", (run_id,))
     assert pool_one(migrated_pool, "SELECT count(*) FROM run_intros") == 0
     assert pool_one(migrated_pool, "SELECT count(*) FROM run_early") == 0
+
+
+# ---------- F4a: the completeness check (migration 0007) ----------
+
+CHECK_DONE = ("INSERT INTO run_checks (run_id, status, numbers_found, numbers_total, "
+              "names_match, names_total) VALUES (%s, 'done', 2, 3, 1, 2)")
+
+
+def test_migration_0007_adds_run_checks(migrated_pool, owner_id):
+    assert table_exists(migrated_pool, "run_checks")
+    a, b, c = (insert_run(migrated_pool, owner_id, status="done") for _ in range(3))
+    pool_exec(migrated_pool, "INSERT INTO run_checks (run_id) VALUES (%s)", (a,))
+    assert pool_rows(migrated_pool, "SELECT status, reason, numbers_found, started_at, "
+                                    "finished_at FROM run_checks WHERE run_id = %s", (a,)) == [
+        ("pending", None, None, None, None)]
+    pool_exec(migrated_pool, CHECK_DONE, (b,))
+    pool_exec(migrated_pool, "INSERT INTO run_checks (run_id, status, reason) "
+                             "VALUES (%s, 'failed', 'stale')", (c,))
+
+
+CHECK_COUNTS = ("INSERT INTO run_checks (run_id, status, numbers_found, numbers_total, "
+                "names_match, names_total) VALUES (%s, ")
+
+
+@pytest.mark.parametrize("sql", [
+    "INSERT INTO run_checks (run_id, status) VALUES (%s, 'done')",  # done without counts
+    CHECK_COUNTS + "'done', 1, 1, 1, NULL)",  # one count missing
+    CHECK_COUNTS + "'done', 4, 3, 1, 2)",  # found > total
+    CHECK_COUNTS + "'done', 2, 3, 3, 2)",  # match > total
+    CHECK_COUNTS + "'done', -1, 3, 1, 2)",  # below zero
+    CHECK_COUNTS + "'running', 2, 3, 1, 2)",  # counts before done
+    "INSERT INTO run_checks (run_id, status) VALUES (%s, 'failed')",  # failed without a reason
+    "INSERT INTO run_checks (run_id, status, reason) VALUES (%s, 'pending', 'stale')",
+    "INSERT INTO run_checks (run_id, status, reason) VALUES (%s, 'failed', 'Free text!')",
+    "INSERT INTO run_checks (run_id, status) VALUES (%s, 'checked')",  # not a status
+])
+def test_run_checks_table_refuses_bad_rows(migrated_pool, owner_id, sql):
+    run_id = insert_run(migrated_pool, owner_id, status="done")
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pool_exec(migrated_pool, sql, (run_id,))
+
+
+def test_run_checks_has_no_free_text_column(migrated_pool):
+    cols = pool_rows(
+        migrated_pool,
+        "SELECT column_name, data_type FROM information_schema.columns "
+        "WHERE table_name = 'run_checks' ORDER BY ordinal_position")
+    assert cols == [("run_id", "uuid"), ("status", "text"), ("reason", "text"),
+                    ("numbers_found", "integer"), ("numbers_total", "integer"),
+                    ("names_match", "integer"), ("names_total", "integer"),
+                    ("created_at", "timestamp with time zone"),
+                    ("started_at", "timestamp with time zone"),
+                    ("finished_at", "timestamp with time zone")]
