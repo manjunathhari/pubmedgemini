@@ -743,3 +743,11 @@ def test_search_card_says_no_ai_model_and_hides_its_label_on_the_ask_page(pages)
         assert bit in rule, bit
     assert "color: var(--muted)" in _rule_body(".sai-aside", css())
     assert "font-weight: 400" in _rule_body(".sai-aside", css())
+
+
+def test_search_box_and_button_line_up_with_the_ask_ones_on_desktop():
+    # the owner, 13 Nov: "re align the box and the pill"; checked in a browser at 1440px (same tops)
+    wide = css().split("@media (min-width: 900px)", 1)[1]
+    assert "position: absolute" in _rule_body('.sai-pair p:has(> label[for="q"])', wide)
+    assert "height: 116px" in _rule_body(".sai-pair textarea, .sai-pair input#q", wide)
+    assert "margin-top: -10px" in _rule_body(".sai-pair .card > h2 + form", wide)
