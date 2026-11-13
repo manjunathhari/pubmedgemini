@@ -1,8 +1,8 @@
 # Change log
 
-Live: F0, F1, F2, the look, Library and Activity (merged and deployed on 10 and 11 Nov 2026), F3a (the writer) and F3b (the answer page). F3c (the Introduction and the early summary) is on its branch `f3c-introduction-summary` and is not merged. Entries start with the first merge to `main` that changes the running app.
+Live: F0, F1, F2, the look, Library and Activity (merged and deployed on 10 and 11 Nov 2026), F3a (the writer) and F3b (the answer page). F3c (the Introduction and the early summary) is live too (merged 12 Nov). Entries start with the first merge to `main` that changes the running app.
 
-## F4a: the completeness check (branch `f4a-completeness-check`, not merged yet)
+## F4a: the completeness check (merged to `main` on the owner's word, 13 Nov 2026)
 
 - A finished answer now ends with one small box, the last on the page: "Completeness check", then Pending › Running › Done, and at Done one line such as "16 of 16 numbers found · 4 of 4 trial names match". The check runs after the answer is stored and shown, so reading is never held up. It takes a blink, so the page will nearly always show Done at once.
 - What "numbers found" means: each outcome number the answer lists (with its interval ends, when given) is looked for in the abstract of the study it cites. It counts as found when the abstract prints the same figure, or a figure that rounds to it at the decimals the answer shows (the abstract's 14.29 for the answer's 14.3). **A full count means each figure is printed somewhere in the cited abstract. It does not mean the figure is right:** the check does not read the unit, the arm, the sign or the words around a number, so a small whole number is nearly always "found", and a figure given to the wrong arm of the right study is "found" too. A count that is not full can be honest work: a percentage worked out from counts ("6 of 42"), a changed unit, a number in words or a figure that is only in the full text all read "not found". Numbers inside sentences, the participant counts and p values are not checked.
