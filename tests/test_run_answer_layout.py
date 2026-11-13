@@ -352,6 +352,11 @@ def test_mock_v6_rules_are_in_the_stylesheet_word_for_word():
     mock = MOCK.read_text(encoding="utf-8")
     block = mock.split("/* ---- new for the answer page (F3b)", 1)[1].split("*/", 1)[1]
     block = block.split("</style>", 1)[0].strip()
+    # the mock was drawn in greys; the stylesheet writes each grey as its look's property
+    greys = {"#F4F4F4": "var(--page)", "#FFFFFF": "var(--card)", "#DDDDDD": "var(--line)",
+             "#BDBDBD": "var(--line2)", "#8C8C8C": "var(--faint)", "#666666": "var(--muted)",
+             "#4D4D4D": "var(--strong)", "#333333": "var(--ink)"}
+    block = re.sub(r"#[0-9A-Fa-f]{6}\b", lambda m: greys[m.group(0).upper()], block)
     assert block in CSS.read_text(encoding="utf-8")
 
 

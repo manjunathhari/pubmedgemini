@@ -1,5 +1,6 @@
-"""The look batch: greys, two self-hosted fonts, a stylesheet instead of inline style, and a
-header on every page. Nothing here is about behaviour; test_web, test_search_page and
+"""The look: the SurgeryAi palette (Look A by day, Look B by night, frozen on the Mock Board
+13 Nov), two self-hosted fonts, a stylesheet instead of inline style, and a header on every
+page. Nothing here is about behaviour; test_web, test_search_page and
 test_ask_page cover that."""
 
 import re
@@ -16,7 +17,22 @@ CSS_PATH = STATIC / "app.css"
 FONTS = STATIC / "fonts"
 H = {"x-dev-user-email": "owner@example.com"}
 
-AGREED = {"#333333", "#4d4d4d", "#8c8c8c", "#666666", "#bdbdbd", "#dddddd", "#f4f4f4", "#ffffff"}
+# Look A (day) and Look B (night): every colour is a custom property, set once for each look.
+LOOK_A = {
+    "--page": "#eef0f3", "--card": "#ffffff", "--line": "#dde3ea", "--line2": "#bac5d1",
+    "--faint": "#7d8a98", "--muted": "#5b6773", "--strong": "#2c3e52", "--ink": "#101a24",
+    "--head": "#13263c", "--head-line": "#13263c", "--head-ink": "#f7f4ec",
+    "--head-muted": "#93a0ad", "--head-accent": "#5aa0ee", "--accent": "#1f6bd0",
+    "--btn": "#13263c", "--btn-hover": "#101a24", "--btn-ink": "#ffffff",
+}
+LOOK_B = {
+    "--page": "#1b2836", "--card": "#223142", "--line": "#2f4053", "--line2": "#46586c",
+    "--faint": "#8392a1", "--muted": "#a3b0bd", "--strong": "#c8d1da", "--ink": "#e8edf2",
+    "--head": "#101a24", "--head-line": "#2f4053", "--head-ink": "#f7f4ec",
+    "--head-muted": "#93a0ad", "--head-accent": "#5aa0ee", "--accent": "#5aa0ee",
+    "--btn": "#5aa0ee", "--btn-hover": "#7cb4f2", "--btn-ink": "#0a1420",
+}
+AGREED = set(LOOK_A.values()) | set(LOOK_B.values())
 COLOUR_NAMES = ("red", "blue", "green", "orange", "yellow", "purple", "pink", "teal", "navy")
 HEX = re.compile(r"#([0-9a-fA-F]{3,8})\b")
 
@@ -39,12 +55,42 @@ def hex_colours() -> set[str]:
     return found
 
 
-def test_css_has_only_greys():
+def _block(text: str, start: int) -> str:
+    """The body of the brace block that opens at or after `start`."""
+    i = text.index("{", start)
+    depth, j = 0, i
+    while True:
+        depth += {"{": 1, "}": -1}.get(text[j], 0)
+        if depth == 0:
+            return text[i + 1:j]
+        j += 1
+
+
+def _props(body: str) -> dict[str, str]:
+    return {k: v.strip().lower() for k, v in re.findall(r"(--[a-z0-9-]+)\s*:\s*([^;]+);", body)}
+
+
+def test_colours_live_only_in_the_two_looks():
+    text = re.sub(r"/\*.*?\*/", "", css(), flags=re.DOTALL)
+    root = re.search(r"(^|\n):root\s*\{", text)
+    assert root
+    day = _block(text, root.start())
+    dark = re.search(r"@media\s*\(prefers-color-scheme:\s*dark\)\s*\{", text)
+    assert dark
+    night = _block(text, text.index(":root", dark.end()))
+    assert _props(day) == LOOK_A
+    assert _props(night) == LOOK_B
+    assert "color-scheme: light dark" in day
+    # outside the two blocks no colour is written: only var(--...)
+    rest = text.replace(day, "").replace(night, "")
+    assert not HEX.search(rest), HEX.search(rest)
+    used = set(re.findall(r"var\((--[a-z0-9-]+)\)", text))
+    assert used and used <= set(LOOK_A)
+
+
+def test_css_has_no_other_colour_forms():
     text = css()
-    colours = hex_colours()
-    assert colours
-    for c in colours:
-        assert c[1:3] == c[3:5] == c[5:7], c
+    assert hex_colours()
     for fn in ("rgb(", "rgba(", "hsl(", "hsla("):
         assert fn not in text.lower()
     for name in COLOUR_NAMES:
@@ -193,8 +239,9 @@ def test_header_on_every_page(pages):
         blocks = re.findall(r"<header\b.*?</header>", pages[name].text, re.DOTALL)
         assert len(blocks) == 1, name
         head = blocks[0]
-        assert re.search(r'<div class="tile"[^>]*>P</div>', head), name
-        assert ">pubmedgemini<" in head, name
+        assert re.search(r'<div class="tile"[^>]*>SAi</div>', head), name
+        assert ">PubMed Quick<" in head, name
+        assert "pubmedgemini" not in pages[name].text.split("</header>")[0], name
         assert ">Educational tool only<" in head, name
 
 
@@ -279,8 +326,18 @@ def _mock_f4a_rules() -> dict[str, str]:
     return {ln.split("{", 1)[0]: ln for ln in lines}
 
 
+# the frozen mocks were drawn in greys; the stylesheet writes each grey as its look's property
+GREY_TO_VAR = {"#F4F4F4": "var(--page)", "#FFFFFF": "var(--card)", "#DDDDDD": "var(--line)",
+               "#BDBDBD": "var(--line2)", "#8C8C8C": "var(--faint)", "#666666": "var(--muted)",
+               "#4D4D4D": "var(--strong)", "#333333": "var(--ink)"}
+
+
+def _as_vars(rule: str) -> str:
+    return re.sub(r"#[0-9A-Fa-f]{6}\b", lambda m: GREY_TO_VAR[m.group(0).upper()], rule)
+
+
 def test_steps_rules_are_the_mocks():
-    rules = _mock_f4a_rules()
+    rules = {k: _as_vars(v) for k, v in _mock_f4a_rules().items()}
     assert set(rules) == set(STEPS_SELECTORS) | set(UNUSED_SELECTORS)
     lines = css().splitlines()
     for sel in STEPS_SELECTORS:  # character for character, each on its own line, once

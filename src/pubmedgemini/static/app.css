@@ -1,4 +1,4 @@
-/* Greys only, two self-hosted fonts. Phone first. Elements are styled by tag and place because
+/* The SurgeryAi look (Look A by day, Look B by night, from the phone's setting), two self-hosted fonts. Phone first. Elements are styled by tag and place because
    the pages keep their plain markup. */
 
 @font-face {
@@ -17,19 +17,38 @@
   font-display: swap;
 }
 
+/* the two looks: every colour on the site is one of these (frozen on the Mock Board, 13 Nov) */
+:root {
+  color-scheme: light dark;
+  --page: #EEF0F3; --card: #FFFFFF; --line: #DDE3EA; --line2: #BAC5D1;
+  --faint: #7D8A98; --muted: #5B6773; --strong: #2C3E52; --ink: #101A24;
+  --head: #13263C; --head-line: #13263C; --head-ink: #F7F4EC;
+  --head-muted: #93A0AD; --head-accent: #5AA0EE; --accent: #1F6BD0;
+  --btn: #13263C; --btn-hover: #101A24; --btn-ink: #FFFFFF;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #1B2836; --card: #223142; --line: #2F4053; --line2: #46586C;
+    --faint: #8392A1; --muted: #A3B0BD; --strong: #C8D1DA; --ink: #E8EDF2;
+    --head: #101A24; --head-line: #2F4053; --head-ink: #F7F4EC;
+    --head-muted: #93A0AD; --head-accent: #5AA0EE; --accent: #5AA0EE;
+    --btn: #5AA0EE; --btn-hover: #7CB4F2; --btn-ink: #0A1420;
+  }
+}
+
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  background: #F4F4F4;
-  color: #333333;
+  background: var(--page);
+  color: var(--ink);
   font-family: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 15px;
   line-height: 1.5;
 }
 
 /* header */
-.site-header { background: #FFFFFF; border-bottom: 1px solid #BDBDBD; }
+.site-header { background: var(--head); border-bottom: 1px solid var(--head-line); }
 .site-header-inner {
   max-width: 42rem;
   margin: 0 auto;
@@ -42,16 +61,18 @@ body {
   width: 32px;
   height: 32px;
   flex: none;
-  background: #4D4D4D;
-  color: #FFFFFF;
-  border-radius: 6px;
+  background: var(--head-ink);
+  color: var(--head);
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
 }
-.site-name { font-weight: 700; font-size: 16px; line-height: 1.2; }
-.site-note { font-size: 12px; color: #666666; line-height: 1.2; }
+.site-name { font-weight: 500; font-size: 16px; line-height: 1.2; letter-spacing: 0.04em; color: var(--head-ink); }
+.site-note { font-size: 12px; color: var(--head-muted); line-height: 1.2; }
 
 /* menu: a row of equal items under the header, the current one bold and underlined */
 .site-header nav {
@@ -66,16 +87,16 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #666666;
+  color: var(--head-muted);
   text-decoration: none;
   font-weight: 500;
   font-size: 14px;
 }
-.site-header nav a:hover { color: #333333; }
+.site-header nav a:hover { color: var(--head-ink); }
 .site-header nav a.current {
-  color: #333333;
+  color: var(--head-ink);
   font-weight: 700;
-  box-shadow: inset 0 -2px 0 #4D4D4D;
+  box-shadow: inset 0 -2px 0 var(--head-accent);
 }
 
 /* page */
@@ -96,8 +117,10 @@ p + p, form p + p { margin-top: 10px; }
 ul { padding-left: 1.25rem; }
 li + li { margin-top: 6px; }
 
-a { color: #333333; }
-a:hover { color: #666666; }
+a { color: var(--ink); }
+a:hover { color: var(--muted); }
+main a { color: var(--accent); }
+main a:hover { color: var(--ink); }
 /* links flow inline; only links in a container marked row or item get the 44px target */
 .row > a, .item a {
   display: inline-block;
@@ -107,9 +130,9 @@ a:hover { color: #666666; }
 
 /* cards: sections, and each paper on the results page */
 .card, main > article {
-  background: #FFFFFF;
-  border: 1px solid #BDBDBD;
-  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--line2);
+  border-radius: 14px;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -120,11 +143,11 @@ a:hover { color: #666666; }
 .card > *, main > article > * { min-width: 0; }
 .card > p + p, .card > form p + p, article > p + p { margin-top: 0; }
 article { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.card article { border-top: 1px solid #DDDDDD; padding-top: 10px; }
+.card article { border-top: 1px solid var(--line); padding-top: 10px; }
 .card > h2 + article { border-top: 0; padding-top: 0; }
-.muted { color: #666666; }
+.muted { color: var(--muted); }
 .item p + p { margin-top: 0; }
-.item { border-top: 1px solid #DDDDDD; padding-top: 10px; }
+.item { border-top: 1px solid var(--line); padding-top: 10px; }
 .card > h2 + .item, .card > .item:first-child { border-top: 0; padding-top: 0; }
 
 /* the Activity table; it scrolls inside its card if it is ever too wide */
@@ -135,11 +158,11 @@ th {
   font-family: "Hanken Grotesk", system-ui, sans-serif;
   font-size: 12px;
   font-weight: 600;
-  color: #666666;
+  color: var(--muted);
   padding: 6px 4px;
-  border-bottom: 1px solid #8C8C8C;
+  border-bottom: 1px solid var(--faint);
 }
-td { padding: 8px 4px; border-bottom: 1px solid #DDDDDD; }
+td { padding: 8px 4px; border-bottom: 1px solid var(--line); }
 th.num, td.num { text-align: right; }
 
 /* inputs */
@@ -151,13 +174,13 @@ label { font-weight: 600; }
 textarea, input[type="text"] {
   display: block;
   width: 100%;
-  border: 1px solid #8C8C8C;
+  border: 1px solid var(--faint);
   border-radius: 8px;
   padding: 12px;
   font-size: inherit;
   line-height: inherit;
-  background: #FFFFFF;
-  color: #333333;
+  background: var(--card);
+  color: var(--ink);
 }
 textarea { resize: vertical; }
 
@@ -169,20 +192,20 @@ button {
   padding: 0 16px;
   border: 0;
   border-radius: 8px;
-  background: #4D4D4D;
-  color: #FFFFFF;
+  background: var(--btn);
+  color: var(--btn-ink);
   line-height: inherit;
   font-weight: 600;
   font-size: 16px;
   cursor: pointer;
 }
-button:hover { background: #333333; }
+button:hover { background: var(--btn-hover); }
 input[type="text"] + button, input[type="text"] ~ button { margin-top: 10px; }
 
 /* small labels */
 .tag, article strong {
   display: inline-block;
-  border: 1px solid #8C8C8C;
+  border: 1px solid var(--faint);
   border-radius: 4px;
   padding: 1px 6px;
   font-family: "Hanken Grotesk", system-ui, sans-serif;
@@ -192,72 +215,72 @@ input[type="text"] + button, input[type="text"] ~ button { margin-top: 10px; }
 
 /* focus */
 a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible {
-  outline: 3px solid #333333;
+  outline: 3px solid var(--ink);
   outline-offset: 2px;
 }
 
 /* ---- the answer page (F3b): the "new for the answer page" block of docs/mocks/f3b-answer-page-v6.html,
    word for word; greys and the two fonts only ---- */
-.ex{border:1px dashed #8C8C8C;border-radius:6px;padding:6px 10px;font-size:13px;color:#666666;background:#FFFFFF}
+.ex{border:1px dashed var(--faint);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--muted);background:var(--card)}
 @media (min-width:700px){main.wide{max-width:68rem}}
-.sub{font-size:13px;color:#666666;font-family:"Hanken Grotesk",system-ui,sans-serif}
+.sub{font-size:13px;color:var(--muted);font-family:"Hanken Grotesk",system-ui,sans-serif}
 .pair-head{display:flex;flex-direction:column;gap:2px;margin-top:6px}
 .two{display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
 @media (min-width:700px){.two{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:stretch}}
-.eyebrow{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#666666;font-weight:600}
+.eyebrow{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
 .ci .lab,.cmp,.big,.num,.pill{font-family:"Hanken Grotesk",system-ui,sans-serif}
 .num{font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
 .ci .lab{display:flex;flex-wrap:wrap;gap:2px 10px;justify-content:space-between}
 .ci .muted{font-size:13px}
 svg.track{display:block;width:100%;height:40px;overflow:visible;margin-top:2px}
 .track line{shape-rendering:crispEdges}
-.track .base{stroke:#BDBDBD;stroke-width:1}
-.track .span{stroke:#333333;stroke-width:2}
-.track .est{stroke:#333333;stroke-width:5}
-.track .null{stroke:#666666;stroke-width:1;stroke-dasharray:3 3}
-.track text{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;fill:#666666;font-variant-numeric:tabular-nums}
+.track .base{stroke:var(--line2);stroke-width:1}
+.track .span{stroke:var(--ink);stroke-width:2}
+.track .est{stroke:var(--ink);stroke-width:5}
+.track .null{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+.track text{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;fill:var(--muted);font-variant-numeric:tabular-nums}
 .track .mid{text-anchor:middle}.track .end{text-anchor:end}
-.pill{display:inline-block;font-size:12px;font-weight:600;padding:1px 9px;border-radius:999px;white-space:nowrap;border:1px solid #8C8C8C;line-height:1.5}
-.pill.hi{background:#333333;border-color:#333333;color:#FFFFFF}
-.pill.mo{background:#DDDDDD;color:#333333}
-.pill.lo{background:#FFFFFF;color:#333333}
-.pill.vl{background:#FFFFFF;color:#666666;border-style:dashed}
+.pill{display:inline-block;font-size:12px;font-weight:600;padding:1px 9px;border-radius:999px;white-space:nowrap;border:1px solid var(--faint);line-height:1.5}
+.pill.hi{background:var(--ink);border-color:var(--ink);color:var(--card)}
+.pill.mo{background:var(--line);color:var(--ink)}
+.pill.lo{background:var(--card);color:var(--ink)}
+.pill.vl{background:var(--card);color:var(--muted);border-style:dashed}
 .head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
-details.oc{border:1px solid #DDDDDD;border-radius:8px;padding:10px 12px}
+details.oc{border:1px solid var(--line);border-radius:8px;padding:10px 12px}
 details.oc+details.oc{margin-top:8px}
 details.oc summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;align-items:start}
 details.oc summary::-webkit-details-marker{display:none}
 details.oc .t{font-weight:600}
-details.oc .meta,details.oc .s{grid-column:1/-1;font-size:13px;color:#666666}
-details.oc .s{color:#333333;font-family:"Source Serif 4",Georgia,serif;font-size:14px}
-details.oc summary::after{content:"open";grid-column:1/-1;font-size:12px;color:#333333;text-decoration:underline}
+details.oc .meta,details.oc .s{grid-column:1/-1;font-size:13px;color:var(--muted)}
+details.oc .s{color:var(--ink);font-family:"Source Serif 4",Georgia,serif;font-size:14px}
+details.oc summary::after{content:"open";grid-column:1/-1;font-size:12px;color:var(--ink);text-decoration:underline}
 details.oc[open] summary::after{content:"close"}
-details.oc .body{border-top:1px solid #DDDDDD;margin-top:8px;padding-top:8px;display:flex;flex-direction:column;gap:8px;font-size:14px}
-.cp{border-top:1px solid #DDDDDD;padding-top:12px;display:flex;flex-direction:column;gap:8px}
+details.oc .body{border-top:1px solid var(--line);margin-top:8px;padding-top:8px;display:flex;flex-direction:column;gap:8px;font-size:14px}
+.cp{border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px}
 .cp.first{border-top:0;padding-top:0}
 .arms{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.big{font-size:28px;font-weight:700;line-height:1;color:#333333}
-.armname{font-size:13px;color:#666666;font-family:"Hanken Grotesk",system-ui,sans-serif}
+.big{font-size:28px;font-weight:700;line-height:1;color:var(--ink)}
+.armname{font-size:13px;color:var(--muted);font-family:"Hanken Grotesk",system-ui,sans-serif}
 .dots{display:grid;grid-template-columns:repeat(10,1fr);gap:2px;margin-top:6px;max-width:150px}
 .dots i,i.key{aspect-ratio:1;border-radius:2px;display:block}
-.dots i.off{background:#DDDDDD}
-.A .dots i.on,.A i.key{background:#4D4D4D}
-.B .dots i.on,.B i.key{background:repeating-linear-gradient(135deg,#4D4D4D 0 1.5px,#FFFFFF 1.5px 3.5px);box-shadow:inset 0 0 0 1px #4D4D4D}
+.dots i.off{background:var(--line)}
+.A .dots i.on,.A i.key{background:var(--strong)}
+.B .dots i.on,.B i.key{background:repeating-linear-gradient(135deg,var(--strong) 0 1.5px,var(--card) 1.5px 3.5px);box-shadow:inset 0 0 0 1px var(--strong)}
 i.key{display:inline-block;width:11px;vertical-align:-1px;margin-right:4px}
-.cmp{border:1px solid #DDDDDD;border-radius:8px;padding:9px 12px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;font-size:14px}
+.cmp{border:1px solid var(--line);border-radius:8px;padding:9px 12px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;font-size:14px}
 .cmp b{font-weight:600}.cmp .muted,.cmp .num{grid-column:1/-1}.cmp .muted{font-size:13px}
-.notdrawn{font-size:13px;color:#666666;font-style:italic}
+.notdrawn{font-size:13px;color:var(--muted);font-style:italic}
 .two>.card{display:flex;flex-direction:column}
 details.more{margin-top:auto;padding-top:4px;display:flex;flex-direction:column;gap:8px}
-details.more>summary{cursor:pointer;font-size:14px;padding:8px 0 0;list-style:none;border-top:1px solid #DDDDDD;text-decoration:underline}
+details.more>summary{cursor:pointer;font-size:14px;padding:8px 0 0;list-style:none;border-top:1px solid var(--line);text-decoration:underline}
 details.more>summary::-webkit-details-marker{display:none}
 details.more[open]>summary .a{display:none}details.more:not([open])>summary .b{display:none}
 details.fold>summary{cursor:pointer;font-weight:600;list-style:none}
 details.fold>summary::-webkit-details-marker{display:none}
-details.fold>summary::before{content:"+ ";color:#666666}details.fold[open]>summary::before{content:"− "}
+details.fold>summary::before{content:"+ ";color:var(--muted)}details.fold[open]>summary::before{content:"− "}
 details.fold[open]>summary{margin-bottom:10px}
 .foot{font-size:13px}
-summary:focus-visible{outline:3px solid #333333;outline-offset:2px}
+summary:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 
 /* ---- the answer page on the run page (F3b Task 4): what the live base rules need beside mock
    v6's block. The question is the page heading and may be one long word; paragraphs inside a CI
@@ -271,8 +294,8 @@ details.fold > article + article { margin-top: 10px; }
 /* ---- the completeness check (F4a): the .steps rules of docs/mocks/f4a-completeness-v3.html ---- */
 .steps{display:flex;flex-wrap:wrap;align-items:center;gap:3px;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:13px}
 .steps .name{font-weight:600;font-size:14px;margin-right:2px}
-.steps .st{font-size:12px;white-space:nowrap;border:1px solid #BDBDBD;border-radius:999px;padding:1px 6px;color:#8C8C8C}
-.steps .st.was{color:#333333;border-color:#8C8C8C}
-.steps .st.now{background:#333333;border-color:#333333;color:#FFFFFF;font-weight:600}
-.steps .ar{color:#8C8C8C}
+.steps .st{font-size:12px;white-space:nowrap;border:1px solid var(--line2);border-radius:999px;padding:1px 6px;color:var(--faint)}
+.steps .st.was{color:var(--ink);border-color:var(--faint)}
+.steps .st.now{background:var(--ink);border-color:var(--ink);color:var(--card);font-weight:600}
+.steps .ar{color:var(--faint)}
 .steps .sub[data-x]{flex-basis:100%}
