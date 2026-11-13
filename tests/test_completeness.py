@@ -231,8 +231,10 @@ def test_year_must_be_the_records():
     ("EXAMPLE-2 2019", paper(title="The EXAMPLE-2 trial: a made-up title"), True),
     ("The EXAMPLE-2 trial, 2019", paper(abstract="Made-up (EXAMPLE-2)."), True),
     ("EXAMPLE-2 2019", paper(), False),  # an acronym the record does not print
-    ("EXAMPLE-2 2019", paper(abstract="Made-up: the EXAMPLE-22 trial."), False),
-    ("EXAMPLE-2 2019", paper(abstract="Made-up: the EXAMPLE trial, 2 arms."), False),
+    # review A1 (owner, 13 Nov): a hyphen and a space read the same, so the name's first
+    # piece is enough; these two were "no match" before and are the accepted false matches
+    ("EXAMPLE-2 2019", paper(abstract="Made-up: the EXAMPLE-22 trial."), True),
+    ("EXAMPLE-2 2019", paper(abstract="Made-up: the EXAMPLE trial, 2 arms."), True),
     ("2019", paper(abstract="Made-up: in 2019, 120 patients."), False),  # only a year
     ("120 2019", paper(abstract="Made-up: in 2019, 120 patients."), False),  # only numbers
     ("XY 2019", paper(abstract="Made-up: the XY trial."), False),  # under three characters
@@ -244,6 +246,49 @@ def test_year_must_be_the_records():
 ])
 def test_name_matches(label, p, want):
     assert name_matches(label, p) is want
+
+
+@pytest.mark.parametrize("label,p,want", [
+    # review A1: a hyphen in the label where the record has a space, and the reverse
+    ("EXAMPLE-2 2019", paper(abstract="Made-up: the EXAMPLE 2 trial enrolled 120."), True),
+    ("EXAMPLE-II 2019", paper(abstract="Made-up: the EXAMPLE II trial enrolled 120."), True),
+    ("EXAMPLE-II 2019", paper(title="EXAMPLE II: a made-up title"), True),
+    ("EXAMPLE 2019", paper(abstract="Made-up: the EXAMPLE-2 trial enrolled 120."), True),
+    ("EXAMPLE 2019", paper(abstract="Made-up: the EXAMPLE-trial enrolled 120."), True),
+    ("The EXAMPLE 2 trial, 2019", paper(title="EXAMPLE-2: a made-up title"), True),
+    ("Exämple-2 2019", paper(abstract="Made-up: the EXAMPLE 2 trial."), True),  # folded
+    # the accepted trade-off, a known false match: another number of the same name
+    ("EXAMPLE-3 2019", paper(abstract="Made-up: the EXAMPLE-2 trial enrolled 120."), True),
+    # the whole name still matches as before when its first piece is short
+    ("XY-2 2019", paper(abstract="Made-up: the XY-2 trial."), True),
+    # still no match: a wrong name, a part of a word, a short or filler or number first piece
+    ("MADEUP-2 2019", paper(abstract="Made-up: the EXAMPLE-2 trial enrolled 120."), False),
+    ("WRONGNAME 2019", paper(abstract="Made-up: the EXAMPLE 2 trial enrolled 120."), False),
+    ("EXAM-2 2019", paper(abstract="Made-up: the EXAMPLE-2 trial enrolled 120."), False),
+    ("EXAMPLES-2 2019", paper(abstract="Made-up: the EXAMPLE-2 trial enrolled 120."), False),
+    ("EXAMPLE-2 2019", paper(abstract="Made-up: the EXAMPLES trial enrolled 120."), False),
+    ("XY-2 2019", paper(abstract="Made-up: the XY 2 trial."), False),
+    ("XY-3 2019", paper(abstract="Made-up: the XY-2 trial."), False),
+    ("trial-2 2019", paper(abstract="Made-up: a trial of 120."), False),
+    ("study-OTHER 2019", paper(abstract="Made-up: a study of 120."), False),
+    ("120-EXAMPLE 2019", paper(abstract="Made-up: 120 patients."), False),
+    ("2019-OTHER", paper(abstract="Made-up: in 2019, 120 patients."), False),
+])
+def test_a_hyphen_and_a_space_read_the_same_in_a_trial_name(label, p, want):
+    assert name_matches(label, p) is want
+    assert trial_name_matches(label, p) is want  # every label here holds the year
+
+
+def test_the_hyphen_rule_does_not_touch_the_year_or_the_surname():
+    two = paper(abstract="Made-up: the EXAMPLE 2 trial enrolled 120.")
+    assert trial_name_matches("EXAMPLE-2 2018", two) is False  # the year is still needed
+    assert trial_name_matches("EXAMPLE-2", two) is False
+    # the surname is a whole word of the label, never a piece matched against the abstract
+    hyphened = paper(authors=["Example-Other A"], abstract=None)
+    assert name_matches("Other 2019", hyphened) is True
+    assert name_matches("Exam 2019", hyphened) is False
+    assert name_matches("Othername-Surname 2019", paper(abstract=None)) is True  # as before
+    assert name_matches("Sur-name 2019", paper(abstract=None)) is False
 
 
 def test_a_row_needs_the_year_and_the_name():
@@ -337,4 +382,21 @@ def test_a_long_hostile_label_is_quick():
     p = paper(title="x-" * 100_000, abstract="1-" * 100_000)
     start = time.monotonic()
     assert trial_name_matches(label, p) in (True, False)
+    assert time.monotonic() - start < 1.0
+
+
+@pytest.mark.parametrize("label", [
+    "a-" * 200_000,
+    "-" * 400_000,
+    "a" * 400_000,
+    "abc-" * 100_000,
+    "a " * 200_000,
+    "2019 " + "é-" * 199_997,
+])
+def test_a_400_000_character_label_is_quick(label):
+    assert len(label) >= 400_000 - 5
+    p = paper(title="abc-" * 100_000, abstract="a-b " * 100_000,
+              authors=["The " + "Example " * 50_000 + "Study Group"])
+    start = time.monotonic()
+    assert trial_name_matches(label + " 2019", p) in (True, False)
     assert time.monotonic() - start < 1.0

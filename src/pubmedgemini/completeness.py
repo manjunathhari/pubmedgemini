@@ -103,6 +103,7 @@ _LETTERS = str.maketrans({"ø": "o", "ł": "l", "đ": "d", "æ": "ae", "œ": "oe
 _WORD = re.compile(r"[^\W\d_]+")  # a run of letters
 _YEAR = re.compile(r"(?<!\d)\d{4}(?!\d)")  # four digits, a number of its own
 _TOKEN = re.compile(r"[^\W_]+(?:-[^\W_]+)*")  # letters and digits, with inner hyphens
+_PIECE = re.compile(r"[^\W_]+")  # letters and digits: a token split at its hyphens too
 _SUFFIXES = frozenset({"jr", "sr", "2nd", "3rd"})
 _NOT_A_NAME = frozenset({"the", "a", "trial", "study", "et", "al"})
 _MIN_SURNAME_WORD = 4
@@ -160,17 +161,34 @@ def _leading_name(label: str) -> str | None:
     return None
 
 
+def _first_piece(name: str) -> str | None:
+    """The leading name's first letters-and-digits piece ("example" of "example-2"), when it
+    can stand for the name: at least 3 characters, not a number, not a filler word."""
+    piece = _PIECE.match(name)
+    if piece is None:
+        return None
+    word = piece.group()
+    if len(word) < _MIN_LEADING_NAME or word.isdigit() or word in _NOT_A_NAME:
+        return None
+    return word
+
+
 def name_matches(label: str, paper: Paper) -> bool:
     """T2: PubMed's first-author surname is a word of the label, or the label's leading name
-    (at least 3 characters) is printed as a whole token in the study's own title or
-    abstract."""
+    is printed in the study's own title or abstract: the whole name (at least 3 characters)
+    as a whole token, or, a hyphen and a space reading the same, its first piece (at least 3
+    characters) as a whole piece of a token ("EXAMPLE-2" finds "EXAMPLE 2", "EXAMPLE" finds
+    "EXAMPLE-2"). Known false match: "EXAMPLE-3" then finds "EXAMPLE-2" too."""
     if _surname_matches(label, paper.authors):
         return True
     name = _leading_name(label)
-    if name is None or len(name) < _MIN_LEADING_NAME:
+    if name is None:
         return False
     printed = fold(f"{paper.title or ''}\n{paper.abstract or ''}")
-    return name in set(_TOKEN.findall(printed))
+    if len(name) >= _MIN_LEADING_NAME and name in set(_TOKEN.findall(printed)):
+        return True
+    piece = _first_piece(name)
+    return piece is not None and piece in set(_PIECE.findall(printed))
 
 
 def trial_name_matches(label: str, paper: Paper | None) -> bool:
