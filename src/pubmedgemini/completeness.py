@@ -106,6 +106,9 @@ _TOKEN = re.compile(r"[^\W_]+(?:-[^\W_]+)*")  # letters and digits, with inner h
 _PIECE = re.compile(r"[^\W_]+")  # letters and digits: a token split at its hyphens too
 _SUFFIXES = frozenset({"jr", "sr", "2nd", "3rd"})
 _NOT_A_NAME = frozenset({"the", "a", "trial", "study", "et", "al"})
+# Words of a group author ("The EXAMPLE Study Group") that name no study: never matched.
+_GROUP_WORDS = frozenset({"study", "group", "trial", "trials", "collaborative",
+                          "collaboration", "collaborators", "investigators"})
 _MIN_SURNAME_WORD = 4
 _MIN_LEADING_NAME = 3
 
@@ -122,19 +125,26 @@ def _is_initials(token: str) -> bool:
     return 1 <= len(t) <= 3 and t.isalpha() and t.isupper()
 
 
+def _first_author(authors: Sequence[str]) -> tuple[list[str], bool]:
+    """The folded words of the first author's name without its suffix and initials, and
+    whether it is a group author: a name that ends in no initials."""
+    if not authors:
+        return [], False
+    tokens = authors[0].split()
+    if len(tokens) > 1 and tokens[-1].rstrip(".").casefold() in _SUFFIXES:
+        tokens.pop()
+    person = len(tokens) > 1 and _is_initials(tokens[-1])
+    if person:
+        tokens.pop()
+    return _WORD.findall(fold(" ".join(tokens))), not person
+
+
 def first_surname(authors: Sequence[str]) -> list[str]:
     """The words of the first author's surname, folded. PubMed writes "Surname AB" and
     "Surname AB Jr": a trailing Jr, Sr, 2nd or 3rd goes, then a last token of 1 to 3 capital
     letters (the initials). A group author (no initials) keeps all its words; a name of one
     token is never taken for initials."""
-    if not authors:
-        return []
-    tokens = authors[0].split()
-    if len(tokens) > 1 and tokens[-1].rstrip(".").casefold() in _SUFFIXES:
-        tokens.pop()
-    if len(tokens) > 1 and _is_initials(tokens[-1]):
-        tokens.pop()
-    return _WORD.findall(fold(" ".join(tokens)))
+    return _first_author(authors)[0]
 
 
 def year_matches(label: str, year: int | None) -> bool:
@@ -145,7 +155,13 @@ def year_matches(label: str, year: int | None) -> bool:
 
 
 def _surname_matches(label: str, authors: Sequence[str]) -> bool:
-    words = first_surname(authors)
+    """One of the surname's words of 4 letters or more is a whole word of the label (any of
+    its words when it has none so long). A group author's common words (study, group, trial
+    and the like) are left out first, so only its distinctive words can match; a group
+    author of common words alone never matches here."""
+    words, group = _first_author(authors)
+    if group:
+        words = [w for w in words if w not in _GROUP_WORDS]
     long_words = [w for w in words if len(w) >= _MIN_SURNAME_WORD]
     label_words = set(_WORD.findall(fold(label)))
     return any(w in label_words for w in (long_words or words))

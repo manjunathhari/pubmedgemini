@@ -291,6 +291,52 @@ def test_the_hyphen_rule_does_not_touch_the_year_or_the_surname():
     assert name_matches("Sur-name 2019", paper(abstract=None)) is False
 
 
+GROUPS = (["The EXAMPLE Study Group"], ["Example Trial Investigators"],
+          ["EXAMPLE Collaborative Group"], ["Example Trials Collaboration"],
+          ["EXAMPLE Study Collaborators"])
+
+
+@pytest.mark.parametrize("authors", GROUPS)
+@pytest.mark.parametrize("label", [
+    "WRONGNAME Study 2019", "MADEUP trial 2019", "Othername Study Group 2019",
+    "The WRONGNAME Collaborative Group, 2019", "MADEUP Investigators 2019",
+    "Wrongname trials collaboration 2019", "MADEUP collaborators 2019", "STUDY GROUP 2019",
+])
+def test_a_group_author_does_not_match_on_a_common_word(authors, label):  # review B1
+    p = paper(authors=authors, title="A made-up title", abstract=None)
+    assert name_matches(label, p) is False
+    assert trial_name_matches(label, p) is False
+
+
+@pytest.mark.parametrize("authors", GROUPS)
+def test_a_group_author_still_matches_on_its_own_word(authors):
+    p = paper(authors=authors, abstract=None)
+    assert trial_name_matches("EXAMPLE Study 2019", p) is True
+    assert trial_name_matches("Example trial, 2019", p) is True
+    assert trial_name_matches("The Exämple Study Group 2019", p) is True
+
+
+def test_a_group_author_of_common_words_only_never_matches_by_surname():
+    for authors in (["Study Group"], ["Trial Investigators"], ["Group"],
+                    ["Collaborative Study Group"], ["Trials Collaboration Collaborators"]):
+        p = paper(authors=authors, abstract=None)
+        assert name_matches("Study Group Trial Investigators 2019", p) is False
+        assert name_matches("Trials Collaborative Collaboration Collaborators 2019", p) is False
+    # the title-or-abstract path still applies to such a record
+    printed = paper(authors=["Study Group"], abstract="Made-up: the EXAMPLE-2 trial.")
+    assert trial_name_matches("EXAMPLE-2 2019", printed) is True
+    assert trial_name_matches("MADEUP-2 2019", printed) is False
+
+
+def test_a_persons_surname_is_never_ignored():
+    # with initials it is a person, whatever the word
+    assert name_matches("Group 2019", paper(authors=["Group AB"], abstract=None)) is True
+    assert name_matches("Study 2019", paper(authors=["Study A"], abstract=None)) is True
+    assert name_matches("Trial 2019", paper(authors=["Trial AB Jr"], abstract=None)) is True
+    assert name_matches("Othername 2019", paper(authors=["Group AB"], abstract=None)) is False
+    assert first_surname(["The EXAMPLE Study Group"]) == ["the", "example", "study", "group"]
+
+
 def test_a_row_needs_the_year_and_the_name():
     assert trial_name_matches("Surname 2019, Example Journal", paper()) is True
     assert trial_name_matches("Surname 2018, Example Journal", paper()) is False
