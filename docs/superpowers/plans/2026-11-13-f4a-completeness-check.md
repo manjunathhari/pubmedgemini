@@ -107,14 +107,18 @@ So the count says "this figure is printed in the cited abstract", never "this fi
 
 **The surname** (`first_surname(authors) -> list[str]`): the first author's name, folded, without its last token when that token is initials as written by PubMed (1 to 3 capital letters) and without a trailing "Jr", "Sr", "2nd", "3rd"; split into words. A group author (no initials) keeps all its words. The surname matches when one of its words of 4 letters or more is a whole word of the folded label (or, when it has no such word, any of its words: "Li").
 
+**Group authors (review fix B1, owner 13 Nov).** When the first author is a group (no initials: "The EXAMPLE Study Group", "Example Trial Investigators"), the words study, group, trial, trials, collaborative, collaboration, collaborators and investigators are left out before the surname is compared, so only the group's distinctive words can match ("WRONGNAME Study 2019" no longer passes on "study"). A group author made of those words alone never matches by the surname; the title-or-abstract route below still applies. A person's surname (a name with initials) is never left out.
+
 **The name matches** (suggested rule T2): the surname matches, **or** the label's leading name is printed in the study's own title or abstract. The leading name is the first word-like token of the label (letters, digits and inner hyphens, such as "EXAMPLE-2") that is not the year and not one of "the", "a", "trial", "study", "et", "al"; it must be at least 3 characters and appear as a whole token, case-folded, in the title or abstract.
+
+**A hyphen and a space read the same (review fix A1, owner 13 Nov).** The leading name is also looked for by its first letters-and-digits piece ("EXAMPLE" of "EXAMPLE-2"; at least 3 characters, not a number, not one of the filler words) among the title's and abstract's tokens split at hyphens too. So "EXAMPLE-2 2019" matches a record that prints "EXAMPLE 2", "EXAMPLE-II" matches "EXAMPLE II", and "EXAMPLE 2019" matches "EXAMPLE-2" or "EXAMPLE-trial". The year is still required, and the surname route is not changed by this.
 
 **A row matches** when the year matches and the name matches.
 
 **The edges.** No record for the `pmid`: no match (guarded; cannot happen). No authors on the record: only the title-or-abstract route can match. Two rows for one study: counted twice.
 
 **What it misses:** a surname spelt another way (transliteration), a label naming the last or a middle author, a trial acronym that the abstract does not print, a label whose year is the online-first year when PubMed gives the print year (the writer was shown PubMed's year, so Estimate: rare).
-**What it passes wrongly:** under T2 a label whose first word is an ordinary word of the title ("Laparoscopic 2019") matches; the year alone carries the check there.
+**What it passes wrongly:** under T2 a label whose first word is an ordinary word of the title ("Laparoscopic 2019") matches; the year alone carries the check there. Known false match from the hyphen rule (accepted by the owner, 13 Nov): only the name's first piece is compared, so "EXAMPLE-3 2019" matches a record that prints "EXAMPLE-2" (and "EXAMPLE-2" matches "EXAMPLE-22" or "the EXAMPLE trial, 2 arms").
 
 **Options (O2, an owner decision).**
 

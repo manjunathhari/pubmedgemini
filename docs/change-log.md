@@ -14,6 +14,7 @@ Live: F0, F1, F2, the look, Library and Activity (merged and deployed on 10 and 
 - Never logged: the question, anything from the answer, a trial name, an author, an abstract. The check logs one line with the run's id and the four counts, or the kind of failure.
 - Nothing to do on the VPS: the new table (`run_checks`, migration 0007) is added at start-up.
 - Not tried on any real answer yet. After the deploy the owner compares one count with the abstracts by eye (the plan's sign-off, item 5).
+- Review fixes (13 Nov 2026): a trial name written with a hyphen now matches a record that prints it with a space, and the reverse ("EXAMPLE-2" and "EXAMPLE 2"; known false match: "EXAMPLE-3" then also matches "EXAMPLE-2"); when PubMed's first author is a study group, a wrong name no longer passes on a common word such as "study" or "trial"; and a check dated in the future (the database's clock stepped back) no longer keeps the page refreshing: the box shows the stored step, with no line, until the clock catches up.
 
 ## F3c: the Introduction panel and the early summary (branch `f3c-introduction-summary`, not merged yet)
 
