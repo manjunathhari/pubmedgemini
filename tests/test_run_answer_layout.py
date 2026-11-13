@@ -582,10 +582,11 @@ def test_working_page_shows_the_introduction_open_with_its_labels(env):
     assert "<p>Example paragraph two\nwith a line break.</p>" in sec
     assert f"<p><b>{intro_words.CLOSING}</b></p>" in sec
     # order: Question, Introduction, Steps; the 5 s refresh while working
+    # the step list is now folded under the researcher drawing (owner, 13 Nov)
     assert t.index("<h2>Question</h2>") < t.index("<h2>Introduction</h2>") < t.index(
-        "<h2>Steps</h2>")
+        "<summary>Steps (")
     assert '<meta http-equiv="refresh" content="5">' in t
-    assert "<details" not in t and "Early" not in t
+    assert t.count("<details") == 1 and "Early" not in t
 
 
 @pytest.mark.parametrize("case", ["no_row", "failed", "pending"])
@@ -608,8 +609,9 @@ def test_no_introduction_row_no_panel(env, case):
 def test_working_page_without_an_introduction_is_as_before(env):
     rid = running(env)
     t = run_page(env, rid)
-    assert ('<section class="card">\n<h2>Steps</h2>\n\n<ul>\n\n<li>Researcher: searching PubMed '
-            'and Europe PMC</li>\n\n</ul>\n\n</section>') in t
+    # the step list sits folded under the researcher drawing (owner, 13 Nov)
+    assert ('<details class="fold"><summary>Steps (1)</summary>\n<ul>\n<li>Researcher: searching '
+            'PubMed and Europe PMC</li>\n</ul></details>') in t
 
 
 def test_introduction_text_is_escaped_and_never_linked(env):
@@ -694,7 +696,7 @@ def test_context_alone_shows_no_early_summary(env):
     with_early(env, rid, summary=False, context=True)
     t = run_page(env, rid)
     assert "Early" not in t and "<h2>Applicability" not in t
-    assert "<h2>Introduction</h2>" in t and "<h2>Steps</h2>" in t
+    assert "<h2>Introduction</h2>" in t and "<summary>Steps (" in t
 
 
 def test_early_without_at_a_glance_has_no_glance_card(env):
@@ -712,7 +714,7 @@ def test_an_unreadable_early_body_is_ignored(env, caplog):
                                   "answer": {"version": 3, "SECRET-EARLY-TEXT": "x"}})))
     with caplog.at_level("WARNING"):
         t = run_page(env, rid)
-    assert "Early" not in t and "<h2>Steps</h2>" in t
+    assert "Early" not in t and "<summary>Steps (" in t
     assert "SECRET-EARLY-TEXT" not in t and "SECRET-EARLY-TEXT" not in caplog.text
     assert "run page early kind=invalid" in caplog.text
 

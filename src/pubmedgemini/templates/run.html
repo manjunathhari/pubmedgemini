@@ -13,6 +13,33 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 </details>
 </section>
 {%- endmacro -%}
+{%- macro scene_card(stage) -%}
+{#- The researcher at work (Mock Board "Run animation: researcher at work", v3 frozen): the drawing
+    is a file with its own animation; the step list stays one tap away. -#}
+<section class="card sai-scene-card">
+{%- if stage == "search" %}
+<p class="sai-label">Researching</p>
+<img class="sai-scene" src="/static/researcher-search.svg" width="320" height="190" alt="The researcher, with books piling up beside him">
+{%- elif stage == "write" %}
+<p class="sai-label">Writing</p>
+<img class="sai-scene" src="/static/researcher-write.svg" width="320" height="190" alt="The researcher writing the answer">
+{%- else %}
+<p class="sai-label">Report</p>
+<img class="sai-scene" src="/static/researcher-report.svg" width="320" height="190" alt="The finished report">
+{%- endif %}
+{%- if stage == "report" %}
+<p class="sai-scene-line">The answer is ready. It is below.</p>
+{%- else %}
+<p class="sai-scene-line">{{ run.lines[-1] if run.lines else "Waiting to start." }}</p>
+<details class="fold"><summary>Steps ({{ run.lines|length }})</summary>
+<ul>
+{%- for line in run.lines %}
+<li>{{ line }}</li>
+{%- endfor %}
+</ul></details>
+{%- endif %}
+</section>
+{%- endmacro %}
 {%- macro early_cards(e) -%}
 {%- set view = e.view -%}
 <section class="card">
@@ -75,6 +102,9 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 <p class="sai-label">PubMed Ai answer</p>
 <h1>{% for para in question_paragraphs %}{{ para }}{% if not loop.last %}<br>{% endif %}{% endfor %}</h1>
 <p class="sub">{{ status_word }} · Quick · Decision support. The clinician decides.</p>
+{% if scene_report -%}
+{{ scene_card("report") }}
+{% endif -%}
 {% if intro_paragraphs -%}
 {{ intro_fold(True) }}
 {% endif -%}
@@ -311,14 +341,7 @@ Fixed words and counts only; nothing of the answer is printed here. -#}
 {% if intro_paragraphs -%}
 {{ intro_fold() }}
 {% endif -%}
-<section class="card">
-<details class="fold"><summary>Steps ({{ run.lines|length }})</summary>
-<ul>
-{%- for line in run.lines %}
-<li>{{ line }}</li>
-{%- endfor %}
-</ul></details>
-</section>
+{{ scene_card("write") }}
 {{ early_cards(early) }}
 <p class="foot muted">Google may use what you type here, and its reviewers may read it (Gemini free tier). Do not type anything that identifies a patient.</p>
 {% else -%}
@@ -334,6 +357,9 @@ Fixed words and counts only; nothing of the answer is printed here. -#}
 <p><b>{{ intro_words.closing }}</b></p>
 </section>
 {% endif -%}
+{% if scene %}
+{{ scene_card(scene) }}
+{% else %}
 <section class="card">
 <h2>Steps</h2>
 {% if run.lines %}
@@ -346,6 +372,7 @@ Fixed words and counts only; nothing of the answer is printed here. -#}
 <p>Waiting to start.</p>
 {% endif %}
 </section>
+{% endif %}
 {% if not active %}
 {% if outcome or run.status in ("stopped", "failed", "partial") %}
 <section class="card">

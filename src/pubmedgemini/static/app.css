@@ -223,6 +223,10 @@ main.home .sai-hero .lead { margin-top: 4px; }
 .sai-pair { display: grid; gap: 14px; align-items: stretch; }
 /* the runs line and the note box sit at the foot of each card, so the two note boxes line up side by side */
 .sai-pair .card > .sai-runs { margin-top: auto; }
+/* the researcher at work on the run page: a drawing file with its own animation, the latest step under it */
+.sai-scene-card { gap: 8px; }
+.sai-scene { display: block; width: 100%; max-width: 400px; height: auto; margin: 0 auto; }
+.sai-scene-line { font-size: 16px; line-height: 1.45; text-align: center; }
 /* "No AI model" after the search card's heading, quieter than the heading */
 .sai-aside { margin-left: 8px; color: var(--muted); font-size: 15px; font-weight: 400; letter-spacing: 0; }
 /* on the Ask page the search box's label is read by screen readers but not shown (the heading says what it is) */

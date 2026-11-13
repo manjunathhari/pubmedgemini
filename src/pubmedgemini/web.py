@@ -602,6 +602,12 @@ def run_page(request: Request, run_id: str, user: Annotated[User, Depends(curren
         "intro_paragraphs": _intro_paragraphs(v),
         "intro_words": INTRO_WORDS,
         "early": _early_view(v) if active else None,
+        # The researcher at work (owner, 13 Nov): while the run works, books pile up as he
+        # searches and he writes once the writer starts; the report rises when the answer has
+        # just arrived (the completeness check is still settling, so the page still refreshes).
+        "scene": (("write" if any(x.startswith("Writer:") for x in v.lines) else "search")
+                  if active else None),
+        "scene_report": bool(check and check["wait"]),
     }
     return templates.TemplateResponse(request, "run.html", context)
 

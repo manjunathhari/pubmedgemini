@@ -634,8 +634,11 @@ def test_label_above_the_title_on_ask_and_answer_pages(pages):
     assert '<p class="sai-label">Ask the evidence</p>\n<h1>PubMed Ai</h1>' in home
     done = pages["run_done"].text
     assert done.count('<p class="sai-label">PubMed Ai answer</p>\n<h1>') == 1
-    for name in ("results", "run", "message"):
+    for name in ("results", "message"):
         assert "sai-label" not in pages[name].text, name
+    # the working page's only label is the researcher drawing's stage (owner, 13 Nov)
+    assert pages["run"].text.count('class="sai-label"') == 1
+    assert '<p class="sai-label">Researching</p>' in pages["run"].text
     label = _rule_body(".sai-label", css())
     for bit in ("color: var(--accent)", "font-weight: 500", "letter-spacing: .16em",
                 "text-transform: uppercase", "font-size: 11.5px"):
