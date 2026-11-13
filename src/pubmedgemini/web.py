@@ -517,6 +517,55 @@ def _early_view(v: RunView) -> dict[str, Any] | None:
             "still": still_being_written(context)}
 
 
+# ---------- the completeness check box (F4a, mock f4a-completeness-v3) ----------
+
+# The page keeps its 5 s refresh after the answer is stored only while the check is pending or
+# running, and at most this long after the check row was created (the database's clock). Past
+# it a row that is still pending or running is shown as a check that could not be completed.
+CHECK_WAIT_SECONDS = 60
+CHECK_NAME = "Completeness check"
+CHECK_STEPS = ("Pending", "Running", "Done")
+CHECK_NOT_COMPLETED = "The check could not be completed. The answer is unchanged."
+_NOW, _WAS, _NOT_YET = "st now", "st was", "st"
+_CHECK_CLASSES = {
+    "pending": (_NOW, _NOT_YET, _NOT_YET),
+    "running": (_WAS, _NOW, _NOT_YET),
+    "done": (_WAS, _WAS, _NOW),
+    "failed": (_WAS, _WAS, _NOT_YET),  # no dark step: it never claims Done
+}
+
+
+def _check_line(found: int, total: int, match: int, names: int) -> str:
+    numbers = f"{found} of {total} numbers found" if total else "No numbers to check"
+    trials = f"{match} of {names} trial names match" if names else "No trial names to check"
+    return f"{numbers} · {trials}"
+
+
+def _check_box(v: RunView) -> dict | None:
+    """What the completeness check's box shows, or None for a run with no check row. Only
+    words fixed here and the four stored counts: nothing of the answer. A pending or running
+    row older than CHECK_WAIT_SECONDS, and anything not understood, is shown as failed; the
+    row itself is never changed by a page view. `wait` is True only while the page should
+    keep refreshing for the check."""
+    c = v.check
+    if c is None:
+        return None
+    counts = (c.numbers_found, c.numbers_total, c.names_match, c.names_total)
+    shown = "failed"
+    if c.status == "done" and all(isinstance(n, int) for n in counts):
+        shown = "done"
+    elif c.status in ("pending", "running") and c.age_s < CHECK_WAIT_SECONDS:
+        shown = c.status
+    line = None
+    if shown == "done":
+        line = _check_line(*counts)
+    elif shown == "failed":
+        line = CHECK_NOT_COMPLETED
+    return {"name": CHECK_NAME, "steps": list(zip(CHECK_STEPS, _CHECK_CLASSES[shown],
+                                                  strict=True)),
+            "line": line, "wait": shown in ("pending", "running")}
+
+
 @router.get("/runs/{run_id}", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
 def run_page(request: Request, run_id: str, user: Annotated[User, Depends(current_user)]):
     v = _own_run(request, user, run_id)
@@ -524,6 +573,8 @@ def run_page(request: Request, run_id: str, user: Annotated[User, Depends(curren
         return _message(request, RUN_NOT_FOUND, 404, user)
     active = v.status in ("queued", "running")
     view, unreadable = _answer_view(v)
+    wide = view is not None and not active
+    check = _check_box(v) if wide else None  # F4a: on the answer page only
     context = {
         "nav": "library",
         "run": v,
@@ -534,7 +585,11 @@ def run_page(request: Request, run_id: str, user: Annotated[User, Depends(curren
         "unreadable": unreadable,
         # The answer layout (N1 A): a finished run with a readable stored answer. Every other
         # run page is as before.
-        "wide": view is not None and not active,
+        "wide": wide,
+        # F4a: the completeness check's box, and the refresh: while the run works, or while
+        # the check is pending or running and under its cap.
+        "check": check,
+        "refresh": active or bool(check and check["wait"]),
         "status_word": STATUS_WORDS.get(v.status, v.status),
         "selected": [_shown_study(s) for s in v.selected],
         "trail": [f"{e.source}: {e.query} ({e.hits:,} found)" for e in v.searches],

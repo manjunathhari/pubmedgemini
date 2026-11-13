@@ -260,3 +260,35 @@ def test_no_row_class_rules_added():
     assert ".cmp{" in text
     rows = [sel for sel, _ in _rules() if re.search(r"\.row\b", sel)]
     assert rows == [".row > a, .item a"]
+
+
+# ---------- F4a: the completeness check's .steps rules (mock f4a-completeness-v3) ----------
+
+F4A_MOCK = ROOT / "docs" / "mocks" / "f4a-completeness-v3.html"
+STEPS_SELECTORS = (".steps", ".steps .name", ".steps .st", ".steps .st.was", ".steps .st.now",
+                   ".steps .ar", ".steps .sub[data-x]")
+UNUSED_SELECTORS = (".check ul", ".check .line", "details.fold>summary.steps::before",
+                    ".steps .brk")
+
+
+def _mock_f4a_rules() -> dict[str, str]:
+    """selector -> the whole rule line, from the mock's F4a block."""
+    block = F4A_MOCK.read_text(encoding="utf-8").split(
+        "/* ---- new for the completeness check (F4a) ---- */", 1)[1].split("</style>", 1)[0]
+    lines = [ln for ln in block.splitlines() if ln.strip()]
+    return {ln.split("{", 1)[0]: ln for ln in lines}
+
+
+def test_steps_rules_are_the_mocks():
+    rules = _mock_f4a_rules()
+    assert set(rules) == set(STEPS_SELECTORS) | set(UNUSED_SELECTORS)
+    lines = css().splitlines()
+    for sel in STEPS_SELECTORS:  # character for character, each on its own line, once
+        assert lines.count(rules[sel]) == 1, sel
+    for sel in UNUSED_SELECTORS:  # the mock's four rules its markup never uses are not copied
+        assert rules[sel] not in css() and sel + "{" not in css(), sel
+    assert css().count(".steps") == len(STEPS_SELECTORS) + 1  # the seven rules and the heading
+    head = ("/* ---- the completeness check (F4a): the .steps rules of "
+            "docs/mocks/f4a-completeness-v3.html ---- */")
+    assert css().rstrip().endswith(rules[".steps .sub[data-x]"])  # the block is the file's end
+    assert css().index(head) < css().index(rules[".steps"])

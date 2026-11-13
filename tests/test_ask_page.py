@@ -802,6 +802,16 @@ def test_page_has_no_script_and_no_new_css(env):
     assert "<style" not in page.lower() and page.count("<link") == plain.count("<link")
 
 
+def test_a_whole_run_ends_with_the_check_box_and_no_refresh(env):
+    """F4a: a question run inline ends checked; its page shows the box at Done and stops
+    refreshing."""
+    page = env.run_page(env.ask(QUESTION).headers["location"]).text
+    assert env.one("SELECT status FROM run_checks") == "done"
+    assert '<span class="st now">Done</span>' in page and "http-equiv" not in page
+    assert page.count("Completeness check") == 1
+    assert env.one("SELECT count(*) FROM model_calls") == 14
+
+
 def test_old_run_without_answer_unchanged(env):
     rid = insert_run(env, status="partial", error_kind=None)
     page = env.run_page(f"/runs/{rid}").text

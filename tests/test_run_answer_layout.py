@@ -779,10 +779,189 @@ def test_new_states_have_no_script_and_no_new_css(env):
     with_intro(env, url.rsplit("/", 1)[1])
     done = page(env, url)
     css = CSS.read_text()
-    for t in (working, early, done):
+    states = []
+    for status in ("pending", "running", "done", "failed"):  # F4a: the completeness check box
+        check_url = store(env, hernia())
+        with_check(env, check_url, status)
+        states.append(page(env, check_url))
+        assert 'class="steps"' in states[-1]
+    for t in (working, early, done, *states):
         low = t.lower()
         assert "<script" not in low and "style=" not in low and "<style" not in low
         assert t.count("<link") == plain.count("<link")
         for cls in set(re.findall(r'class="([^"]+)"', t)):
             for c in cls.split():
                 assert re.search(rf"\.{re.escape(c)}\b", css) or c in ("wide",), c
+
+
+# ---------- F4a Task 4: the completeness check box (mock docs/mocks/f4a-completeness-v3.html) ----
+
+F4A_MOCK = ROOT / "docs" / "mocks" / "f4a-completeness-v3.html"
+BOX = '<section class="card"><div class="steps">'
+NOT_COMPLETED = "The check could not be completed. The answer is unchanged."
+AR = ' <span class="ar">›</span> '
+REFRESH = '<meta http-equiv="refresh" content="5">'
+
+
+def with_check(env, url, status, counts=(16, 16, 4, 4), age=0):
+    """A check row inserted by hand for the run of `url`, created `age` seconds ago."""
+    rid = url.rsplit("/", 1)[1]
+    found = counts if status == "done" else (None, None, None, None)
+    with env.pool.connection() as conn:
+        conn.execute(
+            "INSERT INTO run_checks (run_id, status, reason, numbers_found, numbers_total, "
+            "names_match, names_total, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, "
+            "now() - make_interval(secs => %s))",
+            (rid, status, "internal" if status == "failed" else None, *found, age))
+    return rid
+
+
+def box_of(t):
+    """The box's own <section>, start to end; fails when the page has none or two."""
+    assert t.count(BOX) == 1 and t.count('class="steps"') == 1
+    return BOX + t.split(BOX, 1)[1].split("</section>", 1)[0] + "</section>"
+
+
+def steps_box(pending, running, done, line=None):
+    sub = f' <span class="sub" data-x>{line}</span>' if line else ""
+    return (f'{BOX}<span class="name">Completeness check</span>'
+            f'<span class="{pending}">Pending</span>{AR}<span class="{running}">Running</span>'
+            f'{AR}<span class="{done}">Done</span>{sub}</div></section>')
+
+
+def mock_box_line():
+    (line,) = [ln for ln in F4A_MOCK.read_text(encoding="utf-8").splitlines()
+               if ln.startswith(BOX)]
+    return line
+
+
+def test_box_markup_is_the_mocks(env):
+    done = store(env, hernia())
+    with_check(env, done, "done")
+    assert box_of(page(env, done)) == mock_box_line()  # the mock's line, character for character
+    other = store(env, hernia())
+    with_check(env, other, "done", counts=(3, 17, 0, 5))
+    assert box_of(page(env, other)) == mock_box_line().replace(
+        "16 of 16 numbers found · 4 of 4 trial names match",
+        "3 of 17 numbers found · 0 of 5 trial names match")
+    pending = store(env, hernia())
+    with_check(env, pending, "pending")
+    assert box_of(page(env, pending)) == steps_box("st now", "st", "st")
+    running_url = store(env, hernia())
+    with_check(env, running_url, "running")
+    assert box_of(page(env, running_url)) == steps_box("st was", "st now", "st")
+    for t in (page(env, pending), page(env, running_url)):
+        assert 'class="sub" data-x' not in t  # no second line while Pending or Running
+
+
+def test_box_is_last_before_the_closing_lines(env, url):
+    with_check(env, url, "done")
+    t = page(env, url)
+    at = t.index(BOX)
+    for before in ("<h2>References</h2>", "Selected studies, with their abstracts (",
+                   "Considered, not selected (", "Possible contradictions ("):
+        assert t.index(before) < at, before
+    assert at < t.index("Searched PubMed and Europe PMC")
+    assert t.count("<section", at) == 1  # the last box on the page
+    bare = store(env, hernia(), extras=False)  # no folds at the bottom: still last
+    with_check(env, bare, "done")
+    t2 = page(env, bare)
+    assert t2.index("<h2>References</h2>") < t2.index(BOX) < t2.index("Searched PubMed")
+    assert t2.count("<section", t2.index(BOX)) == 1
+
+
+def test_the_page_is_unchanged_but_for_the_box(env):
+    """Byte for byte: the page with a done check, less the box's one line, is the page of an
+    answer with no check row."""
+    with_one, without = store(env, hernia()), store(env, hernia())
+    with_check(env, with_one, "done")
+    a = page(env, with_one).replace(with_one.rsplit("/", 1)[1], "RID")
+    b = page(env, without).replace(without.rsplit("/", 1)[1], "RID")
+    assert a.replace(mock_box_line() + "\n", "") == b and a != b
+
+
+@pytest.mark.parametrize("status,refreshes", [("pending", True), ("running", True),
+                                              ("done", False), ("failed", False)])
+def test_refresh_stops_at_done(env, url, status, refreshes):
+    with_check(env, url, status, age=50)  # young: under the cap
+    t = page(env, url)
+    assert env.one("SELECT status FROM runs WHERE id = %s", (url.rsplit("/", 1)[1],)) == "done"
+    assert (REFRESH in t) is refreshes and t.count("http-equiv") == (1 if refreshes else 0)
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+def test_refresh_stops_after_the_cap(env, url, status):
+    rid = with_check(env, url, status, age=61)
+    before = env.rows("SELECT status, reason, started_at, finished_at, created_at "
+                      "FROM run_checks WHERE run_id = %s", (rid,))
+    t = page(env, url)
+    assert "http-equiv" not in t
+    assert env.rows("SELECT status, reason, started_at, finished_at, created_at "
+                    "FROM run_checks WHERE run_id = %s", (rid,)) == before  # a view changes nothing
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+def test_a_stuck_check_is_not_shown_as_running(env, url, status):
+    with_check(env, url, status, age=61)
+    t = page(env, url)
+    assert "st now" not in t
+    assert box_of(t) == steps_box("st was", "st was", "st", NOT_COMPLETED)
+
+
+def test_failed_check_shows_the_plain_line(env, url):
+    with_check(env, url, "failed")
+    t = page(env, url)
+    assert box_of(t) == steps_box("st was", "st was", "st", NOT_COMPLETED)
+    assert "st now" not in t and "numbers found" not in t and "trial names match" not in t
+    assert "http-equiv" not in t and "internal" not in box_of(t)
+    assert "Run again" not in t and "/again" not in t  # the check never offers a re-run
+
+
+@pytest.mark.parametrize("counts,line", [
+    ((0, 0, 4, 4), "No numbers to check · 4 of 4 trial names match"),
+    ((2, 3, 0, 0), "2 of 3 numbers found · No trial names to check"),
+    ((0, 0, 0, 0), "No numbers to check · No trial names to check"),
+    ((0, 5, 0, 2), "0 of 5 numbers found · 0 of 2 trial names match"),
+    ((1, 1, 1, 1), "1 of 1 numbers found · 1 of 1 trial names match"),
+])
+def test_zero_totals_read_plainly(env, url, counts, line):
+    with_check(env, url, "done", counts=counts)
+    assert box_of(page(env, url)) == steps_box("st was", "st was", "st now", line)
+
+
+def test_no_check_row_no_box(env, url):
+    assert 'class="steps"' not in page(env, url)  # an answered run with no row (every old run)
+    assert "Completeness check" not in page(env, url)
+    b = hernia()
+    b.answer, b.empty_reason = None, ""  # a partial run with an empty reason
+    assert 'class="steps"' not in page(env, store(env, b, status="partial"))
+    plain = insert_run(env, status="done", error_kind=None)  # a run with no answer at all
+    with_check(env, f"/runs/{plain}", "pending")  # even with a row: not the answer page
+    t = env.run_page(f"/runs/{plain}").text
+    assert 'class="steps"' not in t and "Completeness check" not in t
+    assert "http-equiv" not in t
+
+
+def test_the_working_page_has_no_box(env):
+    rid = running(env)
+    with_check(env, f"/runs/{rid}", "pending")
+    t = run_page(env, rid)
+    assert 'class="steps"' not in t and "Completeness check" not in t
+    assert t.count(REFRESH) == 1  # the run's own refresh, once
+
+
+def test_box_holds_only_fixed_words_and_counts(env):
+    b = hernia()
+    b.answer.studies[0].label = "ZQ7LABEL <b>2019</b>"
+    b.answer.outcomes[0].numbers[0].label = "ZQ7NUMBER"
+    b.answer.outcomes[0].numbers[0].value = 98765.4321
+    url = store(env, b)
+    with_check(env, url, "done", counts=(7, 9, 2, 3))
+    t = page(env, url)
+    assert "ZQ7LABEL" in t and "ZQ7NUMBER" in t  # the markers are on the page, outside the box
+    box = box_of(t)
+    assert box == steps_box("st was", "st was", "st now",
+                            "7 of 9 numbers found · 2 of 3 trial names match")
+    for marker in ("ZQ7", "98765", "98,765", "2019", "<b>"):
+        assert marker not in box
+    assert "<script" not in t.lower() and "style=" not in t.lower()

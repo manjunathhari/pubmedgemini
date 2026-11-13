@@ -267,3 +267,12 @@ main.wide > h1 { overflow-wrap: anywhere; }
 .ci p + p, details.oc .body p + p, .cp p + p { margin-top: 0; }
 details.fold > summary + article { border-top: 0; padding-top: 0; }
 details.fold > article + article { margin-top: 10px; }
+
+/* ---- the completeness check (F4a): the .steps rules of docs/mocks/f4a-completeness-v3.html ---- */
+.steps{display:flex;flex-wrap:wrap;align-items:center;gap:3px;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:13px}
+.steps .name{font-weight:600;font-size:14px;margin-right:2px}
+.steps .st{font-size:12px;white-space:nowrap;border:1px solid #BDBDBD;border-radius:999px;padding:1px 6px;color:#8C8C8C}
+.steps .st.was{color:#333333;border-color:#8C8C8C}
+.steps .st.now{background:#333333;border-color:#333333;color:#FFFFFF;font-weight:600}
+.steps .ar{color:#8C8C8C}
+.steps .sub[data-x]{flex-basis:100%}

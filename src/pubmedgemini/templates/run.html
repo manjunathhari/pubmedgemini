@@ -64,7 +64,7 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 </section>
 {%- endmacro -%}
 {% block head %}
-{% if active %}
+{% if refresh %}
 <meta http-equiv="refresh" content="5">
 {% endif %}
 {% endblock %}
@@ -279,6 +279,11 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 </details>
 </section>
 {% endif %}
+{% if check -%}
+{#- F4a (mock f4a-completeness-v3, its one new line): the completeness check, the last box.
+Fixed words and counts only; nothing of the answer is printed here. -#}
+<section class="card"><div class="steps"><span class="name">{{ check.name }}</span>{% for word, cls in check.steps %}{% if not loop.first %} <span class="ar">›</span> {% endif %}<span class="{{ cls }}">{{ word }}</span>{% endfor %}{% if check.line %} <span class="sub" data-x>{{ check.line }}</span>{% endif %}</div></section>
+{% endif -%}
 {% if run.down_line %}
 <p class="foot muted">{{ run.down_line }}</p>
 {% endif %}
