@@ -8,10 +8,12 @@
 <p class="lead">An AI search agent for clinical questions. It searches PubMed and Europe PMC, picks the studies that answer your question, and sets out what they show in one clear, readable answer, with every point linked to its source.</p>
 </div>
 <p>Signed in as {{ email }}</p>
+<div class="sai-pair">
 {% include "_ask_form.html" %}
 <section class="card">
 <h2>Key-word search</h2>
 <p>Searches PubMed and Europe PMC with exactly what you type. No model.</p>
 {% include "_search_form.html" %}
 </section>
+</div>
 {% endblock %}

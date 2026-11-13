@@ -219,6 +219,8 @@ li + li { margin-top: 6px; }
 main.home .sai-hero h1 { font-size: 35px; line-height: 1.07; letter-spacing: -0.025em; }
 main.home .sai-hero .lead { margin-top: 4px; }
 .sai-hero .sai-label + h1 { margin-top: 0; }
+/* the Ask card and the Key-word search card: one under the other on phones, side by side on desktop */
+.sai-pair { display: grid; gap: 14px; align-items: stretch; }
 .sai-hero-art {
   position: absolute;
   z-index: -1;
@@ -248,6 +250,8 @@ main.home .sai-hero .lead { margin-top: 4px; }
   .sai-hero { min-height: 560px; justify-content: center; padding-bottom: 40px; }
   main.home > * { max-width: 42rem; }
   main.home > .sai-hero { max-width: none; }
+  .sai-pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  main.home > .sai-pair { max-width: none; }
   main.home .sai-hero > :not(.sai-hero-art) { max-width: 560px; }
   main.home .sai-hero h1 { font-size: 58px; line-height: 1.04; letter-spacing: -0.03em; }
   main.home .sai-hero .lead { font-size: 20px; }

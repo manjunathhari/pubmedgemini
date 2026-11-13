@@ -707,3 +707,17 @@ def test_labels_in_reading_text_are_the_sans():
     # serif at 500 hardly differs from 400; the labels at the start of answer lines must stand out
     rules = {" ".join(sel.split()): body for sel, body in _rules()}
     assert "Hanken Grotesk" in rules["p b, li b, p strong, li strong"]
+
+
+def test_ask_and_search_sit_side_by_side_on_desktop(pages):
+    # the owner, 13 Nov: "make this side by side; user can choose whichever"
+    home = pages["home"].text
+    pair = home.index('<div class="sai-pair">')
+    assert home.index("<h2>Key-word search</h2>") < home.index("</div>", pair) \
+        < home.index("</main>")  # both cards inside the pair
+    assert home.index("Signed in as") < pair < home.index('<label for="question"') \
+        < home.index("<h2>Key-word search</h2>")
+    assert "display: grid" in _rule_body(".sai-pair", css())  # stacked on phones
+    wide = css().split("@media (min-width: 900px)", 1)[1]
+    assert "grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)" in _rule_body(".sai-pair", wide)
+    assert "max-width: none" in _rule_body("main.home > .sai-pair", wide)
