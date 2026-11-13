@@ -175,7 +175,8 @@ def test_main_is_wide_only_here(env, url):
     for other in ("/", "/library", "/activity", f"/runs/{insert_run(env)}",
                   f"/runs/{insert_run(env, status='running', error_kind=None)}"):
         t = page(env, other)
-        assert "<main>" in t and "wide" not in t, other
+        main = '<main class="home">' if other == "/" else "<main>"  # the Ask page has its own layout
+        assert main in t and "wide" not in t, other
 
 
 def test_bottom_line_and_default_choice(env, url):

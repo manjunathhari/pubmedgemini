@@ -82,7 +82,7 @@ b, strong { font-weight: 500; }
 p b, li b, p strong, li strong { font-family: "Hanken Grotesk", system-ui, sans-serif; }
 
 /* header: the round SAi badge, the wordmark, the day/night switch; the menu row beneath */
-.site-header { border-bottom: 1px solid var(--head-line); }
+.site-header { position: relative; z-index: 1; border-bottom: 1px solid var(--head-line); }
 .site-header-inner {
   max-width: 42rem;
   margin: 0 auto;
@@ -209,12 +209,15 @@ li + li { margin-top: 6px; }
 .sai-hero {
   position: relative;
   isolation: isolate;
-  min-height: 430px;
+  min-height: 640px;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   gap: 8px;
+  padding-bottom: 10px;
 }
+main.home .sai-hero h1 { font-size: 35px; line-height: 1.07; letter-spacing: -0.025em; }
+main.home .sai-hero .lead { margin-top: 4px; }
 .sai-hero .sai-label + h1 { margin-top: 0; }
 .sai-hero-art {
   position: absolute;
@@ -231,9 +234,24 @@ li + li { margin-top: 6px; }
   mask-image: radial-gradient(ellipse 60% 55% at 60% 38%, var(--ink) 40%, transparent 100%), linear-gradient(to bottom, var(--ink) 50%, transparent 92%);
   mask-composite: intersect;
 }
+/* desktop: the landing page's layout. The header runs the width of the page (badge and wordmark on the left, the
+   menu and the switch on the right) and sits above the artwork; on the Ask page the artwork is 20px from the screen's
+   right edge and the label, title and description stand on the left, as the landing page's headline does. */
 @media (min-width: 900px) {
-  .sai-hero { min-height: 480px; }
-  .sai-hero-art { top: -60px; right: 20px; width: 700px; height: 790px; background-position: center; background-size: cover; }
+  .site-header { display: flex; align-items: center; gap: 24px; max-width: 1440px; margin: 0 auto; padding: 14px 64px; border-bottom: 0; }
+  .site-header-inner { display: contents; }
+  .site-header .sai-brand { margin-right: auto; }
+  .site-header nav { order: 2; max-width: none; margin: 0; padding: 0; gap: 24px; }
+  .site-header nav > a { flex: none; padding: 0 2px; }
+  .site-header .sai-daynight { order: 3; }
+  main.home { max-width: 1440px; padding-left: 64px; padding-right: 64px; }
+  .sai-hero { min-height: 560px; justify-content: center; padding-bottom: 40px; }
+  main.home > * { max-width: 42rem; }
+  main.home > .sai-hero { max-width: none; }
+  main.home .sai-hero > :not(.sai-hero-art) { max-width: 560px; }
+  main.home .sai-hero h1 { font-size: 58px; line-height: 1.04; letter-spacing: -0.03em; }
+  main.home .sai-hero .lead { font-size: 20px; }
+  .sai-hero-art { top: -60px; right: -44px; width: 700px; height: 790px; background-position: center; background-size: cover; }
 }
 html, body { overflow-x: clip; }
 

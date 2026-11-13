@@ -660,8 +660,11 @@ def test_sai_artwork_only_on_the_ask_page(pages):
     home = pages["home"].text
     assert home.count(art) == 1
     assert home.index('<div class="sai-hero">') < home.index(art) < home.index("<h1>PubMed Ai</h1>")
-    assert home.index("<h1>PubMed Ai</h1>") < home.index("</div>", home.index("<h1>")) \
-        < home.index('<p class="lead">')  # the description sits below the title block
+    # the owner, 13 Nov: laid out like the landing page's hero: label, title and description together at the
+    # foot of the block (phone) or on the left beside the artwork (desktop), no building picture
+    assert home.index("<h1>PubMed Ai</h1>") < home.index('<p class="lead">') \
+        < home.index("</div>", home.index('<p class="lead">')) < home.index("Signed in as")
+    assert '<main class="home">' in home
     for name in ("results", "run", "run_done", "message", "home_active"):
         if name != "home_active":
             assert "sai-hero" not in pages[name].text, name
@@ -678,10 +681,19 @@ def test_sai_artwork_only_on_the_ask_page(pages):
     assert "height: 700px" in rule and "top: 0" in rule
     wide = css().split("@media (min-width: 900px)", 1)[1]
     desk = _rule_body(".sai-hero-art", wide)
-    for bit in ("top: -60px", "right: 20px", "width: 700px", "height: 790px",
+    # 20px from the screen's right edge: the home page's main has 64px side padding on desktop, so -44px
+    for bit in ("top: -60px", "right: -44px", "width: 700px", "height: 790px",
                 "background-position: center", "background-size: cover"):
         assert bit in desk, bit
     assert "isolation: isolate" in _rule_body(".sai-hero", css())
+    assert "min-height: 640px" in _rule_body(".sai-hero", css())  # the kit's phone hero
+    hero_wide = _rule_body(".sai-hero", wide)
+    assert "min-height: 560px" in hero_wide
+    for bit in ("max-width: 1440px", "padding-left: 64px", "padding-right: 64px"):
+        assert bit in _rule_body("main.home", wide), bit
+    head = _rule_body("main.home .sai-hero h1", wide)
+    assert "font-size: 58px" in head and "line-height: 1.04" in head and "letter-spacing: -0.03em" in head
+    assert "z-index: 1" in _rule_body(".site-header", css())  # the header stays above the artwork
 
 
 def test_dot_background():
