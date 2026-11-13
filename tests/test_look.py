@@ -672,7 +672,15 @@ def test_sai_artwork_only_on_the_ask_page(pages):
         assert f"{prop}: {mask_oval}, {mask_down};" in rule, prop
     assert "mask-composite: intersect" in rule and "-webkit-mask-composite: source-in" in rule
     assert "z-index: -1" in rule and "pointer-events: none" in rule
-    assert "background: var(--hero-art) center top / auto 300px no-repeat" in rule
+    # the owner, 13 Nov: the landing page's exact size (kit README item 4): phone box full width x 700px,
+    # artwork 440px tall at centre top; from 900px a 700 x 790 box, 60px above, 20px from the right, cover
+    assert "background: var(--hero-art) center top / auto 440px no-repeat" in rule
+    assert "height: 700px" in rule and "top: 0" in rule
+    wide = css().split("@media (min-width: 900px)", 1)[1]
+    desk = _rule_body(".sai-hero-art", wide)
+    for bit in ("top: -60px", "right: 20px", "width: 700px", "height: 790px",
+                "background-position: center", "background-size: cover"):
+        assert bit in desk, bit
     assert "isolation: isolate" in _rule_body(".sai-hero", css())
 
 

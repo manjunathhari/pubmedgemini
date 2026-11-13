@@ -201,16 +201,18 @@ li + li { margin-top: 6px; }
 }
 .sai-label + h1 { margin-top: -6px; }
 
-/* the Ask page's title block, with the SAi artwork faded in behind it (the kit's masks, README item 4). The kit's
-   700px box is for the landing hero; here a 300px box (380px from 900px) beside the title, its top on the header line.
-   The night file is much brighter than the pale day file, so night is faded to .7 (--hero-fade); day stays at 1. */
+/* the Ask page's title block, with the SAi artwork faded in behind it at the landing page's exact size (the kit's
+   README item 4; the owner, 13 Nov): on phones a full-width box 700px tall with the artwork 440px tall at centre top;
+   from 900px a 700 x 790 box, 60px above the block and 20px from the right, the artwork covering it. The masks are the
+   kit's. The title sits at the foot of the block, as the landing page's headline does, so the description and the
+   form start below the artwork. Night is faded to .7 (--hero-fade); day stays at 1. */
 .sai-hero {
   position: relative;
   isolation: isolate;
-  min-height: 200px;
+  min-height: 430px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 8px;
 }
 .sai-hero .sai-label + h1 { margin-top: 0; }
@@ -218,21 +220,22 @@ li + li { margin-top: 6px; }
   position: absolute;
   z-index: -1;
   pointer-events: none;
-  top: -16px;
+  top: 0;
   right: -16px;
-  width: 300px;
-  height: 300px;
+  width: calc(100% + 32px);
+  height: 700px;
   opacity: var(--hero-fade);
-  background: var(--hero-art) center top / auto 300px no-repeat;
+  background: var(--hero-art) center top / auto 440px no-repeat;
   -webkit-mask-image: radial-gradient(ellipse 60% 55% at 60% 38%, var(--ink) 40%, transparent 100%), linear-gradient(to bottom, var(--ink) 50%, transparent 92%);
   -webkit-mask-composite: source-in;
   mask-image: radial-gradient(ellipse 60% 55% at 60% 38%, var(--ink) 40%, transparent 100%), linear-gradient(to bottom, var(--ink) 50%, transparent 92%);
   mask-composite: intersect;
 }
 @media (min-width: 900px) {
-  .sai-hero { min-height: 260px; }
-  .sai-hero-art { top: -16px; right: -40px; width: 400px; height: 380px; background-size: auto 380px; }
+  .sai-hero { min-height: 480px; }
+  .sai-hero-art { top: -60px; right: 20px; width: 700px; height: 790px; background-position: center; background-size: cover; }
 }
+html, body { overflow-x: clip; }
 
 a { color: var(--ink); }
 a:hover { color: var(--muted); }
