@@ -741,6 +741,8 @@ def test_finished_page_has_the_introduction_fold_first(env):
     t = page(env, url)
     assert t.index('<p class="sub">Done · Quick') < t.index("<summary>Introduction</summary>") \
         < t.index("<summary>Steps (")
+    # the owner, 13 Nov: when the run is done the Introduction is open
+    assert '<details class="fold" open><summary>Introduction</summary>' in t
     sec = t.split("<summary>Introduction</summary>", 1)[1].split("</details>", 1)[0]
     assert sec == (f'\n<p class="sub">{intro_words.TAG_FINISHED}</p>\n<p class="muted">{BG}</p>'
                    "\n<p>Example paragraph one.</p>\n<p>Example paragraph two\nwith a line "
@@ -757,7 +759,7 @@ def test_the_finished_page_is_unchanged_but_for_the_introduction(env, status):
     with_intro(env, with_one.rsplit("/", 1)[1])
     a = page(env, with_one).replace(with_one.rsplit("/", 1)[1], "RID")
     b = page(env, without).replace(without.rsplit("/", 1)[1], "RID")
-    card = a.split("<section class=\"card\">\n<details class=\"fold\"><summary>Introduction", 1)
+    card = a.split("<section class=\"card\">\n<details class=\"fold\" open><summary>Introduction", 1)
     assert len(card) == 2
     rest = card[1].split("</section>\n", 1)[1]
     assert card[0] + rest == b

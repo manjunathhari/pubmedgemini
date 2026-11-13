@@ -2,9 +2,9 @@
 {% import "_answer.html" as ans %}
 {#- F3c (mock f3c v1): the Introduction folded, and the early summary's cards. Model text is
 escaped text only (autoescape, no |safe); every word around it is fixed. -#}
-{%- macro intro_fold() -%}
+{%- macro intro_fold(opened=False) -%}
 <section class="card">
-<details class="fold"><summary>{{ intro_words.heading }}</summary>
+<details class="fold"{% if opened %} open{% endif %}><summary>{{ intro_words.heading }}</summary>
 <p class="sub">{{ intro_words.tag_finished }}</p>
 <p class="muted">{{ intro_words.background }}</p>
 {%- for para in intro_paragraphs %}
@@ -75,7 +75,7 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 <h1>{% for para in question_paragraphs %}{{ para }}{% if not loop.last %}<br>{% endif %}{% endfor %}</h1>
 <p class="sub">{{ status_word }} · Quick · Decision support. The clinician decides.</p>
 {% if intro_paragraphs -%}
-{{ intro_fold() }}
+{{ intro_fold(True) }}
 {% endif -%}
 <section class="card">
 <details class="fold"><summary>Steps ({{ run.lines|length }})</summary>
