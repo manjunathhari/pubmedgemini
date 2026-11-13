@@ -908,6 +908,59 @@ def test_a_stuck_check_is_not_shown_as_running(env, url, status):
     assert box_of(t) == steps_box("st was", "st was", "st", NOT_COMPLETED)
 
 
+@pytest.mark.parametrize("age", [-1, -30, -3600])
+@pytest.mark.parametrize("status,classes", [("pending", ("st now", "st", "st")),
+                                            ("running", ("st was", "st now", "st"))])
+def test_a_check_dated_in_the_future_does_not_keep_the_page_refreshing(env, url, status,
+                                                                       classes, age):
+    """Review B8: the database's clock stepped back, so the row's age is negative. The box
+    shows the stored step and no line (it claims neither Done nor a failure), and the page
+    does not refresh; a view changes nothing."""
+    rid = with_check(env, url, status, age=age)
+    before = env.rows("SELECT status, reason, started_at, finished_at, created_at "
+                      "FROM run_checks WHERE run_id = %s", (rid,))
+    t = page(env, url)
+    assert "http-equiv" not in t
+    assert box_of(t) == steps_box(*classes)
+    assert NOT_COMPLETED not in t and "numbers found" not in t
+    assert env.rows("SELECT status, reason, started_at, finished_at, created_at "
+                    "FROM run_checks WHERE run_id = %s", (rid,)) == before
+
+
+def test_a_finished_check_dated_in_the_future_reads_as_any_other(env):
+    done, failed = store(env, hernia()), store(env, hernia())
+    with_check(env, done, "done", age=-30)
+    with_check(env, failed, "failed", age=-30)
+    t = page(env, done)
+    assert box_of(t) == steps_box(
+        "st was", "st was", "st now", "16 of 16 numbers found · 4 of 4 trial names match")
+    assert "http-equiv" not in t
+    t = page(env, failed)
+    assert box_of(t) == steps_box("st was", "st was", "st", NOT_COMPLETED)
+    assert "http-equiv" not in t
+
+
+@pytest.mark.parametrize("age,wait", [(0, True), (0.0, True), (59.9, True), (60, False),
+                                      (-0.001, False), (-1e9, False), (float("nan"), False),
+                                      (float("-inf"), False), (float("inf"), False)])
+def test_the_box_waits_only_for_an_age_from_zero_to_the_cap(age, wait):
+    from types import SimpleNamespace
+
+    from pubmedgemini.runs import CheckRow
+    from pubmedgemini.web import CHECK_WAIT_SECONDS, _check_box
+
+    assert CHECK_WAIT_SECONDS == 60
+    for status in ("pending", "running"):
+        box = _check_box(SimpleNamespace(check=CheckRow(status, None, None, None, None, age)))
+        assert box["wait"] is wait
+        if age >= CHECK_WAIT_SECONDS:  # past the cap: not completed, as before
+            assert box["line"] == NOT_COMPLETED
+        else:  # under the cap, or no usable age: the stored step, no line
+            assert box["line"] is None
+            assert [c for _, c in box["steps"]].index("st now") == ("pending", "running").index(
+                status)
+
+
 def test_failed_check_shows_the_plain_line(env, url):
     with_check(env, url, "failed")
     t = page(env, url)

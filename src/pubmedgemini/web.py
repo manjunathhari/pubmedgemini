@@ -522,6 +522,7 @@ def _early_view(v: RunView) -> dict[str, Any] | None:
 # The page keeps its 5 s refresh after the answer is stored only while the check is pending or
 # running, and at most this long after the check row was created (the database's clock). Past
 # it a row that is still pending or running is shown as a check that could not be completed.
+# A row dated in the future never refreshes the page (review B8).
 CHECK_WAIT_SECONDS = 60
 CHECK_NAME = "Completeness check"
 CHECK_STEPS = ("Pending", "Running", "Done")
@@ -546,16 +547,19 @@ def _check_box(v: RunView) -> dict | None:
     words fixed here and the four stored counts: nothing of the answer. A pending or running
     row older than CHECK_WAIT_SECONDS, and anything not understood, is shown as failed; the
     row itself is never changed by a page view. `wait` is True only while the page should
-    keep refreshing for the check."""
+    keep refreshing for the check: a pending or running row whose age is from 0 up to the
+    cap. A row dated in the future (the database's clock stepped back), or with an age that
+    is no number, shows its stored step with no line and no refresh: it claims neither Done
+    nor a failure, and the page cannot wait on a clock it cannot trust."""
     c = v.check
     if c is None:
         return None
     counts = (c.numbers_found, c.numbers_total, c.names_match, c.names_total)
-    shown = "failed"
+    shown, wait = "failed", False
     if c.status == "done" and all(isinstance(n, int) for n in counts):
         shown = "done"
-    elif c.status in ("pending", "running") and c.age_s < CHECK_WAIT_SECONDS:
-        shown = c.status
+    elif c.status in ("pending", "running") and not c.age_s >= CHECK_WAIT_SECONDS:
+        shown, wait = c.status, 0 <= c.age_s < CHECK_WAIT_SECONDS
     line = None
     if shown == "done":
         line = _check_line(*counts)
@@ -563,7 +567,7 @@ def _check_box(v: RunView) -> dict | None:
         line = CHECK_NOT_COMPLETED
     return {"name": CHECK_NAME, "steps": list(zip(CHECK_STEPS, _CHECK_CLASSES[shown],
                                                   strict=True)),
-            "line": line, "wait": shown in ("pending", "running")}
+            "line": line, "wait": wait}
 
 
 @router.get("/runs/{run_id}", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
