@@ -495,6 +495,8 @@ def test_model_text_is_escaped_on_the_run_page(db_url, upstream):
         page = env.run_page(env.ask(QUESTION).headers["location"]).text
     assert "&lt;script&gt;alert(1)&lt;/script&gt; why" in page
     assert "<script" not in without_theme_scripts(page)
+    # the only image is the app's own report drawing (owner, 14 Nov)
+    page = page.replace('<img class="sai-scene" src="/static/researcher-report.svg" alt="The finished report">', "", 1)
     assert "&lt;img src=x onerror=alert(2)&gt;" in page and "<img" not in page
     assert "javascript:" not in page.replace("&lt;a href=&#39;javascript:x&#39;&gt;", "")
 

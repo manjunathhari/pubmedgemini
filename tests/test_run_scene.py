@@ -18,11 +18,11 @@ from test_run_answer_layout import (  # noqa: F401 (env is a fixture)
 )
 
 STATIC = Path(__file__).resolve().parent.parent / "src" / "pubmedgemini" / "static"
-SEARCH = ('<img class="sai-scene" src="/static/researcher-search.svg" width="320" height="190" '
+SEARCH = ('<img class="sai-scene" src="/static/researcher-search.svg" '
           'alt="The researcher, with books piling up beside him">')
-WRITE = ('<img class="sai-scene" src="/static/researcher-write.svg" width="320" height="190" '
+WRITE = ('<img class="sai-scene" src="/static/researcher-write.svg" '
          'alt="The researcher writing the answer">')
-REPORT = ('<img class="sai-scene" src="/static/researcher-report.svg" width="320" height="190" '
+REPORT = ('<img class="sai-scene" src="/static/researcher-report.svg" '
           'alt="The finished report">')
 
 
@@ -74,17 +74,20 @@ def test_the_drawings_are_plain_files():
         assert "prefers-reduced-motion" in text, name  # holds still when asked
 
 
-def test_the_report_rises_only_while_the_answer_has_just_arrived(env):
+def test_the_report_stays_on_every_finished_answer_marked_done(env):
+    # the owner, 14 Nov: after the writing the report band stays on, with "Done" next to it
     from test_run_answer_layout import with_check
 
-    fresh = store(env, hernia())
-    with_check(env, fresh, "pending")
-    t = page(env, fresh)
-    assert REPORT in t and '<p class="sai-label">Report</p>' in t
-    assert t.index('<p class="sub">Done') < t.index(REPORT)
-    settled = store(env, hernia())
-    with_check(env, settled, "done")
-    assert REPORT not in page(env, settled)
+    for status in ("pending", "done", None):
+        url = store(env, hernia())
+        if status:
+            with_check(env, url, status)
+        t = page(env, url)
+        assert t.count(REPORT) == 1, status
+        card = t.split('<section class="card sai-scene-card">', 1)[1].split("</section>", 1)[0]
+        assert '<p class="sai-label">Done</p>' in card and "Report" not in card, status
+        assert '<p class="sai-scene-line">The answer is ready. It is below.</p>' in card, status
+        assert t.index('<p class="sub">Done') < t.index(REPORT) < t.index("At a glance"), status
 
 
 def test_the_drawing_sits_in_a_band_beside_the_words():

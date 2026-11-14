@@ -20,13 +20,13 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 <section class="card sai-scene-card">
 {%- if stage == "search" %}
 <p class="sai-label">Researching</p>
-<img class="sai-scene" src="/static/researcher-search.svg" width="320" height="190" alt="The researcher, with books piling up beside him">
+<img class="sai-scene" src="/static/researcher-search.svg" alt="The researcher, with books piling up beside him">
 {%- elif stage == "write" %}
 <p class="sai-label">Writing</p>
-<img class="sai-scene" src="/static/researcher-write.svg" width="320" height="190" alt="The researcher writing the answer">
+<img class="sai-scene" src="/static/researcher-write.svg" alt="The researcher writing the answer">
 {%- else %}
-<p class="sai-label">Report</p>
-<img class="sai-scene" src="/static/researcher-report.svg" width="320" height="190" alt="The finished report">
+<p class="sai-label">Done</p>
+<img class="sai-scene" src="/static/researcher-report.svg" alt="The finished report">
 {%- endif %}
 {%- if stage == "report" %}
 <p class="sai-scene-line">The answer is ready. It is below.</p>
@@ -97,9 +97,7 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 <p class="sai-label">PubMed Ai answer</p>
 <h1>{% for para in question_paragraphs %}{{ para }}{% if not loop.last %}<br>{% endif %}{% endfor %}</h1>
 <p class="sub">{{ status_word }} · Quick · Decision support. The clinician decides.</p>
-{% if scene_report -%}
 {{ scene_card("report") }}
-{% endif -%}
 {% if intro_paragraphs -%}
 {{ intro_fold(True) }}
 {% endif -%}

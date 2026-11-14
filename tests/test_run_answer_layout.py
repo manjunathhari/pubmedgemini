@@ -246,6 +246,8 @@ def _hostile():
 
 def test_model_text_escaped_everywhere(env):
     t = page(env, store(env, _hostile()))
+    # the only image is the app's own report drawing (owner, 14 Nov)
+    t = t.replace('<img class="sai-scene" src="/static/researcher-report.svg" alt="The finished report">', "", 1)
     assert "&#34;&gt;&lt;img src=x onerror=1&gt;" in t and "<img" not in t
     assert "&lt;script&gt;x&lt;/script&gt;&lt;/details&gt;" in t
     assert "<script" not in without_theme_scripts(t)
