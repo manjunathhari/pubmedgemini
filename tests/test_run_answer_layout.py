@@ -82,7 +82,9 @@ def test_blocks_in_the_mocks_order(env, url):
     assert [t.index(x) for x in order] == sorted(t.index(x) for x in order)
     assert t.count('class="two"') == 2
     assert t.startswith("<!doctype html>")
-    assert t.index("<h1>") < t.index("Steps (3)") < t.index("<h2>At a glance</h2>")
+    # the owner, 14 Nov: the steps fold moves to the bottom, after Possible contradictions
+    assert t.index("<h1>") < t.index("<h2>At a glance</h2>") < t.index("Possible contradictions") \
+        < t.index("<summary>Steps (3)") < t.index("answer written by")
     assert "<p class=\"sub\">Done · Quick · Decision support. The clinician decides.</p>" in t
     assert t.index("Selected studies") < t.index("Considered, not selected") \
         < t.index("Possible contradictions") < t.index("answer written by")
@@ -339,7 +341,7 @@ def test_run_again_unchanged(env):
     t = page(env, f"/runs/{rid}")
     assert f'<form method="post" action="/runs/{rid}/again">' in t
     assert '<button type="submit">Run again</button>' in t
-    assert t.index("Steps (3)") < t.index("Run again") < t.index("<h2>At a glance</h2>")
+    assert t.index("Run again") < t.index("<h2>At a glance</h2>") < t.index("Steps (3)")
     done = page(env, store(env, hernia()))
     assert "Run again" not in done and "/again" not in done
 

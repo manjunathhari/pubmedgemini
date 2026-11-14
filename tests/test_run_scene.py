@@ -94,3 +94,13 @@ def test_the_drawing_sits_in_a_band_beside_the_words():
     css = (STATIC / "app.css").read_text(encoding="utf-8")
     assert ".card.sai-scene-card { display: grid; grid-template-columns: 128px minmax(0, 1fr);" in css
     assert ".sai-scene { grid-row: 1 / span 2; display: block; width: 128px; height: auto; }" in css
+
+
+def test_steps_sit_after_possible_contradictions_and_before_the_check(env):
+    from test_run_answer_layout import with_check
+
+    url = store(env, hernia())
+    with_check(env, url, "done")
+    t = page(env, url)
+    assert t.index("Possible contradictions") < t.index("<summary>Steps (") \
+        < t.index('<div class="steps"><span class="name">Completeness check')

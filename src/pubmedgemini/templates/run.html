@@ -101,19 +101,6 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 {% if intro_paragraphs -%}
 {{ intro_fold(True) }}
 {% endif -%}
-<section class="card">
-<details class="fold"><summary>Steps ({{ run.lines|length }})</summary>
-{%- if run.lines %}
-<ul>
-{%- for line in run.lines %}
-<li>{{ line }}</li>
-{%- endfor %}
-</ul>
-{%- else %}
-<p>No steps were recorded.</p>
-{%- endif %}
-</details>
-</section>
 {% if outcome or run.status in ("stopped", "failed", "partial") %}
 <section class="card">
 {% if outcome %}
@@ -303,6 +290,20 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 </details>
 </section>
 {% endif %}
+{#- the steps fold sits at the bottom, after Possible contradictions (owner, 14 Nov) -#}
+<section class="card">
+<details class="fold"><summary>Steps ({{ run.lines|length }})</summary>
+{%- if run.lines %}
+<ul>
+{%- for line in run.lines %}
+<li>{{ line }}</li>
+{%- endfor %}
+</ul>
+{%- else %}
+<p>No steps were recorded.</p>
+{%- endif %}
+</details>
+</section>
 {% if check -%}
 {#- F4a (mock f4a-completeness-v3, its one new line): the completeness check, the last box.
 Fixed words and counts only; nothing of the answer is printed here. -#}
