@@ -92,8 +92,10 @@ def test_the_report_stays_on_every_finished_answer_marked_done(env):
 
 def test_the_drawing_sits_in_a_band_beside_the_words():
     css = (STATIC / "app.css").read_text(encoding="utf-8")
-    assert ".card.sai-scene-card { display: grid; grid-template-columns: 128px minmax(0, 1fr);" in css
-    assert ".sai-scene { grid-row: 1 / span 2; display: block; width: 128px; height: auto; }" in css
+    assert ".card.sai-scene-card { display: grid; grid-template-columns: 88px minmax(0, 1fr);" in css
+    assert ".sai-scene { grid-row: 1 / span 2; display: block; width: 88px; height: 88px; }" in css
+    for name in ("researcher-search", "researcher-write", "researcher-report"):  # square (owner, 14 Nov)
+        assert 'width="200" height="200" viewBox="0 8 200 200"' in (STATIC / f"{name}.svg").read_text()
 
 
 def test_steps_sit_after_possible_contradictions_and_before_the_check(env):
