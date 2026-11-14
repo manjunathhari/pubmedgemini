@@ -691,7 +691,7 @@ def test_sai_artwork_only_on_the_ask_page(pages):
     assert "isolation: isolate" in _rule_body(".sai-hero", css())
     assert "min-height: 640px" in _rule_body(".sai-hero", css())  # the kit's phone hero
     hero_wide = _rule_body(".sai-hero", wide)
-    assert "min-height: 360px" in hero_wide and "padding-bottom: 8px" in hero_wide  # owner, 14 Nov: less gap
+    assert "min-height: 360px" in hero_wide and "padding-bottom: 34px" in hero_wide  # owner, 14 Nov: less gap
     for bit in ("max-width: 1440px", "padding-left: 64px", "padding-right: 64px"):
         assert bit in _rule_body("main.home", wide), bit
     head = _rule_body("main.home .sai-hero h1", wide)
