@@ -259,7 +259,7 @@ main.home .sai-hero .lead { margin-top: 4px; }
   .site-header nav > a { flex: none; padding: 0 2px; }
   .site-header .sai-daynight { order: 3; }
   main.home { max-width: 1440px; padding-left: 64px; padding-right: 64px; }
-  .sai-hero { min-height: 560px; justify-content: center; padding-bottom: 40px; }
+  .sai-hero { min-height: 360px; justify-content: flex-end; padding-bottom: 8px; }
   main.home > * { max-width: 42rem; }
   main.home > .sai-hero { max-width: none; }
   .sai-pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
