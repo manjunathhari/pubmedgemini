@@ -52,7 +52,7 @@ def test_pages_have_no_script_and_no_outside_requests():
         assert "/static/" not in text, name
         refs = re.findall(r'(?:src|srcset|href)="([^"]*)"|url\(([^)]*)\)', text)
         for ref in (a or b for a, b in refs):
-            assert ref.startswith("data:") or ref == "{{.Footer}}", (name, ref[:60])
+            assert ref.startswith("data:"), (name, ref[:60])
 
 
 def test_sign_in_form_keeps_the_proxy_contract():
@@ -71,6 +71,7 @@ def test_error_page_splits_refused_from_other_403s():
     assert "This account can&#39;t sign in" not in refused  # written plainly, not escaped
     assert "This account can't sign in" in refused
     assert "Sign-in didn't work" in other and "{{.Message}}" in other
+    assert "Footer" not in text and "Back to SurgeryAi" not in text  # owner, 15 Nov: no button
 
 
 def test_each_page_shows_googles_button_in_both_themes():

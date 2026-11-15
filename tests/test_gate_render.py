@@ -84,7 +84,6 @@ def test_refused_account_sees_the_not_on_the_list_card(pages):
     assert "This account can&#39;t sign in" in page or "This account can't sign in" in page
     assert "Use another Google account:" in page
     assert 'action="/oauth2/start"' in page
-    assert "Back to SurgeryAi" not in page  # no address set, no button
 
 
 def test_other_403_shows_the_general_card_with_its_message(pages):
@@ -99,8 +98,8 @@ def test_500_shows_the_general_card(pages):
     assert "Sign-in didn" in pages[3] and "Something went wrong" in pages[3]
 
 
-def test_back_to_surgeryai_uses_the_configured_address(pages):
-    assert '<a class="ghost" href="https://example.org/">Back to SurgeryAi</a>' in pages[4]
+def test_no_back_button_even_with_a_footer_set(pages):
+    assert "Back to SurgeryAi" not in pages[4] and "example.org" not in pages[4]
 
 
 def test_redirect_is_escaped(pages):
@@ -113,5 +112,5 @@ def test_message_is_escaped(pages):
     assert "&lt;b&gt;bold&lt;/b&gt;" in pages[6] and "<b>bold" not in pages[6]
 
 
-def test_unsafe_back_address_is_blocked(pages):
+def test_footer_value_never_reaches_the_page(pages):
     assert "javascript:" not in pages[7]
