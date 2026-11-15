@@ -71,6 +71,8 @@ jobs:
           scp "${opts[@]}" compose.yaml "${dest}/compose.yaml.new"
           scp "${opts[@]}" infra/deploy.sh "${dest}/deploy.sh.new"
           scp "${opts[@]}" infra/backup.sh "${dest}/backup.sh.new"
+          scp "${opts[@]}" gate/templates/sign_in.html "${dest}/gate-sign_in.html.new"
+          scp "${opts[@]}" gate/templates/error.html "${dest}/gate-error.html.new"
       - name: Deploy (infra/deploy.sh rolls back and fails if the new version is not up)
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}

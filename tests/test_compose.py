@@ -49,6 +49,8 @@ GATE_FLAGS = [
     "--reverse-proxy",
     "--trusted-proxy-ip",
     "--redirect-url",
+    "--custom-templates-dir",
+    "--prompt",
 ]
 GATE_ENV_KEYS = {
     "OAUTH2_PROXY_CLIENT_ID",
@@ -67,6 +69,16 @@ def test_gate_environment_keys_are_exactly_the_reviewed_ones():
     gate = _gate()
     assert "env_file" not in gate and "entrypoint" not in gate
     assert set(gate["environment"]) == GATE_ENV_KEYS
+
+
+def test_gate_uses_our_pages_read_only_and_the_account_chooser():
+    gate = _gate()
+    assert "--custom-templates-dir=/etc/gate/templates" in gate["command"]
+    assert "--prompt=select_account" in gate["command"]
+    assert gate["volumes"] == [
+        "./gate/emails.txt:/etc/gate/emails.txt:ro",
+        "./gate/templates:/etc/gate/templates:ro",
+    ]
 
 
 def test_gate_cookie_is_samesite_lax():

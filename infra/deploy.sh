@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Deploy one app image on the VPS. The deploy workflow copies this release's files into
-# APP_DIR as compose.yaml.new and backup.sh.new (and this script as deploy.sh), then runs:
+# APP_DIR as compose.yaml.new, backup.sh.new and the sign-in gate's two pages
+# (gate-sign_in.html.new, gate-error.html.new), and this script as deploy.sh, then runs:
 #   deploy.sh <image>
 #
 # Works for any account that can run docker and write APP_DIR and .env (no account is
@@ -10,6 +11,10 @@
 # that, and on HUP, INT, TERM or PIPE (an SSH drop or a cancelled job), it puts both back,
 # starts the previous version again, removes its temporary files and exits non-zero.
 # backup.sh.new replaces backup.sh only after the new version is healthy.
+#
+# The gate's pages go into gate/templates/ (mounted read-only into the gate) with
+# compose.yaml and are saved and put back with it. The gate reads them only when it starts,
+# so it is restarted (recreated) whenever a page changed, and again on a rollback.
 #
 # One deploy at a time: it holds an exclusive lock on APP_DIR/.deploy.lock from before it
 # looks at any earlier deploy's files until it exits, and a second deploy started meanwhile
@@ -33,6 +38,8 @@ handling=0  # 1 once a rollback or an interrupt is being handled
 new_image=""
 previous_image=""
 had_compose=0
+pages_changed=0 # 1 if a gate page in this release differs from the one in place
+PAGES="sign_in.html error.html"
 locked=0 # 1 once this run holds the lock; before that it must not touch any deploy file
 
 # Log to stderr. If stderr is gone (SSH dropped), send all further output to /dev/null
@@ -44,6 +51,13 @@ say() {
 fail() {
   say "deploy failed: $*"
   exit 1
+}
+
+# Remove the saved copies made while saving (not the live files).
+drop_saved() {
+  local page
+  rm -f compose.yaml.previous
+  for page in $PAGES; do rm -f "gate-$page.previous"; done
 }
 
 cleanup_tmp() {
@@ -106,7 +120,27 @@ restore_files() {
   else
     rm -f compose.yaml || return 1
   fi
-  rm -f .env.previous && rm -f compose.yaml.previous
+  restore_pages || return 1
+  rm -f .env.previous && drop_saved
+}
+
+# Put the gate's pages back as they were (none before: none now). Only called while
+# .env.previous exists, which is written after the pages were saved.
+restore_pages() {
+  local page tmp
+  for page in $PAGES; do
+    if [ -f "gate-$page.previous" ]; then
+      tmp="$(tmp_copy_of "gate-$page.previous")" || return 1
+      mv -f "$tmp" "gate/templates/$page" || { rm -f "$tmp"; return 1; }
+    else
+      rm -f "gate/templates/$page" || return 1
+    fi
+  done
+}
+
+# The gate reads its pages only at start: recreate it so it reads the ones now in place.
+restart_gate() {
+  docker compose up -d --no-deps --force-recreate gate
 }
 
 docker_inspect() {
@@ -157,12 +191,14 @@ roll_back() {
     exit 1
   fi
   rm -f compose.yaml.new backup.sh.new
+  for page in $PAGES; do rm -f "gate-$page.new"; done
   cleanup_tmp
   if [ -z "$previous_image" ] || [ "$had_compose" = 0 ]; then
     say "no previous version to go back to; containers are left as they are"
     exit 1
   fi
-  if docker compose up -d && wait_until_up "$previous_image"; then
+  if docker compose up -d && { [ "$pages_changed" = 0 ] || restart_gate; } &&
+    wait_until_up "$previous_image"; then
     say "rolled back: the previous version is healthy"
   else
     say "rollback did not come up healthy; check 'docker compose ps'"
@@ -184,7 +220,8 @@ on_signal() {
   trap '' HUP INT TERM PIPE
   say "deploy interrupted by SIG$sig before anything was changed"
   if [ "$phase" = saving ]; then
-    rm -f .env.previous compose.yaml.previous
+    rm -f .env.previous
+    drop_saved
   fi
   cleanup_tmp
   exit 1
@@ -195,7 +232,7 @@ on_exit() {
   if [ "$handling" = 0 ]; then
     case "$phase" in
       switched) roll_back "unexpected error (exit $code)" ;;
-      saving) rm -f .env.previous compose.yaml.previous ;;
+      saving) rm -f .env.previous; drop_saved ;;
     esac
   fi
   cleanup_tmp
@@ -223,6 +260,9 @@ if [ ! -r .env ] || [ ! -w .env ]; then
 fi
 [ -w . ] || fail "$APP_DIR cannot be written by $me"
 [ -f compose.yaml.new ] || fail "compose.yaml.new is missing; the workflow copies it first"
+for page in $PAGES; do
+  [ -f "gate-$page.new" ] || fail "gate-$page.new is missing; the workflow copies it first"
+done
 
 # ---- one deploy at a time ----
 
@@ -248,10 +288,15 @@ rm -f "$trial"
 if [ -f .env.previous ]; then
   say "found the copies left by an interrupted earlier deploy; restoring .env and compose.yaml from them first"
   restore_files || fail "could not restore from .env.previous; check $APP_DIR by hand"
-elif [ -f compose.yaml.previous ]; then
-  # Interrupted while saving: nothing had been changed, so this copy is not needed.
-  rm -f compose.yaml.previous
+else
+  # Interrupted while saving (or not at all): nothing had been changed, so any copies made
+  # while saving are not needed.
+  drop_saved
 fi
+
+for page in $PAGES; do
+  cmp -s "gate-$page.new" "gate/templates/$page" 2>/dev/null || pages_changed=1
+done
 
 lines="$(grep -c '^APP_IMAGE=' .env || true)"
 [ "$lines" -ge 1 ] || fail ".env has no APP_IMAGE= line; add one as infra/README.md step 3f says"
@@ -292,6 +337,13 @@ if [ -f compose.yaml ]; then
   mv -f "$tmp" compose.yaml.previous || fail "could not save a copy of compose.yaml"
   had_compose=1
 fi
+# The gate's pages, before .env.previous: its presence means these were saved.
+for page in $PAGES; do
+  if [ -f "gate/templates/$page" ]; then
+    tmp="$(tmp_copy_of "gate/templates/$page")" || fail "could not save a copy of gate/templates/$page"
+    mv -f "$tmp" "gate-$page.previous" || fail "could not save a copy of gate/templates/$page"
+  fi
+done
 # .env.previous is mode 600 whatever .env's mode is (mktemp makes it 600).
 tmp="$(mktemp .deploy-tmp.XXXXXX)" || fail "could not save a copy of .env"
 { cat .env > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" .env.previous; } ||
@@ -318,10 +370,29 @@ install_compose() {
   mv -f "$tmp" compose.yaml || { rm -f "$tmp"; return 1; }
 }
 
+# The pages are public (the sign-in screen), and the gate runs as a non-root account, so
+# the folder and files are world-readable whatever this script's umask is.
+install_pages() {
+  local page tmp
+  mkdir -p gate/templates && chmod 755 gate/templates || return 1
+  for page in $PAGES; do
+    tmp="$(mktemp .deploy-tmp.XXXXXX)" || return 1
+    if cat "gate-$page.new" > "$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "gate/templates/$page"; then
+      continue
+    fi
+    rm -f "$tmp"
+    return 1
+  done
+}
+
 write_env || roll_back "could not write APP_IMAGE to .env"
 install_compose || roll_back "could not install the new compose.yaml"
+install_pages || roll_back "could not install the gate's pages"
 docker compose pull app gate || roll_back "docker compose pull failed"
 docker compose up -d || roll_back "docker compose up failed"
+if [ "$pages_changed" = 1 ]; then
+  restart_gate || roll_back "could not restart the gate with its new pages"
+fi
 wait_until_up "$new_image" ||
   roll_back "app not healthy on the new image, or gate not running steadily, after $HEALTH_TRIES checks"
 if [ -f backup.sh.new ]; then
@@ -331,6 +402,8 @@ fi
 
 phase=finished
 rm -f .env.previous
-rm -f compose.yaml.previous compose.yaml.new
+drop_saved
+rm -f compose.yaml.new
+for page in $PAGES; do rm -f "gate-$page.new"; done
 cleanup_tmp
 printf '%s\n' "deploy ok: app is healthy on $new_image and gate is running" 2>/dev/null || true

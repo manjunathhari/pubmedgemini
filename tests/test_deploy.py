@@ -13,7 +13,10 @@ NEW = "ghcr.io/example/pubmedgemini:new"
 SUBNET = "TRAEFIK_SUBNET=127.0.0.0/8\n"  # a loopback range: a dummy value
 ENV = f"POSTGRES_PASSWORD=dummy\nAPP_IMAGE={OLD}\nAPP_HOST=app.example.org\n{SUBNET}"
 FAST = {"HEALTH_TRIES": "2", "HEALTH_INTERVAL": "0", "GATE_STABLE_INTERVAL": "0"}
-CLEAN = [".deploy.lock", ".env", "backup.sh", "compose.yaml"]  # the lock file is kept
+CLEAN = [".deploy.lock", ".env", "backup.sh", "compose.yaml", "gate"]  # the lock file is kept
+PAGES = ("sign_in.html", "error.html")
+NEW_PAGES = [f"gate-{p}.new" for p in PAGES]
+RECREATE_GATE = "compose up -d --no-deps --force-recreate gate"
 
 
 def _vps(tmp_path, env_text=ENV):
@@ -26,6 +29,10 @@ def _vps(tmp_path, env_text=ENV):
     (app / "compose.yaml.new").write_text("new compose\n")
     (app / "backup.sh").write_text("old backup\n")
     (app / "backup.sh.new").write_text("new backup\n")
+    (app / "gate" / "templates").mkdir(parents=True)
+    for page in PAGES:
+        (app / "gate" / "templates" / page).write_text(f"old {page}\n")
+        (app / f"gate-{page}.new").write_text(f"new {page}\n")
     state = tmp_path / "state"
     state.mkdir()
     (state / "running_image").write_text(OLD + "\n")
@@ -53,6 +60,8 @@ def _assert_restored(app, state, env_text=ENV):
     assert stat.S_IMODE((app / ".env").stat().st_mode) == 0o600
     assert (app / "compose.yaml").read_text() == "old compose\n"
     assert (app / "backup.sh").read_text() == "old backup\n"
+    for page in PAGES:
+        assert (app / "gate" / "templates" / page).read_text() == f"old {page}\n"
     assert _names(app) == CLEAN  # no .previous, .new or temporary files left
 
 
@@ -70,6 +79,73 @@ def test_success_switches_image_compose_file_and_backup_script(tmp_path):
     calls = docker_calls(state)
     assert "compose pull app gate" in calls and "compose up -d" in calls
     assert "deploy ok" in r.stdout
+
+
+def test_new_gate_pages_are_installed_readable_and_the_gate_restarted(tmp_path):
+    app, state = _vps(tmp_path)
+    (app / "gate" / "templates").chmod(0o700)
+    r = _deploy(app, state, NEW)
+    assert r.returncode == 0, r.stderr
+    folder = app / "gate" / "templates"
+    assert stat.S_IMODE(folder.stat().st_mode) == 0o755  # the gate runs as a non-root account
+    for page in PAGES:
+        assert (folder / page).read_text() == f"new {page}\n"
+        assert stat.S_IMODE((folder / page).stat().st_mode) == 0o644
+    calls = docker_calls(state)
+    assert calls.index(RECREATE_GATE) > calls.index("compose up -d")
+    assert _names(app) == CLEAN
+
+
+def test_unchanged_gate_pages_do_not_restart_the_gate(tmp_path):
+    app, state = _vps(tmp_path)
+    for page in PAGES:
+        (app / f"gate-{page}.new").write_text(f"old {page}\n")
+    r = _deploy(app, state, NEW)
+    assert r.returncode == 0, r.stderr
+    assert RECREATE_GATE not in docker_calls(state)
+
+
+def test_first_deploy_with_pages_creates_the_folder(tmp_path):
+    app, state = _vps(tmp_path)
+    shutil.rmtree(app / "gate" / "templates")
+    r = _deploy(app, state, NEW)
+    assert r.returncode == 0, r.stderr
+    for page in PAGES:
+        assert (app / "gate" / "templates" / page).read_text() == f"new {page}\n"
+    assert RECREATE_GATE in docker_calls(state)
+
+
+def test_rollback_of_a_first_deploy_with_pages_removes_them(tmp_path):
+    app, state = _vps(tmp_path)
+    shutil.rmtree(app / "gate" / "templates")
+    r = _deploy(app, state, NEW, FAKE_UNHEALTHY_IMAGE=NEW)
+    assert r.returncode != 0
+    assert list((app / "gate" / "templates").iterdir()) == []  # the gate's stock pages again
+    assert docker_calls(state).count(RECREATE_GATE) == 2  # new pages, then none
+
+
+def test_rollback_puts_the_old_pages_back_and_restarts_the_gate(tmp_path):
+    app, state = _vps(tmp_path)
+    r = _deploy(app, state, NEW, FAKE_UNHEALTHY_IMAGE=NEW)
+    assert r.returncode != 0
+    _assert_restored(app, state)
+    calls = docker_calls(state)
+    assert calls.count(RECREATE_GATE) == 2
+    assert calls[-1] != RECREATE_GATE or "rolled back" in r.stderr
+    assert "rolled back: the previous version is healthy" in r.stderr
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_a_missing_gate_page_changes_nothing(tmp_path, page):
+    app, state = _vps(tmp_path)
+    (app / f"gate-{page}.new").unlink()
+    r = _deploy(app, state, NEW)
+    assert r.returncode != 0
+    assert f"gate-{page}.new is missing" in r.stderr
+    assert (app / ".env").read_text() == ENV
+    for p in PAGES:
+        assert (app / "gate" / "templates" / p).read_text() == f"old {p}\n"
+    assert docker_calls(state) == []
 
 
 def test_env_is_replaced_not_edited_in_place_and_keeps_its_mode(tmp_path):
@@ -145,7 +221,7 @@ def test_missing_app_image_line_changes_nothing(tmp_path):
     assert "no APP_IMAGE= line" in r.stderr
     assert (app / ".env").read_text() == env_text
     assert (app / "compose.yaml").read_text() == "old compose\n"
-    assert _names(app) == sorted(CLEAN + ["backup.sh.new", "compose.yaml.new"])
+    assert _names(app) == sorted(CLEAN + ["backup.sh.new", "compose.yaml.new", *NEW_PAGES])
     assert docker_calls(state) == []
 
 
@@ -182,7 +258,7 @@ def _assert_unchanged(app, state, env_text=ENV):
     assert (app / ".env").read_text() == env_text
     assert (app / "compose.yaml").read_text() == "old compose\n"
     assert (app / "backup.sh").read_text() == "old backup\n"
-    assert _names(app) == sorted(CLEAN + ["backup.sh.new", "compose.yaml.new"])
+    assert _names(app) == sorted(CLEAN + ["backup.sh.new", "compose.yaml.new", *NEW_PAGES])
     assert _running(state) == OLD
 
 
@@ -274,7 +350,9 @@ def test_env_owned_by_another_account_fails_the_checks_and_changes_nothing(tmp_p
 
 def test_env_owned_by_another_account_is_named_even_with_leftover_copies(tmp_path):
     app, state = _half_switched(tmp_path)
-    before = {n: (app / n).read_bytes() for n in _names(app) if n != ".deploy-tmp.abc123"}
+    before = {n: (app / n).read_bytes() for n in _names(app)
+              if n != ".deploy-tmp.abc123" and (app / n).is_file()}
+    before |= {f"gate/templates/{p}": (app / "gate" / "templates" / p).read_bytes() for p in PAGES}
     r = _deploy(app, state, NEW, PATH=_cp_that_cannot_keep_the_owner_of_env(tmp_path))
     assert r.returncode != 0
     assert "cannot copy .env with its owner, group and mode kept" in r.stderr
@@ -366,6 +444,9 @@ def _half_switched(tmp_path):
     (app / "compose.yaml.previous").write_text("old compose\n")
     (app / ".env").write_text(ENV.replace(OLD, half))
     (app / "compose.yaml").write_text("half compose\n")
+    for page in PAGES:
+        (app / f"gate-{page}.previous").write_text(f"old {page}\n")
+        (app / "gate" / "templates" / page).write_text(f"half {page}\n")
     (app / ".deploy-tmp.abc123").write_text("partial\n")
     (state / "running_image").write_text(half + "\n")
     return app, state
@@ -392,6 +473,16 @@ def test_stray_compose_copy_without_env_copy_is_discarded(tmp_path):
     """Interrupted while saving: nothing had changed yet, so the copy is not used."""
     app, state = _vps(tmp_path)
     (app / "compose.yaml.previous").write_text("stale compose\n")
+    r = _deploy(app, state, NEW, FAKE_UNHEALTHY_IMAGE=NEW)
+    assert r.returncode != 0
+    _assert_restored(app, state)
+
+
+def test_stray_page_copies_without_env_copy_are_discarded(tmp_path):
+    """Interrupted while saving the pages: nothing had changed, so the copies are not used."""
+    app, state = _vps(tmp_path)
+    for page in PAGES:
+        (app / f"gate-{page}.previous").write_text(f"stale {page}\n")
     r = _deploy(app, state, NEW, FAKE_UNHEALTHY_IMAGE=NEW)
     assert r.returncode != 0
     _assert_restored(app, state)
@@ -446,6 +537,8 @@ def test_the_lock_is_released_however_a_deploy_ends(tmp_path, sig):
     assert code != 0
     (app / "compose.yaml.new").write_text("new compose\n")  # the workflow copies them again
     (app / "backup.sh.new").write_text("new backup\n")
+    for page in PAGES:
+        (app / f"gate-{page}.new").write_text(f"new {page}\n")
     r = _deploy(app, state, NEW)
     assert r.returncode == 0, r.stderr
     assert (app / ".env").read_text() == ENV.replace(OLD, NEW)
@@ -478,7 +571,12 @@ def test_workflow_copies_every_release_file_as_new():
 
     script = _deploy_job_script()
     targets = re.findall(r'scp "\$\{opts\[@\]\}" \S+ "\$\{dest\}/([^"]+)"', script)
-    assert sorted(targets) == ["backup.sh.new", "compose.yaml.new", "deploy.sh.new"]
+    assert sorted(targets) == [
+        "backup.sh.new", "compose.yaml.new", "deploy.sh.new",
+        "gate-error.html.new", "gate-sign_in.html.new",
+    ]
+    assert 'gate/templates/sign_in.html "${dest}/gate-sign_in.html.new"' in script
+    assert 'gate/templates/error.html "${dest}/gate-error.html.new"' in script
 
 
 def test_workflow_moves_deploy_script_into_place_before_running_it():

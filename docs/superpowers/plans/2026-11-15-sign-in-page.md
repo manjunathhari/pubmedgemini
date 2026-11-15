@@ -35,7 +35,7 @@
 **Files:**
 - Create: `gate/assets/google/signin-light.svg`, `gate/assets/google/signin-dark.svg` (copied unchanged from the zip)
 - Create: `gate/src/sign_in.html`, `gate/src/error.html` (source templates with `@@FONT_HANKEN@@`, `@@FONT_SERIF@@`, `@@BADGE_DAY@@`, `@@BADGE_NIGHT@@`, `@@GOOGLE_LIGHT@@`, `@@GOOGLE_DARK@@`, `@@LOCK@@` placeholders)
-- Create: `scripts/build_gate_pages.py` with `build(src_dir: Path, out_dir: Path) -> dict[str, str]` and a `main()` that writes `gate/templates/sign_in.html` and `gate/templates/error.html`
+- Create: `scripts/build_gate_pages.py` with `build(src_dir: Path = SRC) -> dict[str, str]` and a `main()` that writes `gate/templates/sign_in.html` and `gate/templates/error.html`
 - Create: `gate/templates/sign_in.html`, `gate/templates/error.html` (generated, committed)
 - Test: `tests/test_gate_pages.py`
 
@@ -79,6 +79,12 @@ Page content is the frozen mock, as Go templates:
 - [ ] Fix findings, re-check.
 - [ ] Show the owner screenshots; merge only on "merge it". Watch `ci` and `deploy`. After deploy, the owner opens the site in a private window: the new sign-in page must show (if the stock page shows, the mount is missing).
 
-## Owner decision (before Task 2)
+## Owner decisions (15 Nov)
+
+- Account chooser: **yes**, `--prompt=select_account` added to the gate.
+- "Back to SurgeryAi" button: **dropped** (the owner's domain cannot be in the public repo; he chose no button over a server setting).
+- Getting the pages to the server: **the deploy copies them.** The workflow copies `gate/templates/{sign_in,error}.html` as `gate-<page>.new`; `infra/deploy.sh` checks both are there, saves the live pages with compose.yaml (before `.env.previous`), installs them (folder 755, files 644: the gate runs as non-root), and recreates the gate (`docker compose up -d --no-deps --force-recreate gate`) only when a page changed. A rollback puts the old pages back (none before: none after) and recreates the gate again. Tests in `tests/test_deploy.py`.
+
+## Earlier note: account chooser (asked before Task 2)
 
 **Account chooser.** Google often signs a person straight back in with the same account, so "Use another Google account" on the refused page may just loop. Adding `--prompt=select_account` to the gate makes Google always show its account chooser (one extra tap for everyone, every sign-in). Suggested: add it. Without it, the refused page drops the second Google button and says "Sign out of Google in this browser, then try again."

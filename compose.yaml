@@ -83,12 +83,20 @@ services:
       - --reverse-proxy=true
       - --trusted-proxy-ip=${TRAEFIK_SUBNET:?set TRAEFIK_SUBNET in .env}
       - --redirect-url=https://${APP_HOST:?set APP_HOST in .env}/oauth2/callback
+      # Our sign-in and error pages (gate/templates, built by scripts/build_gate_pages.py;
+      # infra/deploy.sh installs them and restarts the gate when they change). A missing file
+      # makes the gate fall back to its stock page.
+      - --custom-templates-dir=/etc/gate/templates
+      # Google shows its account chooser at every sign-in, so "Use another Google account" on
+      # the not-on-the-list page really lets a person pick another account (owner, 15 Nov).
+      - --prompt=select_account
     environment:
       OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID:?set OAUTH2_PROXY_CLIENT_ID in .env}
       OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET:?set OAUTH2_PROXY_CLIENT_SECRET in .env}
       OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET:?set OAUTH2_PROXY_COOKIE_SECRET in .env}
     volumes:
       - ./gate/emails.txt:/etc/gate/emails.txt:ro
+      - ./gate/templates:/etc/gate/templates:ro
     depends_on:
       app:
         condition: service_healthy
