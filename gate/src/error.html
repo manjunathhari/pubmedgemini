@@ -1,0 +1,34 @@
+{{define "error.html"}}<!doctype html>
+<html lang="en">
+<head>
+@@HEAD@@
+<title>{{if and (eq .StatusCode 403) (eq .Message "You do not have permission to access this resource.")}}Not on the list yet{{else}}Sign-in problem{{end}} · PubMed Ai</title>
+</head>
+<body>
+<section class="screen">
+<div class="top"><div class="badge"><b><span>S</span>Ai</b></div><div class="wm">PUBMED<i>Ai</i></div></div>
+<div class="mid"><div class="card">
+{{- if and (eq .StatusCode 403) (eq .Message "You do not have permission to access this resource.")}}
+<p class="lab">Not on the list yet</p>
+<h1>This account can't sign in</h1>
+<p class="sub">PubMed Ai is open to invited Google accounts for now. Ask the owner to add yours, or sign in with another account.</p>
+<p class="sub small">Use another Google account:</p>
+<form method="GET" action="{{.ProxyPrefix}}/start"><input type="hidden" name="rd" value="{{.Redirect}}">@@GOOGLE_BUTTON@@</form>
+{{- else}}
+<p class="lab">Sign-in problem</p>
+<h1>Sign-in didn't work</h1>
+<p class="sub">{{.Message}}</p>
+<form method="GET" action="{{.ProxyPrefix}}/start"><input type="hidden" name="rd" value="{{.Redirect}}">@@GOOGLE_BUTTON@@</form>
+{{- if .RequestID}}
+<p class="ref">Reference: {{.RequestID}}</p>
+{{- end}}
+{{- end}}
+{{- if .Footer}}
+<a class="ghost" href="{{.Footer}}">Back to SurgeryAi</a>
+{{- end}}
+</div></div>
+<p class="foot">Part of SurgeryAi · Educational tool only</p>
+</section>
+</body>
+</html>
+{{end}}

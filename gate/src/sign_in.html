@@ -1,0 +1,21 @@
+{{define "sign_in.html"}}<!doctype html>
+<html lang="en">
+<head>
+@@HEAD@@
+<title>Sign in · PubMed Ai</title>
+</head>
+<body>
+<section class="screen">
+<div class="top"><div class="badge"><b><span>S</span>Ai</b></div><div class="wm">PUBMED<i>Ai</i></div></div>
+<div class="mid"><div class="card">
+<p class="lab">Sign in</p>
+<h1>PubMed Ai</h1>
+<p class="sub">An AI search agent for clinical questions. It searches PubMed and Europe PMC and sets out what the studies show in one clear answer, with every point linked to its source.</p>
+<form method="GET" action="{{.ProxyPrefix}}/start"><input type="hidden" name="rd" value="{{.Redirect}}">@@GOOGLE_BUTTON@@</form>
+<div class="note">@@LOCK@@<span>Only invited Google accounts can sign in for now. Do not type anything that identifies a patient.</span></div>
+</div></div>
+<p class="foot">Part of SurgeryAi · Educational tool only</p>
+</section>
+</body>
+</html>
+{{end}}
