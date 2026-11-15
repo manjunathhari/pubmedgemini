@@ -44,7 +44,9 @@
 
 Page content is the frozen mock, as Go templates:
 - `sign_in.html`: `{{define "sign_in.html"}}…{{end}}`. Brand row, card (SIGN IN, PubMed Ai, the description), the official button inside `<form method="GET" action="{{.ProxyPrefix}}/start"><input type="hidden" name="rd" value="{{.Redirect}}"><button type="submit" class="gbtn" aria-label="Sign in with Google"><picture>…</picture></button></form>`, the lock note, the footer.
-- `error.html`: `{{define "error.html"}}…{{end}}`. Branch `{{if and (eq .StatusCode 403) (eq .Message "You do not have permission to access this resource.")}}` → the frozen "Not on the list yet / This account can't sign in" card with "Use another Google account:", the official button (form to `{{.ProxyPrefix}}/sign_in` with `rd={{.Redirect}}`) and "Back to SurgeryAi" (link to `/`). `{{else}}` → label "Sign-in problem", h1 "Sign-in didn't work", `<p>{{.Message}}</p>`, a Try again button (same form as above) and, if set, a small "Reference: {{.RequestID}}".
+- `error.html`: `{{define "error.html"}}…{{end}}`. Branch `{{if and (eq .StatusCode 403) (eq .Message "You do not have permission to access this resource.")}}` → the frozen "Not on the list yet / This account can't sign in" card with "Use another Google account:" and the official button (form to `{{.ProxyPrefix}}/start` with `rd={{.Redirect}}`; the account chooser makes it a real choice). `{{else}}` → label "Sign-in problem", h1 "Sign-in didn't work", `<p>{{.Message}}</p>`, the official button (same form) and, if set, a small "Reference: {{.RequestID}}". No "Back to SurgeryAi" button (owner, 15 Nov).
+
+Known limit (oauth2-proxy v7.15.6): a few other 403s carry no message of their own and so get the same default text (wrong token audience, session validation failed, email not verified); they also show the "can't sign in" card. Telling them apart needs the gate's debug mode, which we do not turn on.
 
 - [ ] **Step 1: Write the failing tests** in `tests/test_gate_pages.py`:
   - `test_google_buttons_are_googles_files_unchanged`: sha256 of each file in `gate/assets/google/` equals the sha256 of the zip originals (record the two hashes as constants in the test).
@@ -83,7 +85,7 @@ Page content is the frozen mock, as Go templates:
 
 - Account chooser: **yes**, `--prompt=select_account` added to the gate.
 - "Back to SurgeryAi" button: **dropped** (the owner's domain cannot be in the public repo; he chose no button over a server setting).
-- Getting the pages to the server: **the deploy copies them.** The workflow copies `gate/templates/{sign_in,error}.html` as `gate-<page>.new`; `infra/deploy.sh` checks both are there, saves the live pages with compose.yaml (before `.env.previous`), installs them (folder 755, files 644: the gate runs as non-root), and recreates the gate (`docker compose up -d --no-deps --force-recreate gate`) only when a page changed. A rollback puts the old pages back (none before: none after) and recreates the gate again. Tests in `tests/test_deploy.py`.
+- Getting the pages to the server: **the deploy copies them.** The workflow copies `gate/templates/{sign_in,error}.html` as `gate-<page>.new`; `infra/deploy.sh` checks both are there, saves the live pages with compose.yaml (before `.env.previous`), installs them (folder 755, files 644: the gate runs as non-root), and recreates the gate (`docker compose up -d --no-deps --force-recreate gate`) only when a page changed. A rollback puts the old pages back (none before: none after) and recreates the gate again. After recovering from a deploy that was killed outright, the gate is always recreated (the files cannot show what it is serving). Before anything changes, each page must begin with its `{{define}}` line and `gate/templates` must be a folder this account owns (review findings, 15 Nov). Tests in `tests/test_deploy.py`.
 
 ## Earlier note: account chooser (asked before Task 2)
 

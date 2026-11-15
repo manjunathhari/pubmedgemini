@@ -31,12 +31,16 @@ def _vps(tmp_path, env_text=ENV):
     (app / "backup.sh.new").write_text("new backup\n")
     (app / "gate" / "templates").mkdir(parents=True)
     for page in PAGES:
-        (app / "gate" / "templates" / page).write_text(f"old {page}\n")
-        (app / f"gate-{page}.new").write_text(f"new {page}\n")
+        (app / "gate" / "templates" / page).write_text(_page(page, "old"))
+        (app / f"gate-{page}.new").write_text(_page(page, "new"))
     state = tmp_path / "state"
     state.mkdir()
     (state / "running_image").write_text(OLD + "\n")
     return app, state
+
+
+def _page(page, word):
+    return f'{{{{define "{page}"}}}}{word} {page}\n'
 
 
 def _env(app, env):
@@ -61,7 +65,7 @@ def _assert_restored(app, state, env_text=ENV):
     assert (app / "compose.yaml").read_text() == "old compose\n"
     assert (app / "backup.sh").read_text() == "old backup\n"
     for page in PAGES:
-        assert (app / "gate" / "templates" / page).read_text() == f"old {page}\n"
+        assert (app / "gate" / "templates" / page).read_text() == _page(page, "old")
     assert _names(app) == CLEAN  # no .previous, .new or temporary files left
 
 
@@ -89,7 +93,7 @@ def test_new_gate_pages_are_installed_readable_and_the_gate_restarted(tmp_path):
     folder = app / "gate" / "templates"
     assert stat.S_IMODE(folder.stat().st_mode) == 0o755  # the gate runs as a non-root account
     for page in PAGES:
-        assert (folder / page).read_text() == f"new {page}\n"
+        assert (folder / page).read_text() == _page(page, "new")
         assert stat.S_IMODE((folder / page).stat().st_mode) == 0o644
     calls = docker_calls(state)
     assert calls.index(RECREATE_GATE) > calls.index("compose up -d")
@@ -99,7 +103,7 @@ def test_new_gate_pages_are_installed_readable_and_the_gate_restarted(tmp_path):
 def test_unchanged_gate_pages_do_not_restart_the_gate(tmp_path):
     app, state = _vps(tmp_path)
     for page in PAGES:
-        (app / f"gate-{page}.new").write_text(f"old {page}\n")
+        (app / f"gate-{page}.new").write_text(_page(page, "old"))
     r = _deploy(app, state, NEW)
     assert r.returncode == 0, r.stderr
     assert RECREATE_GATE not in docker_calls(state)
@@ -111,7 +115,7 @@ def test_first_deploy_with_pages_creates_the_folder(tmp_path):
     r = _deploy(app, state, NEW)
     assert r.returncode == 0, r.stderr
     for page in PAGES:
-        assert (app / "gate" / "templates" / page).read_text() == f"new {page}\n"
+        assert (app / "gate" / "templates" / page).read_text() == _page(page, "new")
     assert RECREATE_GATE in docker_calls(state)
 
 
@@ -144,7 +148,40 @@ def test_a_missing_gate_page_changes_nothing(tmp_path, page):
     assert f"gate-{page}.new is missing" in r.stderr
     assert (app / ".env").read_text() == ENV
     for p in PAGES:
-        assert (app / "gate" / "templates" / p).read_text() == f"old {p}\n"
+        assert (app / "gate" / "templates" / p).read_text() == _page(p, "old")
+    assert docker_calls(state) == []
+
+
+def test_after_an_interrupted_deploy_the_gate_is_restarted_even_if_pages_match(tmp_path):
+    """The killed deploy may have restarted the gate with its pages; the files on disk are
+    the old ones again, so they cannot show what the gate is serving."""
+    app, state = _half_switched(tmp_path)
+    for page in PAGES:
+        (app / f"gate-{page}.new").write_text(_page(page, "old"))  # the same as restored
+    r = _deploy(app, state, NEW)
+    assert r.returncode == 0, r.stderr
+    assert RECREATE_GATE in docker_calls(state)
+
+
+@pytest.mark.parametrize("text", ["", "{{define \"other.html\"}}x", "partial <html"])
+def test_a_cut_off_gate_page_changes_nothing(tmp_path, text):
+    app, state = _vps(tmp_path)
+    (app / "gate-error.html.new").write_text(text)
+    r = _deploy(app, state, NEW)
+    assert r.returncode != 0
+    assert "gate-error.html.new is not a complete page" in r.stderr
+    assert (app / ".env").read_text() == ENV
+    assert docker_calls(state) == []
+
+
+def test_gate_templates_that_is_not_a_folder_changes_nothing(tmp_path):
+    app, state = _vps(tmp_path)
+    shutil.rmtree(app / "gate" / "templates")
+    (app / "gate" / "templates").write_text("not a folder\n")
+    r = _deploy(app, state, NEW)
+    assert r.returncode != 0
+    assert "gate/templates must be a folder" in r.stderr
+    assert (app / ".env").read_text() == ENV
     assert docker_calls(state) == []
 
 
@@ -445,8 +482,8 @@ def _half_switched(tmp_path):
     (app / ".env").write_text(ENV.replace(OLD, half))
     (app / "compose.yaml").write_text("half compose\n")
     for page in PAGES:
-        (app / f"gate-{page}.previous").write_text(f"old {page}\n")
-        (app / "gate" / "templates" / page).write_text(f"half {page}\n")
+        (app / f"gate-{page}.previous").write_text(_page(page, "old"))
+        (app / "gate" / "templates" / page).write_text(_page(page, "half"))
     (app / ".deploy-tmp.abc123").write_text("partial\n")
     (state / "running_image").write_text(half + "\n")
     return app, state
@@ -538,7 +575,7 @@ def test_the_lock_is_released_however_a_deploy_ends(tmp_path, sig):
     (app / "compose.yaml.new").write_text("new compose\n")  # the workflow copies them again
     (app / "backup.sh.new").write_text("new backup\n")
     for page in PAGES:
-        (app / f"gate-{page}.new").write_text(f"new {page}\n")
+        (app / f"gate-{page}.new").write_text(_page(page, "new"))
     r = _deploy(app, state, NEW)
     assert r.returncode == 0, r.stderr
     assert (app / ".env").read_text() == ENV.replace(OLD, NEW)

@@ -34,6 +34,11 @@ jobs:
           cache-dependency-path: |
             requirements.lock
             pyproject.toml
+      # Go renders the sign-in gate's pages exactly as oauth2-proxy does (tests/gate_render).
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
       - name: Install (runtime from the hashed lock, then the dev tools)
         run: |
           pip install --require-hashes -r requirements.lock

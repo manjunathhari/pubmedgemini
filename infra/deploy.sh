@@ -262,7 +262,17 @@ fi
 [ -f compose.yaml.new ] || fail "compose.yaml.new is missing; the workflow copies it first"
 for page in $PAGES; do
   [ -f "gate-$page.new" ] || fail "gate-$page.new is missing; the workflow copies it first"
+  # A cut-off copy would stop the gate from starting; the page must at least begin right.
+  head -c 40 "gate-$page.new" | grep -q "^{{define \"$page\"}}" ||
+    fail "gate-$page.new is not a complete page; nothing was changed"
 done
+# The pages go into gate/templates; find out now, not after the switch, if they cannot.
+if [ -e gate/templates ]; then
+  { [ -d gate/templates ] && [ -w gate/templates ] && [ -O gate/templates ]; } ||
+    fail "gate/templates must be a folder that belongs to $me; nothing was changed"
+elif [ -e gate ]; then
+  [ -w gate ] || fail "gate cannot be written by $me; nothing was changed"
+fi
 
 # ---- one deploy at a time ----
 
@@ -288,6 +298,9 @@ rm -f "$trial"
 if [ -f .env.previous ]; then
   say "found the copies left by an interrupted earlier deploy; restoring .env and compose.yaml from them first"
   restore_files || fail "could not restore from .env.previous; check $APP_DIR by hand"
+  # The killed deploy may have restarted the gate with its own pages, which are no longer on
+  # disk: the files cannot tell what the gate is showing, so restart it in any case.
+  pages_changed=1
 else
   # Interrupted while saving (or not at all): nothing had been changed, so any copies made
   # while saving are not needed.
