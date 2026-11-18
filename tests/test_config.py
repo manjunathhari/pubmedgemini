@@ -187,3 +187,50 @@ def test_limits_out_of_range_are_refused(monkeypatch, name, value):
 def test_limit_bounds_are_accepted(monkeypatch, name, value):
     monkeypatch.setenv(name, value)
     assert getattr(load_settings(), name.lower()) == int(value)
+
+
+# ---------- F7: the key cookie's secret and the app-wide run cap ----------
+
+GOOD_SECRET = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="  # 32 bytes, base64
+
+
+def test_key_cookie_secret_is_read_as_32_bytes(monkeypatch):
+    monkeypatch.setenv("KEY_COOKIE_SECRET", GOOD_SECRET)
+    s = load_settings()
+    assert s.key_cookie_secret_bytes() == bytes(range(32))
+    assert GOOD_SECRET not in repr(s) and GOOD_SECRET not in str(s)
+
+
+@pytest.mark.parametrize("value", ["", " "])
+def test_unset_key_cookie_secret_is_none(monkeypatch, value):
+    """Dev and tests: none set means a random secret per process (main.py). Compose makes it
+    required in production."""
+    monkeypatch.setenv("KEY_COOKIE_SECRET", value)
+    assert load_settings().key_cookie_secret is None
+
+
+@pytest.mark.parametrize("value", ["c2hvcnQ=", "not base64 !!", "A" * 44 + "AAAA"])
+def test_bad_key_cookie_secret_is_refused_by_name_only(monkeypatch, value):
+    monkeypatch.setenv("KEY_COOKIE_SECRET", value)
+    with pytest.raises(SettingsError) as e:
+        load_settings()
+    assert str(e.value) == "missing or invalid settings: KEY_COOKIE_SECRET"
+    assert value not in str(e.value)
+
+
+def test_max_active_runs_defaults_to_2(monkeypatch):
+    monkeypatch.delenv("MAX_ACTIVE_RUNS", raising=False)
+    assert load_settings().max_active_runs == 2
+    monkeypatch.setenv("MAX_ACTIVE_RUNS", " ")
+    assert load_settings().max_active_runs == 2
+
+
+@pytest.mark.parametrize("value,ok", [("1", True), ("10", True), ("0", False), ("11", False),
+                                      ("two", False)])
+def test_max_active_runs_range(monkeypatch, value, ok):
+    monkeypatch.setenv("MAX_ACTIVE_RUNS", value)
+    if ok:
+        assert load_settings().max_active_runs == int(value)
+    else:
+        with pytest.raises(SettingsError, match="^missing or invalid settings: MAX_ACTIVE_RUNS$"):
+            load_settings()

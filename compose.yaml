@@ -1,9 +1,10 @@
 # Every variable below uses the required form (NAME:?message): if it is empty or unset in .env,
 # docker compose stops before anything starts and names the variable (never its value).
-# The exceptions are the optional NCBI_API_KEY and NCBI_EMAIL, and GEMINI_API_KEY,
-# GEMINI_MODEL, GEMINI_RPM, GEMINI_TPM and GEMINI_RPD (app only), which use NAME:- so they are
-# empty when unset; the app runs without them (no Gemini key: questions are off, the key-word
-# search works; the other four fall back to their defaults).
+# The exceptions are the optional NCBI_API_KEY and NCBI_EMAIL, and GEMINI_MODEL, GEMINI_RPM,
+# GEMINI_TPM, GEMINI_RPD and MAX_ACTIVE_RUNS (app only), which use NAME:- so they are empty
+# when unset; the app runs without them (they fall back to their defaults). F7: there is no
+# Gemini key on the server; each doctor uses their own, kept in their browser and sealed with
+# KEY_COOKIE_SECRET.
 services:
   db:
     image: postgres:17
@@ -29,13 +30,14 @@ services:
       APP_ENV: prod
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
       OWNER_EMAIL: ${OWNER_EMAIL:?set OWNER_EMAIL in .env}
+      KEY_COOKIE_SECRET: ${KEY_COOKIE_SECRET:?set KEY_COOKIE_SECRET in .env}
       NCBI_API_KEY: ${NCBI_API_KEY:-}
       NCBI_EMAIL: ${NCBI_EMAIL:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-}
       GEMINI_RPM: ${GEMINI_RPM:-}
       GEMINI_TPM: ${GEMINI_TPM:-}
       GEMINI_RPD: ${GEMINI_RPD:-}
+      MAX_ACTIVE_RUNS: ${MAX_ACTIVE_RUNS:-}
     depends_on:
       db:
         condition: service_healthy
