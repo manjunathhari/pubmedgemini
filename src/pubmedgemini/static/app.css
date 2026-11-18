@@ -366,6 +366,18 @@ textarea, input[type="text"] {
   color: var(--ink);
 }
 textarea { resize: vertical; }
+/* F7: the key box looks like the text box */
+input[type="password"] {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--faint);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: inherit;
+  line-height: inherit;
+  background: var(--card);
+  color: var(--ink);
+}
 
 /* buttons: the pages' submit buttons are the kit's main pill button */
 button {
@@ -383,6 +395,13 @@ button {
   cursor: pointer;
 }
 button:hover { background: var(--btn-hover); }
+/* F7: a quiet second button (Remove key) */
+button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--faint); }
+button.quiet:hover { background: var(--note); }
+input[type="password"] + button, input[type="password"] ~ button { margin-top: 10px; }
+ol.key-steps { margin: 0; padding-left: 1.25rem; font-family: "Source Serif 4", Georgia, serif; }
+ol.key-steps li + li { margin-top: 6px; }
+.saved { font-family: "Hanken Grotesk", system-ui, sans-serif; font-weight: 500; }
 input[type="text"] + button, input[type="text"] ~ button { margin-top: 10px; }
 /* the question box and its Ask button sit in two paragraphs whose gap a card sets to 0 */
 form p > textarea { margin-bottom: 10px; }

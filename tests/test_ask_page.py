@@ -207,7 +207,8 @@ def test_runs_left_goes_down_and_zero_shows_the_reset_time(env):
 def test_no_key_offers_the_key_page_and_search_still_works(no_key):
     page = no_key.c.get("/", headers=H).text
     assert NO_KEY in page and 'name="question"' not in page and "Free runs left" not in page
-    assert '<a class="sai-button" href="/key">Add your free key</a>' in page
+    assert ('<form method="get" action="/key"><p><button type="submit">Add your free key'
+            '</button></p></form>') in page
     assert page.count('name="q"') == 1 and "Your questions" not in page
     r = no_key.ask("Is mesh better than suture?")
     assert r.status_code == 403 and NO_KEY in r.text

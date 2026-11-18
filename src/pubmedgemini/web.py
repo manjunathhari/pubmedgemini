@@ -19,7 +19,15 @@ from pubmedgemini.answer_page import answer_view, fmt_pct, pill_class
 from pubmedgemini.db import is_healthy
 from pubmedgemini.gemini.quota import reset_time_ist, runs_left
 from pubmedgemini.identity import NotSetUp, NotSignedIn, User, current_user
-from pubmedgemini.keycookie import COOKIE_NAME, open_, set_key_cookie
+from pubmedgemini.keycookie import (
+    COOKIE_NAME,
+    clear_key_cookie,
+    key_tail,
+    normalise_key,
+    open_,
+    seal,
+    set_key_cookie,
+)
 from pubmedgemini.lit.query import query_rejected_message
 from pubmedgemini.lit.text import clean_text, drop_invisible
 from pubmedgemini.runs import (
@@ -649,6 +657,93 @@ def run_again(request: Request, run_id: str, user: Annotated[User, Depends(curre
     if v is None:
         return _message(request, RUN_NOT_FOUND, 404, user)
     return _start_question(request, user, v.question)
+
+
+# ---------- F7: the doctor's own Gemini key (/key; frozen mock v1, 18 Nov 2026) ----------
+
+KEY_SAVED = "Key saved in this browser."
+KEY_SAVED_LIMIT = ("Key saved. It has used today's free limit and will work again after "
+                   "{reset} IST.")
+KEY_REMOVED = "Key removed from this browser."
+KEY_NOT_KEY = ("Not saved. That does not look like a Gemini key. Copy it again from Google AI "
+               "Studio.")
+KEY_REFUSED = "Not saved. Google did not accept this key. Copy it again from Google AI Studio."
+KEY_BILLING = ("Not saved. This key's project has billing turned on. Make a key in a project "
+               "with billing turned off, then paste it again.")
+KEY_UNREACHABLE = "Not saved. Google could not be reached. Please try again in a minute."
+# What the one check call's result means: saved (and how it is said), or not saved.
+_SAVED_CHECKS = {"ok": "saved", "rate_limited": "saved", "daily_limit": "saved_limit"}
+_REFUSED_CHECKS = {"key_refused": KEY_REFUSED, "billing_refused": KEY_BILLING}
+
+
+def refuse_cross_site_key(request: Request) -> None:
+    _refuse_cross_site(request, "key")
+
+
+def _key_page(request: Request, user: User, status_code: int = 200, *,
+              message: str | None = None, saved_key: SecretStr | None = None,
+              removed: bool = False) -> HTMLResponse:
+    """`saved_key` is the key just saved (its cookie is set on this response); otherwise the
+    cookie decides. Only the last four characters of a key are ever shown."""
+    state = request.app.state
+    settings = state.settings
+    key = None if removed else (saved_key or user_key(request, user))
+    context: dict[str, Any] = {"nav": "key", "message": message, "has_key": key is not None}
+    if key is not None:
+        context["tail"] = key_tail(key.get_secret_value())
+        context["runs_left"] = runs_left(state.pool, settings.gemini_model, settings.gemini_rpd,
+                                         user.id)
+    return templates.TemplateResponse(request, "key.html", context, status_code=status_code)
+
+
+@router.get("/key", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
+def key_page(request: Request, user: Annotated[User, Depends(current_user)], done: str = ""):
+    message = None
+    if done == "saved":
+        message = KEY_SAVED
+    elif done == "saved_limit":
+        message = KEY_SAVED_LIMIT.format(reset=reset_time_ist(request.app.state.pool))
+    elif done == "removed":
+        message = KEY_REMOVED
+    return _key_page(request, user, message=message)
+
+
+@router.post(
+    "/key",
+    response_class=HTMLResponse,
+    dependencies=[Depends(refuse_cross_site_key), Depends(require_ready)],
+)
+def key_save(request: Request, user: Annotated[User, Depends(current_user)],
+             key: Annotated[str, Form()] = ""):
+    """One check call on the pasted key; saved in the doctor's cookie only if it works. The
+    key is in this request's body and memory only: never in a URL, a log line or a table."""
+    state = request.app.state
+    normalised = normalise_key(key)
+    if normalised is None:
+        log.info("key kind=not_saved check=not_key_shaped")
+        return _key_page(request, user, 400, message=KEY_NOT_KEY)
+    secret = SecretStr(normalised)
+    check = state.check_key(user.id, secret)
+    done = _SAVED_CHECKS.get(check)
+    if done is None:
+        log.info("key kind=not_saved check=%s", check)
+        return _key_page(request, user, 400, message=_REFUSED_CHECKS.get(check, KEY_UNREACHABLE))
+    log.info("key kind=saved check=%s", check)
+    response = RedirectResponse(f"/key?done={done}", status_code=303)
+    set_key_cookie(response, seal(normalised, user.email, state.key_secret))
+    return response
+
+
+@router.post(
+    "/key/remove",
+    response_class=HTMLResponse,
+    dependencies=[Depends(refuse_cross_site_key), Depends(require_ready)],
+)
+def key_remove(request: Request, user: Annotated[User, Depends(current_user)]):
+    log.info("key kind=removed")
+    response = RedirectResponse("/key?done=removed", status_code=303)
+    clear_key_cookie(response)
+    return response
 
 
 @router.get("/healthz")

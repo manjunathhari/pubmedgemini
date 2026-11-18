@@ -17,8 +17,8 @@ from pubmedgemini import web
 from pubmedgemini.config import Settings, load_settings
 from pubmedgemini.db import is_healthy, open_pool
 from pubmedgemini.gemini.caller import ModelCaller
-from pubmedgemini.gemini.client import GeminiClient
-from pubmedgemini.gemini.quota import PacerBook
+from pubmedgemini.gemini.client import GeminiClient, GeminiError
+from pubmedgemini.gemini.quota import PacerBook, finish_attempt, record_attempt
 from pubmedgemini.identity import ensure_owner
 from pubmedgemini.lit.cache import prune as prune_paper_cache
 from pubmedgemini.lit.europepmc import EuropePmc
@@ -41,6 +41,13 @@ runs_log = logging.getLogger("pubmedgemini.runs")
 RETRY_BACKOFF_SECONDS = 5.0
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# F7 /key: the smallest request that proves a key works (about 5 output tokens).
+KEY_CHECK_BODY = {
+    "contents": [{"role": "user", "parts": [{"text": "Reply with the word OK."}]}],
+    "generationConfig": {"maxOutputTokens": 5},
+}
+KEY_CHECK_TIMEOUT_SECONDS = 20.0
 
 
 def _failure_kind(pool: ConnectionPool, exc: psycopg.Error) -> str:
@@ -141,6 +148,27 @@ def create_app(
                              settings.gemini_model, sleep=gemini_sleep, user_id=user_id)
         return caller, client
 
+    def check_key(user_id: int, key: SecretStr) -> str:
+        """F7 /key: one tiny call on the doctor's key before it is saved. Returns `ok` or the
+        GeminiError kind. Counted on that doctor's day (step `key_check`)."""
+        client = GeminiClient(key, settings.gemini_model, gemini_transport)
+        call_id = record_attempt(app.state.pool, model=settings.gemini_model, run_id=None,
+                                 step="key_check", attempt=1, user_id=user_id)
+        started = clock()
+        kind, usage = "ok", None
+        try:
+            usage = client.generate(KEY_CHECK_BODY, KEY_CHECK_TIMEOUT_SECONDS).usage
+        except GeminiError as e:
+            kind = e.kind
+        finally:
+            client.close()
+        try:
+            finish_attempt(app.state.pool, call_id, status_kind=kind, usage=usage,
+                           latency_ms=int((clock() - started) * 1000))
+        except psycopg.Error:
+            gemini_log.warning("gemini kind=count_not_finished")
+        return kind
+
     def run_question(run_id) -> None:
         handed = app.state.run_keys.take(run_id)
         if handed is None:  # the key went with a restart, or never came: nothing is sent
@@ -204,6 +232,7 @@ def create_app(
 
     app.state.ensure_ready = ensure_ready
     app.state.caller_for = caller_for
+    app.state.check_key = check_key
     app.state.run_question = run_question
     web.register(app)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

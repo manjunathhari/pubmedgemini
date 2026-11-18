@@ -51,7 +51,7 @@ def test_home_without_a_key_offers_the_key_page(db_url, upstream):
     with ask_env(db_url, upstream, key=None) as env:
         r = env.c.get("/", headers=H)
     assert r.status_code == 200
-    assert NO_KEY_YET in r.text and 'href="/key"' in r.text
+    assert NO_KEY_YET in r.text and '<form method="get" action="/key">' in r.text
     assert 'name="question"' not in r.text  # no question box without a key
     assert 'name="q"' in r.text  # the key-word search works without one
 
