@@ -197,3 +197,43 @@ def test_a_cookie_sealed_with_the_tests_secret_opens(https_env):
 
     assert https_env.secret == base64.b64decode(TEST_SECRET_B64)
     assert open_(seal(KEY, OWNER, https_env.secret), OWNER, https_env.secret) is not None
+
+
+# ---------- review Important 3: a limit on key checks ----------
+
+TOO_MANY = "Not saved. Too many keys tried. Please wait 10 minutes and try again."
+
+
+def test_key_checks_are_limited_per_doctor(https_env):
+    script(https_env, *[error(403, "PERMISSION_DENIED")] * 5)
+    for i in range(5):
+        assert REFUSED in save(https_env, key=f"AIzaTryNumber{i}_0000000000000000").text
+    r = save(https_env, key="AIzaTryNumber6_0000000000000000")
+    assert r.status_code == 429 and TOO_MANY in r.text
+    assert len(https_env.gemini.sent) == 5  # the sixth made no call
+    assert https_env.one("SELECT count(*) FROM model_calls WHERE step = 'key_check'") == 5
+
+
+def test_older_checks_do_not_count_toward_the_limit(https_env):
+    uid = https_env.user_id()
+    with https_env.pool.connection() as conn:
+        conn.execute("INSERT INTO model_calls (model, step, attempt, status_kind, user_id, "
+                     "called_at) SELECT 'gemini-3.5-flash-lite', 'key_check', 1, 'ok', %s, "
+                     "now() - interval '11 minutes' FROM generate_series(1, 5)", (uid,))
+    script(https_env, OK)
+    assert SAVED in save(https_env).text
+
+
+def test_the_key_check_waits_on_the_doctors_pacer(https_env):
+    pacer = https_env.c.app.state.pacers.get(https_env.user_id())
+    waits = []
+    real = pacer.wait
+
+    def spy(estimated, deadline):
+        waits.append(estimated)
+        return real(estimated, deadline)
+
+    pacer.wait = spy
+    script(https_env, OK)
+    save(https_env)
+    assert len(waits) == 1

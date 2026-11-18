@@ -107,7 +107,7 @@ def test_cookie_flags():
     parts = [p.strip() for p in header.split(";")]
     assert parts[0] == f"{COOKIE_NAME}=v1.sealedvalue"
     lower = [p.lower() for p in parts[1:]]
-    assert "httponly" in lower and "secure" in lower and "samesite=strict" in lower
+    assert "httponly" in lower and "secure" in lower and "samesite=lax" in lower
     assert "path=/" in lower and f"max-age={MAX_AGE_SECONDS}" in lower
     assert MAX_AGE_SECONDS == 400 * 24 * 3600  # the most browsers keep a cookie
 
@@ -116,4 +116,22 @@ def test_clear_cookie_expires_it_with_the_same_flags():
     header = _cookie_app().get("/clear").headers["set-cookie"].lower()
     assert header.startswith(f"{COOKIE_NAME}=")
     assert "max-age=0" in header and "path=/" in header and "secure" in header
-    assert "httponly" in header and "samesite=strict" in header
+    assert "httponly" in header and "samesite=lax" in header
+
+
+# ---------- review fixes: Lax, and the sealed issue time (renewal) ----------
+
+def test_cookie_is_lax_so_a_signed_in_landing_page_sees_it():
+    """Review Important 1: Strict hid the key on the page after every Google sign-in (the
+    redirect chain starts on another site). Every POST keeps the cross-site guard."""
+    lower = _cookie_app().get("/set").headers["set-cookie"].lower()
+    assert "samesite=lax" in lower and "samesite=strict" not in lower
+
+
+def test_the_seal_carries_when_it_was_made():
+    from pubmedgemini.keycookie import open_with_age
+
+    sealed = seal(KEY, EMAIL, SECRET, now=1_000_000)
+    key, issued = open_with_age(sealed, EMAIL, SECRET)
+    assert key.get_secret_value() == KEY and issued == 1_000_000
+    assert open_with_age(sealed, "other@example.com", SECRET) is None

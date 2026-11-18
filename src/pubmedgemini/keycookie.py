@@ -5,14 +5,22 @@ email as associated data, so a cookie made under one Google account opens under 
 shared hospital computer). The server never writes the key to a table, a log line or a file:
 it exists only in this cookie and, during a request or a run, in memory as a SecretStr.
 
-The cookie lasts 400 days, the most browsers keep one, and is renewed on every signed-in page
-load, so the key stays until the doctor removes it (owner decision O3, 18 Nov 2026).
+The cookie lasts 400 days, the most browsers keep one. The seal carries the time it was made;
+a signed-in page renews a seal older than RENEW_AFTER_SECONDS, so the key stays until the
+doctor removes it (owner decision O3, 18 Nov 2026) while a Remove or a new key is not undone by
+a page reload already on its way (review Important 2, 18 Nov).
+
+SameSite=Lax, not Strict (review Important 1): the page a doctor lands on after Google sign-in,
+or from a link in a message, must see the key. Lax is still not sent with another site's form
+post, and every POST also has the app's cross-site guard.
 """
 
 import base64
 import binascii
 import os
 import re
+import struct
+import time
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -27,6 +35,8 @@ SECRET_BYTES = 32
 _VERSION = "v1"
 _AAD_PREFIX = b"pmai_gk/v1|"
 _NONCE_BYTES = 12
+_TIME = struct.Struct(">Q")  # seconds since 1970, before the key in the sealed text
+RENEW_AFTER_SECONDS = 30 * 24 * 3600
 # Deliberately loose: the exact shape of AI Studio keys is not checked (plan, Not checked).
 KEY_PATTERN = re.compile(r"[A-Za-z0-9_-]{20,100}")
 
@@ -46,15 +56,23 @@ def _aad(email: str) -> bytes:
     return _AAD_PREFIX + normalise_email(email).encode("utf-8")
 
 
-def seal(key: str, email: str, secret: bytes) -> str:
+def seal(key: str, email: str, secret: bytes, now: float | None = None) -> str:
+    issued = int(time.time() if now is None else now)
     nonce = os.urandom(_NONCE_BYTES)
-    box = AESGCM(secret).encrypt(nonce, key.encode("utf-8"), _aad(email))
+    plain = _TIME.pack(issued) + key.encode("utf-8")
+    box = AESGCM(secret).encrypt(nonce, plain, _aad(email))
     return _VERSION + "." + base64.urlsafe_b64encode(nonce + box).decode("ascii").rstrip("=")
 
 
 def open_(value: str, email: str, secret: bytes) -> SecretStr | None:
     """The key, or None for anything that does not open: another email, another secret, a
     changed byte, junk. Never raises, and never says why."""
+    opened = open_with_age(value, email, secret)
+    return None if opened is None else opened[0]
+
+
+def open_with_age(value: str, email: str, secret: bytes) -> tuple[SecretStr, int] | None:
+    """The key and the time its seal was made, or None (as `open_`)."""
     version, _, body = value.partition(".")
     if version != _VERSION or not body:
         return None
@@ -66,17 +84,20 @@ def open_(value: str, email: str, secret: bytes) -> SecretStr | None:
         return None
     try:
         plain = AESGCM(secret).decrypt(raw[:_NONCE_BYTES], raw[_NONCE_BYTES:], _aad(email))
-        key = plain.decode("utf-8")
-    except (InvalidTag, ValueError):
+        if len(plain) <= _TIME.size:
+            return None
+        (issued,) = _TIME.unpack(plain[:_TIME.size])
+        key = plain[_TIME.size:].decode("utf-8")
+    except (InvalidTag, ValueError, struct.error):
         return None
-    return SecretStr(key) if normalise_key(key) == key else None
+    return (SecretStr(key), issued) if normalise_key(key) == key else None
 
 
 def set_key_cookie(response: Response, sealed: str) -> None:
     response.set_cookie(COOKIE_NAME, sealed, max_age=MAX_AGE_SECONDS, path="/", secure=True,
-                        httponly=True, samesite="strict")
+                        httponly=True, samesite="lax")
 
 
 def clear_key_cookie(response: Response) -> None:
     response.set_cookie(COOKIE_NAME, "", max_age=0, path="/", secure=True, httponly=True,
-                        samesite="strict")
+                        samesite="lax")

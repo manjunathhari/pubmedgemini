@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -18,13 +19,21 @@ from pubmedgemini import intro
 from pubmedgemini.answer_page import answer_view, fmt_pct, pill_class
 from pubmedgemini.db import is_healthy
 from pubmedgemini.gemini.quota import reset_time_ist, runs_left
-from pubmedgemini.identity import NotSetUp, NotSignedIn, User, current_user
+from pubmedgemini.identity import (
+    NotSetUp,
+    NotSignedIn,
+    User,
+    current_user,
+    email_from_headers,
+)
 from pubmedgemini.keycookie import (
     COOKIE_NAME,
+    RENEW_AFTER_SECONDS,
     clear_key_cookie,
     key_tail,
     normalise_key,
     open_,
+    open_with_age,
     seal,
     set_key_cookie,
 )
@@ -671,6 +680,7 @@ KEY_REFUSED = "Not saved. Google did not accept this key. Copy it again from Goo
 KEY_BILLING = ("Not saved. This key's project has billing turned on. Make a key in a project "
                "with billing turned off, then paste it again.")
 KEY_UNREACHABLE = "Not saved. Google could not be reached. Please try again in a minute."
+KEY_TOO_MANY = "Not saved. Too many keys tried. Please wait 10 minutes and try again."
 # What the one check call's result means: saved (and how it is said), or not saved.
 _SAVED_CHECKS = {"ok": "saved", "rate_limited": "saved", "daily_limit": "saved_limit"}
 _REFUSED_CHECKS = {"key_refused": KEY_REFUSED, "billing_refused": KEY_BILLING}
@@ -724,6 +734,9 @@ def key_save(request: Request, user: Annotated[User, Depends(current_user)],
         return _key_page(request, user, 400, message=KEY_NOT_KEY)
     secret = SecretStr(normalised)
     check = state.check_key(user.id, secret)
+    if check == "too_many":
+        log.info("key kind=not_saved check=too_many")
+        return _key_page(request, user, 429, message=KEY_TOO_MANY)
     done = _SAVED_CHECKS.get(check)
     if done is None:
         log.info("key kind=not_saved check=%s", check)
@@ -785,16 +798,24 @@ def register(app: FastAPI) -> None:
 
     @app.middleware("http")
     async def renew_key_cookie(request: Request, call_next):
-        """F7 (owner decision O3): the key stays until the doctor removes it. Browsers keep a
-        cookie at most 400 days, so every page a doctor loads sets the same sealed value again
-        with a fresh lifetime. Only an exact echo: nothing is opened or changed here."""
+        """F7 (owner decision O3): the key stays until the doctor removes it, and browsers
+        keep a cookie at most 400 days. A signed-in page renews a seal that opens for this
+        doctor and is over RENEW_AFTER_SECONDS old: sealed again with a fresh time. A fresh
+        seal is never set again, so a page reload already on its way cannot undo a Remove or
+        a new key (review, 18 Nov); one for another account, or junk, is left to expire."""
         response = await call_next(request)
         sealed = request.cookies.get(COOKIE_NAME)
-        if (sealed and request.method == "GET" and response.status_code == 200
+        if not (sealed and request.method == "GET" and response.status_code == 200
                 and response.headers.get("content-type", "").startswith("text/html")
                 and not any(v.startswith(f"{COOKIE_NAME}=")
                             for v in response.headers.getlist("set-cookie"))):
-            set_key_cookie(response, sealed)
+            return response
+        email = email_from_headers(request.headers, request.app.state.settings.app_env)
+        opened = None if email is None else open_with_age(sealed, email,
+                                                           request.app.state.key_secret)
+        if opened is not None and time.time() - opened[1] > RENEW_AFTER_SECONDS:
+            set_key_cookie(response, seal(opened[0].get_secret_value(), email,
+                                          request.app.state.key_secret))
         return response
 
     @app.middleware("http")

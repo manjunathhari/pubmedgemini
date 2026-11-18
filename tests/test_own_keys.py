@@ -156,15 +156,53 @@ def test_the_key_is_in_no_table_log_or_page(db_url, upstream, caplog):
 
 
 # ---------- the cookie is renewed, so it stays until removed (O3) ----------
+# Review Important 2: a fresh seal is never echoed back, so a page reload already on its way
+# cannot undo a Remove or a new key; only a seal over 30 days old, that opens for the signed-in
+# doctor, is sealed again with a fresh time and 400 days.
 
-def test_a_signed_in_page_renews_the_cookie(db_url, upstream):
+def test_a_fresh_seal_is_not_set_again(db_url, upstream):
     with ask_env(db_url, upstream, HAPPY_RUN) as env:
         env.prime(OWNER)
-        sealed = env.c.cookies.get(COOKIE_NAME)
         r = env.c.get("/library", headers=H)
-    header = r.headers.get("set-cookie", "")
-    assert header.startswith(f"{COOKIE_NAME}={sealed};")
-    assert f"max-age={MAX_AGE_SECONDS}" in header.lower()
+    assert "set-cookie" not in r.headers
+
+
+def test_an_old_seal_is_renewed_with_a_fresh_time(db_url, upstream):
+    import time
+
+    from pubmedgemini.keycookie import RENEW_AFTER_SECONDS, open_with_age
+
+    with ask_env(db_url, upstream, HAPPY_RUN) as env:
+        old = seal(FAKE_KEY, OWNER, env.secret, now=time.time() - RENEW_AFTER_SECONDS - 60)
+        env.c.cookies.set(COOKIE_NAME, old)
+        r = env.c.get("/library", headers=H)
+        header = r.headers.get("set-cookie", "")
+        assert header.startswith(f"{COOKIE_NAME}=") and f"max-age={MAX_AGE_SECONDS}" in \
+            header.lower()
+        new = header.split(";")[0].split("=", 1)[1]
+        assert new != old
+        key, issued = open_with_age(new, OWNER, env.secret)
+        assert key.get_secret_value() == FAKE_KEY and time.time() - issued < 60
+
+
+def test_an_old_seal_for_another_account_is_left_to_expire(db_url, upstream):
+    import time
+
+    from pubmedgemini.keycookie import RENEW_AFTER_SECONDS
+
+    with ask_env(db_url, upstream, HAPPY_RUN) as env:
+        env.add_user(OTHER)
+        old = seal(FAKE_KEY, OWNER, env.secret, now=time.time() - RENEW_AFTER_SECONDS - 60)
+        env.c.cookies.set(COOKIE_NAME, old)
+        r = env.c.get("/library", headers=HB)
+    assert "set-cookie" not in r.headers
+
+
+def test_junk_is_never_renewed(db_url, upstream):
+    with ask_env(db_url, upstream, HAPPY_RUN) as env:
+        env.c.cookies.set(COOKIE_NAME, "v1.junk")
+        r = env.c.get("/library", headers=H)
+    assert "set-cookie" not in r.headers
 
 
 def test_no_cookie_means_nothing_is_set(db_url, upstream):
@@ -192,3 +230,21 @@ def test_a_billing_key_says_what_to_do(db_url, upstream):
         page = env.run_page(env.ask(QUESTION).headers["location"]).text
     assert "linked to billing" in page and "billing turned off" in page
     assert '<a href="/key">Your key</a>' in page
+
+
+def test_a_run_that_cannot_build_its_client_fails_and_frees_the_slot(db_url, upstream,
+                                                                    monkeypatch):
+    """Review (re-graded Important): a failure building the run's client must end the run, or
+    it stays queued, holding the doctor's slot and one of the app's until a restart."""
+    from pydantic import SecretStr
+
+    with ask_env(db_url, upstream, HAPPY_RUN, starter=HoldStarter()) as env:
+        rid = create_run(env.pool, env.user_id(), QUESTION, MODEL)
+        env.c.app.state.run_keys.put(rid, env.user_id(), SecretStr(FAKE_KEY))
+
+        def broken(*_a, **_k):
+            raise RuntimeError("cannot build")
+
+        monkeypatch.setattr("pubmedgemini.main.GeminiClient", broken)
+        env.c.app.state.run_question(rid)
+        assert env.one("SELECT status || '/' || error_kind FROM runs") == "failed/internal"

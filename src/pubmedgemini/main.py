@@ -18,7 +18,12 @@ from pubmedgemini.config import Settings, load_settings
 from pubmedgemini.db import is_healthy, open_pool
 from pubmedgemini.gemini.caller import ModelCaller
 from pubmedgemini.gemini.client import GeminiClient, GeminiError
-from pubmedgemini.gemini.quota import PacerBook, finish_attempt, record_attempt
+from pubmedgemini.gemini.quota import (
+    PacerBook,
+    estimate_tokens,
+    finish_attempt,
+    record_attempt,
+)
 from pubmedgemini.identity import ensure_owner
 from pubmedgemini.lit.cache import prune as prune_paper_cache
 from pubmedgemini.lit.europepmc import EuropePmc
@@ -48,6 +53,9 @@ KEY_CHECK_BODY = {
     "generationConfig": {"maxOutputTokens": 5},
 }
 KEY_CHECK_TIMEOUT_SECONDS = 20.0
+# Review Important 3 (18 Nov): a doctor may check at most this many keys in this many minutes.
+KEY_CHECKS_PER_WINDOW = 5
+KEY_CHECK_WINDOW_MINUTES = 10
 
 
 def _failure_kind(pool: ConnectionPool, exc: psycopg.Error) -> str:
@@ -150,7 +158,19 @@ def create_app(
 
     def check_key(user_id: int, key: SecretStr) -> str:
         """F7 /key: one tiny call on the doctor's key before it is saved. Returns `ok` or the
-        GeminiError kind. Counted on that doctor's day (step `key_check`)."""
+        GeminiError kind. Counted on that doctor's day (step `key_check`). At most
+        KEY_CHECKS_PER_WINDOW checks in KEY_CHECK_WINDOW_MINUTES per doctor (`too_many`, no call;
+        review Important 3), and each waits on that doctor's pacer like a run's call."""
+        with app.state.pool.connection() as conn:
+            recent = conn.execute(
+                "SELECT count(*) FROM model_calls WHERE user_id = %s AND step = 'key_check' "
+                "AND called_at > now() - make_interval(mins => %s)",
+                (user_id, KEY_CHECK_WINDOW_MINUTES)).fetchone()[0]
+        if recent >= KEY_CHECKS_PER_WINDOW:
+            return "too_many"
+        if not app.state.pacers.get(user_id).wait(estimate_tokens(KEY_CHECK_BODY),
+                                                  clock() + KEY_CHECK_TIMEOUT_SECONDS):
+            return "pacer_busy"
         client = GeminiClient(key, settings.gemini_model, gemini_transport)
         call_id = record_attempt(app.state.pool, model=settings.gemini_model, run_id=None,
                                  step="key_check", attempt=1, user_id=user_id)
@@ -177,7 +197,12 @@ def create_app(
                               run_id)
             return
         user_id, key = handed
-        caller, client = caller_for(user_id, key)
+        try:
+            caller, client = caller_for(user_id, key)
+        except Exception as e:  # noqa: BLE001 - the run must not stay queued, holding a slot
+            runs_log.error("run kind=internal error=%s", type(e).__name__)
+            finish_run(app.state.pool, run_id, "failed", "internal", None, None)
+            return
         try:
             run_one(run_id, pool=app.state.pool, tools=app.state.lit, caller=caller,
                     model=settings.gemini_model)
