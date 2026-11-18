@@ -32,6 +32,7 @@ PRIVACY = ("Google may use what you type here, and its reviewers may read it (Ge
 NO_KEY = "Questions are not set up yet: the Gemini key is missing on the server."
 CROSS_SITE = "This request did not come from this page. Open the page and search again."
 ACTIVE = "A question is already running. Please wait for it to finish, then ask again."
+BUSY = "PubMed Ai is busy with other questions. Try again in a minute."
 BLOCKED = ("PubMed Ai found details that could identify a patient. Please remove them and "
            "resend your question.")
 
@@ -401,11 +402,26 @@ def test_active_run_is_409_with_a_link_for_its_owner(held):
     assert r.status_code == 409 and ACTIVE in r.text
     assert f'<a href="{first.headers["location"]}">See the question that is running</a>' in r.text
     assert textarea(r.text) == "another question?"
+    assert held.one("SELECT count(*) FROM runs") == 1
+
+
+def test_another_doctor_may_ask_while_one_runs(held):
+    """F7: one run at a time per doctor; the app runs up to MAX_ACTIVE_RUNS (2) at once."""
+    assert held.ask(QUESTION).status_code == 303
     held.add_user("b@example.com")
     other = held.ask("third?", headers={"x-dev-user-email": "b@example.com"})
-    assert other.status_code == 409 and ACTIVE in other.text
-    assert "See the question that is running" not in other.text
-    assert held.one("SELECT count(*) FROM runs") == 1
+    assert other.status_code == 303
+    assert held.one("SELECT count(*) FROM runs") == 2
+
+
+def test_the_app_is_busy_past_the_cap(db_url, upstream):
+    with ask_env(db_url, upstream, HAPPY_RUN, starter=HoldStarter(), max_active_runs=1) as env:
+        assert env.ask(QUESTION).status_code == 303
+        env.add_user("b@example.com")
+        r = env.ask("busy question?", headers={"x-dev-user-email": "b@example.com"})
+        assert r.status_code == 503 and BUSY in r.text
+        assert textarea(r.text) == "busy question?"  # kept in the box
+        assert env.one("SELECT count(*) FROM runs") == 1
 
 
 def test_a_run_that_cannot_start_is_failed_not_left_active(db_url, upstream):

@@ -34,6 +34,7 @@ from pubmedgemini.runs import (
     NO_EVIDENCE,
     STOPPED_NO_ANSWER,
     ActiveRunExists,
+    AppBusy,
     active_run,
     add_search,
     add_seen,
@@ -198,30 +199,91 @@ def test_the_run_is_running_while_it_works(run_app):
     assert status == [("running", True)]
 
 
-# ---------- one at a time ----------
+# ---------- one at a time per doctor, MAX_ACTIVE_RUNS for the app (F7) ----------
+
+def _user(pool, email):
+    with pool.connection() as conn:
+        return conn.execute("INSERT INTO users (email, role) VALUES (%s, 'user') RETURNING id",
+                            (email,)).fetchone()[0]
+
 
 def test_second_run_is_refused_while_one_runs(run_app):
     rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
     with pytest.raises(ActiveRunExists) as e:
         create_run(run_app.pool, run_app.owner_id, "another question", MODEL)
     assert (e.value.run_id, e.value.own) == (rid, True)
-    assert active_run(run_app.pool) == (rid, run_app.owner_id)
+    assert active_run(run_app.pool, run_app.owner_id) == (rid, run_app.owner_id)
     assert rows(run_app.pool, "SELECT count(*) FROM runs")[0][0] == 1
 
 
-def test_another_users_active_run_is_not_own(run_app):
-    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
-    with run_app.pool.connection() as conn:
-        other = conn.execute("INSERT INTO users (email, role) VALUES ('b@example.com', 'surgeon')"
-                             " RETURNING id").fetchone()[0]
+def test_another_doctor_can_run_at_the_same_time(run_app):
+    """F7: one run at a time per doctor, not for the whole app."""
+    a = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    other = _user(run_app.pool, "b@example.com")
+    b = create_run(run_app.pool, other, QUESTION, MODEL)
+    assert a != b
+    assert active_run(run_app.pool, other) == (b, other)
+
+
+def test_the_app_cap_refuses_a_third_doctor(run_app):
+    create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL, max_active=2)
+    create_run(run_app.pool, _user(run_app.pool, "b@example.com"), QUESTION, MODEL, max_active=2)
+    third = _user(run_app.pool, "c@example.com")
+    with pytest.raises(AppBusy):
+        create_run(run_app.pool, third, QUESTION, MODEL, max_active=2)
+    assert rows(run_app.pool, "SELECT count(*) FROM runs")[0][0] == 2
+    assert active_run(run_app.pool, third) is None
+
+
+def test_the_cap_of_1_is_one_for_the_whole_app(run_app):
+    create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL, max_active=1)
+    with pytest.raises(AppBusy):
+        create_run(run_app.pool, _user(run_app.pool, "b@example.com"), QUESTION, MODEL,
+                   max_active=1)
+
+
+def test_own_active_run_is_reported_before_the_cap(run_app):
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL, max_active=1)
     with pytest.raises(ActiveRunExists) as e:
-        create_run(run_app.pool, other, QUESTION, MODEL)
-    assert (e.value.run_id, e.value.own) == (rid, False)
+        create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL, max_active=1)
+    assert e.value.run_id == rid
+
+
+def test_many_clicks_at_once_never_pass_the_cap(run_app):
+    users = [_user(run_app.pool, f"u{i}@example.com") for i in range(6)]
+    results = []
+
+    def go(uid):
+        try:
+            create_run(run_app.pool, uid, QUESTION, MODEL, max_active=2)
+            results.append("ok")
+        except AppBusy:
+            results.append("busy")
+        except ActiveRunExists:
+            results.append("own")
+
+    threads = [threading.Thread(target=go, args=(u,)) for u in users * 2]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert results.count("ok") == 2
+    assert rows(run_app.pool, "SELECT count(*) FROM runs WHERE status IN ('queued', 'running')"
+                )[0][0] == 2
+
+
+def test_the_database_keeps_one_active_run_per_doctor(run_app):
+    """The per-doctor index backs the code's check up."""
+    create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    with pytest.raises(psycopg.errors.UniqueViolation) as e, run_app.pool.connection() as conn:
+        conn.execute("INSERT INTO runs (id, user_id, question, model) VALUES (%s, %s, %s, %s)",
+                     (uuid.uuid4(), run_app.owner_id, QUESTION, MODEL))
+    assert e.value.diag.constraint_name == "runs_one_active_per_user"
 
 
 def test_a_finished_run_frees_the_slot(run_app):
     run_app.start(script=[END, EMPTY])
-    assert active_run(run_app.pool) is None
+    assert active_run(run_app.pool, run_app.owner_id) is None
     create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
 
 
@@ -2188,7 +2250,7 @@ def test_a_failing_check_never_changes_the_run(run_app, monkeypatch, caplog, cas
     assert not any(m.startswith("run kind=internal") for m in msgs)
     assert "zq7" not in caplog.text and "Traceback" not in caplog.text
     # the next question is not held up
-    assert active_run(run_app.pool) is None
+    assert active_run(run_app.pool, run_app.owner_id) is None
 
 
 def test_run_check_never_raises_and_does_nothing_without_a_row(run_app, caplog):

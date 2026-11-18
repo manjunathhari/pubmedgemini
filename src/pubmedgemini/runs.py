@@ -1,9 +1,9 @@
 """Run rows: one per question, with its step lines, search trail, seen papers and study list.
 
 Plain SQL over the tables of `migrations/0004_runs.sql` (Incisive `migrations/0005_runs.sql`
-`runs`, `run_steps`, plus the trail, the seen papers and the list). One active run for the whole
-app, enforced by the database (`runs_one_active`). Writes during a run are made at once, so the
-page shows each line as it happens.
+`runs`, `run_steps`, plus the trail, the seen papers and the list). One active run per doctor
+(F7; `runs_one_active_per_user`) and at most MAX_ACTIVE_RUNS for the app. Writes during a run
+are made at once, so the page shows each line as it happens.
 
 From Incisive (commit 12630f7, `crates/incisive-app/src/`): `clip` and `MAX_STEP_LINE`
 (`agent/mod.rs`), a failed step write logged and ignored (`add_line`), the end messages
@@ -119,13 +119,26 @@ def clip(s: str, max_chars: int) -> str:
 
 
 class ActiveRunExists(Exception):
-    """A run is queued or running (one for the whole app). `run_id` is that run when it could
-    be read, `own` whether it is the asking user's."""
+    """The asking doctor already has a run queued or running (F7: one per doctor). `run_id`
+    is that run when it could be read; `own` is always True since F7 (kept for the page)."""
 
     def __init__(self, run_id: UUID | None, own: bool) -> None:
         super().__init__("active_run_exists")
         self.run_id = run_id
         self.own = own
+
+
+class AppBusy(Exception):
+    """MAX_ACTIVE_RUNS questions are already running for the whole app (F7, owner decision
+    O2): the VPS and the shared PubMed key are the owner's."""
+
+    def __init__(self) -> None:
+        super().__init__("app_busy")
+
+
+# The advisory lock that makes the app-wide count and the insert one step (F7).
+_ACTIVE_RUNS_LOCK = 0x504D4149  # "PMAI"
+DEFAULT_MAX_ACTIVE = 2
 
 
 class QuestionBlocked(Exception):
@@ -246,11 +259,12 @@ def end_message(v: RunView) -> str | None:
 # ---------- writes ----------
 
 
-def active_run(pool: ConnectionPool) -> tuple[UUID, int] | None:
-    """The queued or running run and its user, if any."""
+def active_run(pool: ConnectionPool, user_id: int) -> tuple[UUID, int] | None:
+    """This doctor's queued or running run, if any."""
     with pool.connection() as conn:
         row = conn.execute(
-            "SELECT id, user_id FROM runs WHERE status IN ('queued', 'running') LIMIT 1"
+            "SELECT id, user_id FROM runs WHERE status IN ('queued', 'running') AND user_id = %s"
+            " LIMIT 1", (user_id,)
         ).fetchone()
     return (row[0], int(row[1])) if row else None
 
@@ -263,11 +277,14 @@ def stored_question(question: str) -> str:
     return question.replace("\r\n", "\n")
 
 
-def create_run(pool: ConnectionPool, user_id: int, question: str, model: str) -> UUID:
+def create_run(pool: ConnectionPool, user_id: int, question: str, model: str,
+               max_active: int = DEFAULT_MAX_ACTIVE) -> UUID:
     """A queued run for `question`. Raises QuestionBlocked (checked first, on the question
     exactly as received, locally, before any database write or network call) when the
-    patient-details check finds anything, and ActiveRunExists when a run is queued or
-    running. A question that passes is stored as `stored_question` gives it.
+    patient-details check finds anything; ActiveRunExists when this doctor already has a run
+    queued or running; AppBusy when `max_active` runs are active for the whole app. The two
+    counts and the insert happen under one advisory lock, so clicks at once cannot pass the
+    cap. A question that passes is stored as `stored_question` gives it.
 
     The check runs twice: on the text as received (so a NUL or another hidden character is
     seen) and on the stored form Gemini is sent (LF line breaks; the port's byte windows can
@@ -287,20 +304,31 @@ def create_run(pool: ConnectionPool, user_id: int, question: str, model: str) ->
     for _ in range(2):
         run_id = uuid.uuid4()
         try:
-            with pool.connection() as conn:
+            with pool.connection() as conn, conn.transaction():
+                conn.execute("SELECT pg_advisory_xact_lock(%s)", (_ACTIVE_RUNS_LOCK,))
+                own = conn.execute(
+                    "SELECT id FROM runs WHERE status IN ('queued', 'running') AND user_id = %s"
+                    " LIMIT 1", (user_id,)).fetchone()
+                if own is not None:
+                    raise ActiveRunExists(own[0], True)
+                active = conn.execute(
+                    "SELECT count(*) FROM runs WHERE status IN ('queued', 'running')"
+                ).fetchone()[0]
+                if active >= max_active:
+                    raise AppBusy
                 conn.execute(
                     "INSERT INTO runs (id, user_id, question, model) VALUES (%s, %s, %s, %s)",
                     (run_id, user_id, question, model),
                 )
         except psycopg.errors.UniqueViolation as e:
-            if e.diag.constraint_name != "runs_one_active":
+            if e.diag.constraint_name != "runs_one_active_per_user":
                 continue  # a uuid4 collision: try another id
-            active = active_run(pool)
-            if active is None:
+            mine = active_run(pool, user_id)
+            if mine is None:
                 continue  # it finished in between: try once more
-            raise ActiveRunExists(active[0], active[1] == user_id) from None
+            raise ActiveRunExists(mine[0], True) from None
         return run_id
-    raise ActiveRunExists(None, False)
+    raise ActiveRunExists(None, True)
 
 
 def set_running(pool: ConnectionPool, run_id: UUID) -> None:

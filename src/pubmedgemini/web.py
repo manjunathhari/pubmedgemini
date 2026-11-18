@@ -22,6 +22,7 @@ from pubmedgemini.lit.query import query_rejected_message
 from pubmedgemini.lit.text import clean_text, drop_invisible
 from pubmedgemini.runs import (
     ActiveRunExists,
+    AppBusy,
     QuestionBlocked,
     RunView,
     SelectedView,
@@ -73,6 +74,8 @@ EMPTY_QUESTION = "Please type your clinical question."  # Incisive ask.rs EMPTY_
 TOO_LONG = "That question is too long (4,000 characters max). Please shorten it."
 NO_KEY = "Questions are not set up yet: the Gemini key is missing on the server."
 ACTIVE_RUN = "A question is already running. Please wait for it to finish, then ask again."
+# F7 (owner decision O2): MAX_ACTIVE_RUNS questions are running for the whole app.
+BUSY = "PubMed Ai is busy with other questions. Try again in a minute."
 RUN_NOT_FOUND = "That question wasn't found. It may have been deleted."  # runs/mod.rs
 DAILY_LIMIT = "Daily free limit reached. Resets at {reset} IST."  # spec section 8
 STOPPED = "This run was stopped because the app restarted."
@@ -386,12 +389,16 @@ def _start_question(request: Request, user: User, question: str):
         return _home(request, user, 429, question=question,
                      ask_message=DAILY_LIMIT.format(reset=reset_time_ist(state.pool)))
     try:
-        run_id = create_run(state.pool, user.id, question, settings.gemini_model)
+        run_id = create_run(state.pool, user.id, question, settings.gemini_model,
+                            max_active=settings.max_active_runs)
     except QuestionBlocked as exc:  # logged by create_run: categories and counts only
         found = [(label, n) for label, (_, n) in zip(exc.outcome.labels, exc.outcome.categories,
                                                        strict=True)]
         return _home(request, user, 400, question=question, ask_message=exc.outcome.message,
                      ask_found=found)
+    except AppBusy:
+        log.info("ask kind=refused reason=busy")
+        return _home(request, user, 503, question=question, ask_message=BUSY)
     except ActiveRunExists as exc:
         log.info("ask kind=refused reason=active")
         link = f"/runs/{exc.run_id}" if exc.own and exc.run_id is not None else None

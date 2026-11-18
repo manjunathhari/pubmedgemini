@@ -156,7 +156,7 @@ def test_model_calls_has_no_text_column(migrated_pool):
         "SELECT column_name, data_type FROM information_schema.columns "
         "WHERE table_name = 'model_calls'"))
     assert {k for k, v in cols.items() if v == "text"} == {"model", "step", "status_kind"}
-    assert cols["run_id"] == "uuid"
+    assert cols["run_id"] == "uuid" and cols["user_id"] == "bigint"
 
 
 def test_quota_day_is_the_pacific_day(migrated_pool):
@@ -194,13 +194,36 @@ def test_second_active_run_is_refused_by_the_database(migrated_pool, owner_id):
     insert_run(migrated_pool, owner_id, status="done")  # finished runs are not limited
 
 
-def test_one_active_run_for_the_whole_app(migrated_pool, owner_id):
+def test_one_active_run_per_doctor_not_for_the_whole_app(migrated_pool, owner_id):
+    """F7 (0008): each doctor runs on their own key, so the database keeps one active run per
+    doctor; the app-wide cap (MAX_ACTIVE_RUNS) is the code's (runs.create_run)."""
     other = pool_one(
         migrated_pool,
-        "INSERT INTO users (email, role) VALUES ('other@example.com', 'fellow') RETURNING id")
+        "INSERT INTO users (email, role) VALUES ('other@example.com', 'user') RETURNING id")
     insert_run(migrated_pool, owner_id, status="queued")
+    insert_run(migrated_pool, other, status="running")
     with pytest.raises(psycopg.errors.UniqueViolation):
-        insert_run(migrated_pool, other, status="running")
+        insert_run(migrated_pool, other, status="queued")
+
+
+def test_users_may_have_the_user_role(migrated_pool):
+    pool_exec(migrated_pool, "INSERT INTO users (email, role) VALUES ('new@example.com', 'user')")
+
+
+def test_model_calls_carry_the_user(migrated_pool, owner_id):
+    pool_exec(migrated_pool,
+              "INSERT INTO model_calls (model, step, attempt, status_kind, user_id) "
+              "VALUES ('m', 'key_check', 1, 'ok', %s)", (owner_id,))
+    assert pool_one(migrated_pool, "SELECT user_id FROM model_calls") == owner_id
+
+
+def test_no_column_could_hold_a_key(migrated_pool):
+    """F7: the doctor's Gemini key is never stored. No column is named for a key or secret."""
+    cols = pool_rows(migrated_pool,
+                     "SELECT table_name, column_name FROM information_schema.columns "
+                     "WHERE table_schema = 'public'")
+    assert not [c for c in cols if any(w in c[1] for w in ("key", "secret", "token"))
+                and c[1] not in ("output_tokens", "prompt_tokens", "thought_tokens")]
 
 
 def _bad_rows(run_id) -> dict[str, tuple[str, tuple]]:
