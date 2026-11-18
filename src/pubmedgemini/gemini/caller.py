@@ -79,8 +79,10 @@ class ModelCaller:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         jitter: Callable[[], float] = random.random,
+        user_id: int | None = None,
     ) -> None:
         self._client = client
+        self.user_id = user_id  # F7: the doctor whose key this caller sends
         self._pacer = pacer
         self._pool = pool
         self.model = model
@@ -172,7 +174,8 @@ class ModelCaller:
             if not self._take_attempt(run_id):  # counted with the `sent` row, as the day's
                 raise self._cap_reached(step, run_id)
             call_id = record_attempt(
-                self._pool, model=self.model, run_id=run_id, step=step, attempt=attempt
+                self._pool, model=self.model, run_id=run_id, step=step, attempt=attempt,
+                user_id=self.user_id,
             )
             started = self._clock()
             try:

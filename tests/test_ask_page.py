@@ -19,8 +19,11 @@ from writer_fakes import RunGemini
 
 from pubmedgemini.config import Settings
 from pubmedgemini.gemini.quota import calls_today
+from pubmedgemini.keycookie import COOKIE_NAME, seal
 from pubmedgemini.main import create_app
 from pubmedgemini.runner import InlineStarter
+
+TEST_SECRET_B64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="  # 32 bytes, tests only
 
 OWNER = "owner@example.com"
 H = {"x-dev-user-email": OWNER}
@@ -29,7 +32,7 @@ QUESTION = "Is mesh better than suture repair for inguinal hernia?"
 RUN_NOT_FOUND = "That question wasn&#39;t found. It may have been deleted."
 PRIVACY = ("Google may use what you type here, and its reviewers may read it (Gemini free "
            "tier). Do not type anything that identifies a patient.")
-NO_KEY = "Questions are not set up yet: the Gemini key is missing on the server."
+NO_KEY = "To ask questions, add your own free Gemini key."  # F7: the doctor's own key
 CROSS_SITE = "This request did not come from this page. Open the page and search again."
 ACTIVE = "A question is already running. Please wait for it to finish, then ask again."
 BUSY = "PubMed Ai is busy with other questions. Try again in a minute."
@@ -59,11 +62,19 @@ class FailingStarter:
 class AskEnv:
     """One dev app over the fakes, with handles for the test."""
 
-    def __init__(self, client, gemini, upstream, starter):
+    def __init__(self, client, gemini, upstream, starter, key=None, secret=None):
         self.c = client
         self.gemini = gemini
         self.upstream = upstream
         self.starter = starter
+        self.key = key  # F7: the doctor's own key, sent in their sealed cookie
+        self.secret = secret
+
+    def prime(self, email, key=None):
+        """F7: puts `email`'s key cookie (the env's key, or `key`) in the client's jar."""
+        key = key if key is not None else self.key
+        if key is not None:
+            self.c.cookies.set(COOKIE_NAME, seal(key, email, self.secret))
 
     @property
     def pool(self):
@@ -83,7 +94,8 @@ class AskEnv:
         with self.pool.connection() as conn:
             conn.execute("INSERT INTO users (email, role) VALUES (%s, 'surgeon')", (email,))
 
-    def ask(self, question, headers=H, **kw):
+    def ask(self, question, headers=H, key=None, **kw):
+        self.prime(headers.get("x-dev-user-email", OWNER), key)
         return self.c.post("/ask", data={"question": question}, headers=headers,
                            follow_redirects=False, **kw)
 
@@ -103,15 +115,15 @@ def ask_env(db_url, upstream=None, script=(), key=FAKE_KEY, starter=None, parts=
         upstream = FakeUpstream(pubmed_routes() | europepmc_routes())
     gemini = RunGemini(list(script), parts, one_piece, intro)  # F3c: `intro`, its own route
     starter = starter if starter is not None else InlineStarter()
-    extra = {"gemini_rpm": 1000} | settings_extra  # no pacing waits in tests
-    if key is not None:
-        extra["gemini_api_key"] = key
+    extra = {"gemini_rpm": 1000, "key_cookie_secret": TEST_SECRET_B64} | settings_extra
     settings = Settings(app_env="dev", database_url=db_url, owner_email=OWNER, **extra)
     app = create_app(settings, lit_transport=upstream.transport, ncbi_gap_seconds=0,
                      gemini_transport=gemini.transport, gemini_sleep=lambda _s: None,
                      run_starter=starter)
     with TestClient(app) as c:
-        yield AskEnv(c, gemini, upstream, starter)
+        env = AskEnv(c, gemini, upstream, starter, key, settings.key_cookie_secret_bytes())
+        env.prime(OWNER)
+        yield env
 
 
 @pytest.fixture
@@ -132,12 +144,14 @@ def no_key(db_url, upstream):
         yield e
 
 
-def add_calls(env, n, model=MODEL):
+def add_calls(env, n, model=MODEL, user_id=None):
+    """F7: the day is counted per doctor; by default the owner's."""
+    uid = user_id if user_id is not None else env.user_id(OWNER)
     with env.pool.connection() as conn:
         conn.execute(
-            "INSERT INTO model_calls (model, step, attempt, status_kind) "
-            "SELECT %s, 'researcher', 1, 'ok' "
-            "FROM generate_series(1, %s)", (model, n))
+            "INSERT INTO model_calls (model, step, attempt, status_kind, user_id) "
+            "SELECT %s, 'researcher', 1, 'ok', %s "
+            "FROM generate_series(1, %s)", (model, uid, n))
 
 
 def insert_run(env, question=QUESTION, status="stopped", error_kind="restarted", email=OWNER):
@@ -190,12 +204,13 @@ def test_runs_left_goes_down_and_zero_shows_the_reset_time(env):
     assert re.search(r"Daily free limit reached\. Resets at \d\d:\d\d IST\.", page)
 
 
-def test_no_key_shows_not_set_up_and_search_still_works(no_key):
+def test_no_key_offers_the_key_page_and_search_still_works(no_key):
     page = no_key.c.get("/", headers=H).text
     assert NO_KEY in page and 'name="question"' not in page and "Free runs left" not in page
+    assert '<a class="sai-button" href="/key">Add your free key</a>' in page
     assert page.count('name="q"') == 1 and "Your questions" not in page
     r = no_key.ask("Is mesh better than suture?")
-    assert r.status_code == 503 and NO_KEY in r.text
+    assert r.status_code == 403 and NO_KEY in r.text
     assert no_key.one("SELECT count(*) FROM runs") == 0 and no_key.gemini.sent == []
     s = no_key.c.post("/search", data={"q": "hernia"}, headers=H)
     assert s.status_code == 200 and "Searched PubMed and Europe PMC (free sources)" in s.text
@@ -526,10 +541,12 @@ def test_no_evidence_message(db_url, upstream):
 
 
 @pytest.mark.parametrize("script,text", [
-    ([error(402, "X")], ("Google refused the Gemini key because its Google project is linked to "
-                        "billing. Make a key in a project with billing turned off.")),
-    ([error(401, "X")], ("Google refused the Gemini key. The owner needs to check it on the "
-                        "server.")),
+    # F7: the doctor's own key; the line ends with a link to the key page.
+    ([error(402, "X")], ("Google refused your Gemini key because its Google project is linked to "
+                        "billing. Make a key in a project with billing turned off, then save it "
+                        'on the <a href="/key">Your key</a> page.')),
+    ([error(401, "X")], ('Google refused your Gemini key. Check it on the <a href="/key">Your '
+                        'key</a> page.')),
     ([error(503, "X")] * 3, ("Gemini could not be reached or refused the request. Please try "
                             "again in a minute.")),
     ([error(429, "X", [QUOTA_FAILURE("GenerateRequestsPerDayPerProjectPerModel-FreeTier")])],
@@ -683,10 +700,10 @@ def test_run_again_while_another_runs_is_409(held):
     assert r.status_code == 409 and ACTIVE in r.text
 
 
-def test_run_again_without_a_key_is_503(no_key):
+def test_run_again_without_a_key_is_403(no_key):
     rid = insert_run(no_key)
     r = no_key.c.post(f"/runs/{rid}/again", headers=H)
-    assert r.status_code == 503 and NO_KEY in r.text
+    assert r.status_code == 403 and NO_KEY in r.text
 
 
 # ---------- the stored answer, plain (F3a Task 8) ----------

@@ -321,25 +321,27 @@ def test_stop_unfinished_counts_queued_and_running(run_app):
     assert stop_unfinished(run_app.pool) == 1 and stop_unfinished(run_app.pool) == 0
 
 
-def test_start_up_logs_whether_a_key_is_set(db_url, caplog):
+def test_start_up_logs_own_keys_and_whether_the_secret_is_set(db_url, caplog):
+    """F7: no server key; the line says only that keys are the doctors' own and whether the
+    cookie secret is set (never its value)."""
+    secret = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
     caplog.set_level(logging.INFO)
     with TestClient(create_app(Settings(app_env="dev", database_url=db_url, owner_email=OWNER,
-                                        gemini_api_key="gk-q7"))) as c:
-        assert c.app.state.gemini_caller is not None
+                                        key_cookie_secret=secret))) as c:
+        assert c.app.state.key_secret == bytes(range(32))
     msgs = [r.getMessage() for r in caplog.records]
-    assert "gemini api_key=true model=gemini-3.5-flash-lite rpm=10 tpm=250000 rpd=500" in msgs
-    assert "gk-q7" not in caplog.text
+    assert ("gemini own_keys=true model=gemini-3.5-flash-lite rpm=10 tpm=250000 rpd=500 "
+            "max_active_runs=2") in msgs
+    assert "gemini key_cookie_secret=set" in msgs and secret not in caplog.text
     caplog.clear()
     with TestClient(create_app(Settings(app_env="dev", database_url=db_url,
                                         owner_email=OWNER))) as c:
-        assert c.app.state.gemini_caller is None
-    assert "gemini api_key=false model=gemini-3.5-flash-lite rpm=10 tpm=250000 rpd=500" in \
-        [r.getMessage() for r in caplog.records]
+        assert len(c.app.state.key_secret) == 32
+    assert "gemini key_cookie_secret=random" in [r.getMessage() for r in caplog.records]
 
 
 def test_app_runs_a_question_with_the_inline_starter(db_url, upstream):
-    settings = Settings(app_env="dev", database_url=db_url, owner_email=OWNER,
-                        gemini_api_key=FAKE_KEY)
+    settings = Settings(app_env="dev", database_url=db_url, owner_email=OWNER)
     g = RunGemini([END, EMPTY])  # F3c: the Introduction, on its own thread, by its route
     starter = InlineStarter()
     app = create_app(settings, lit_transport=upstream.transport, ncbi_gap_seconds=0,
@@ -350,8 +352,10 @@ def test_app_runs_a_question_with_the_inline_starter(db_url, upstream):
         with pool.connection() as conn:
             uid = conn.execute("SELECT id FROM users").fetchone()[0]
         rid = create_run(pool, uid, QUESTION, MODEL)
+        c.app.state.run_keys.put(rid, uid, SecretStr(FAKE_KEY))  # F7: as /ask hands it over
         c.app.state.run_starter.start(rid)
         v = get_run(pool, rid, uid)
+        assert c.app.state.run_keys.pending() == 0
     assert v.status == "done" and len(g.sent) == 2 and starter.started == [rid]
     assert g.sent[0].headers["x-goog-api-key"] == FAKE_KEY
     assert len(g.intro_sent) == 1 and v.intro is not None  # the real thread, joined

@@ -103,15 +103,15 @@ def test_ncbi_key_is_never_shown(monkeypatch):
     assert s.ncbi_api_key.get_secret_value() == "k-q7-secret"
 
 
-GEMINI_NAMES = ("GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_RPM", "GEMINI_TPM", "GEMINI_RPD")
+GEMINI_NAMES = ("GEMINI_MODEL", "GEMINI_RPM", "GEMINI_TPM", "GEMINI_RPD")
 
 
 def test_gemini_settings_default(monkeypatch):
     for name in GEMINI_NAMES:
         monkeypatch.delenv(name, raising=False)
     s = load_settings()
-    assert (s.gemini_api_key, s.gemini_model, s.gemini_rpm, s.gemini_tpm, s.gemini_rpd) == (
-        None, "gemini-3.5-flash-lite", 10, 250_000, 500
+    assert (s.gemini_model, s.gemini_rpm, s.gemini_tpm, s.gemini_rpd) == (
+        "gemini-3.5-flash-lite", 10, 250_000, 500
     )
 
 
@@ -120,8 +120,8 @@ def test_blank_gemini_settings_take_defaults(monkeypatch):
     for name in GEMINI_NAMES:
         monkeypatch.setenv(name, " ")
     s = load_settings()
-    assert (s.gemini_api_key, s.gemini_model, s.gemini_rpm, s.gemini_tpm, s.gemini_rpd) == (
-        None, "gemini-3.5-flash-lite", 10, 250_000, 500
+    assert (s.gemini_model, s.gemini_rpm, s.gemini_tpm, s.gemini_rpd) == (
+        "gemini-3.5-flash-lite", 10, 250_000, 500
     )
 
 
@@ -129,14 +129,15 @@ def test_empty_gemini_settings_take_defaults(monkeypatch):
     for name in GEMINI_NAMES:
         monkeypatch.setenv(name, "")
     s = load_settings()
-    assert (s.gemini_api_key, s.gemini_model, s.gemini_rpm) == (None, "gemini-3.5-flash-lite", 10)
+    assert (s.gemini_model, s.gemini_rpm) == ("gemini-3.5-flash-lite", 10)
 
 
-def test_gemini_key_is_never_shown(monkeypatch):
+def test_a_gemini_key_left_in_the_environment_is_ignored(monkeypatch):
+    """F7 (owner decision O1): no Gemini key on the server. One left over in .env is not read."""
     monkeypatch.setenv("GEMINI_API_KEY", "gk-q7-secret")
     s = load_settings()
+    assert not hasattr(s, "gemini_api_key")
     assert "gk-q7-secret" not in repr(s) and "gk-q7-secret" not in str(s)
-    assert s.gemini_api_key.get_secret_value() == "gk-q7-secret"
 
 
 def test_gemini_settings_are_read(monkeypatch):

@@ -48,9 +48,8 @@ class Settings(BaseSettings):
     # Optional. NCBI allows 10 requests a second with a key, 3 without.
     ncbi_api_key: SecretStr | None = None
     ncbi_email: str | None = None
-    # Optional: without a key the app, /healthz and the key-word search still work; only
-    # questions need it.
-    gemini_api_key: SecretStr | None = None
+    # F7 (owner decision O1, 18 Nov 2026): no Gemini key here. Each doctor's own key comes
+    # from their browser cookie (keycookie.py); a GEMINI_API_KEY left in .env is not read.
     gemini_model: str = DEFAULT_GEMINI_MODEL
     gemini_rpm: int = 10  # requests a minute
     gemini_tpm: int = 250_000  # prompt tokens a minute
@@ -62,7 +61,7 @@ class Settings(BaseSettings):
     # F7 (owner decision O2, 18 Nov 2026): questions running at once for the whole app.
     max_active_runs: int = 2
 
-    @field_validator("ncbi_api_key", "ncbi_email", "gemini_api_key", mode="before")
+    @field_validator("ncbi_api_key", "ncbi_email", mode="before")
     @classmethod
     def _blank_is_none(cls, value: object) -> object:
         """Compose passes an empty value when the name is unset in .env."""

@@ -12,12 +12,14 @@ import psycopg
 from fastapi import APIRouter, Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import SecretStr
 
 from pubmedgemini import intro
 from pubmedgemini.answer_page import answer_view, fmt_pct, pill_class
 from pubmedgemini.db import is_healthy
 from pubmedgemini.gemini.quota import reset_time_ist, runs_left
 from pubmedgemini.identity import NotSetUp, NotSignedIn, User, current_user
+from pubmedgemini.keycookie import COOKIE_NAME, open_, set_key_cookie
 from pubmedgemini.lit.query import query_rejected_message
 from pubmedgemini.lit.text import clean_text, drop_invisible
 from pubmedgemini.runs import (
@@ -72,7 +74,8 @@ SOURCE_NAMES = {"pubmed": "PubMed", "europepmc": "Europe PMC"}
 MAX_QUESTION_CHARS = 4000  # Incisive ask.rs MAX_QUESTION_CHARS
 EMPTY_QUESTION = "Please type your clinical question."  # Incisive ask.rs EMPTY_MESSAGE
 TOO_LONG = "That question is too long (4,000 characters max). Please shorten it."
-NO_KEY = "Questions are not set up yet: the Gemini key is missing on the server."
+# F7: each doctor's own key, from their cookie; none on the server.
+NO_KEY_YET = "To ask questions, add your own free Gemini key."
 ACTIVE_RUN = "A question is already running. Please wait for it to finish, then ask again."
 # F7 (owner decision O2): MAX_ACTIVE_RUNS questions are running for the whole app.
 BUSY = "PubMed Ai is busy with other questions. Try again in a minute."
@@ -80,12 +83,15 @@ RUN_NOT_FOUND = "That question wasn't found. It may have been deleted."  # runs/
 DAILY_LIMIT = "Daily free limit reached. Resets at {reset} IST."  # spec section 8
 STOPPED = "This run was stopped because the app restarted."
 GEMINI_UNAVAILABLE = "Gemini could not be reached or refused the request. Please try again in a minute."
+# F7: these outcomes end with a link to the key page, "Your key".
+KEY_PAGE_KINDS = frozenset({"key_refused", "billing_refused"})
 # The plain message for each fixed kind a failed run can end with (plan Task 9).
 KIND_MESSAGES = {
-    "key_refused": "Google refused the Gemini key. The owner needs to check it on the server.",
+    # F7: the doctor's own key; the page adds a link to the key page (KEY_PAGE_KINDS).
+    "key_refused": "Google refused your Gemini key. Check it on the",
     "billing_refused": (
-        "Google refused the Gemini key because its Google project is linked to billing. "
-        "Make a key in a project with billing turned off."
+        "Google refused your Gemini key because its Google project is linked to billing. "
+        "Make a key in a project with billing turned off, then save it on the"
     ),
     "rate_limited": (
         "The free Gemini limit stayed busy, so the run could not finish. "
@@ -218,16 +224,25 @@ class ListedRun:
     status_word: str
 
 
+def user_key(request: Request, user: User) -> SecretStr | None:
+    """F7: the signed-in doctor's own Gemini key from their cookie, or None. A cookie sealed
+    for another account, under another secret, or changed in any way is no key."""
+    sealed = request.cookies.get(COOKIE_NAME)
+    if not sealed:
+        return None
+    return open_(sealed, user.email, request.app.state.key_secret)
+
+
 def _home(request: Request, user: User, status_code: int = 200, *, question: str = "",
           ask_message: str | None = None, ask_found=None, ask_link: str | None = None):
     """The home page. `question` refills the box; it is only ever in this response body."""
     state = request.app.state
     settings = state.settings
-    enabled = state.gemini_caller is not None
+    enabled = user_key(request, user) is not None
     context = {"email": user.email, "nav": "ask", "ask_enabled": enabled, "question": question,
                "ask_message": ask_message, "ask_found": ask_found, "ask_link": ask_link}
     if enabled:
-        left = runs_left(state.pool, settings.gemini_model, settings.gemini_rpd)
+        left = runs_left(state.pool, settings.gemini_model, settings.gemini_rpd, user.id)
         context["runs_left"] = left
         context["reset_time"] = reset_time_ist(state.pool) if left < 1 else None
     return templates.TemplateResponse(request, "home.html", context, status_code=status_code)
@@ -373,9 +388,10 @@ def _start_question(request: Request, user: User, question: str):
     question box: never in a URL, a redirect, a log line, or storage unless it passed."""
     state = request.app.state
     settings = state.settings
-    if state.gemini_caller is None:
+    key = user_key(request, user)
+    if key is None:
         log.info("ask kind=refused reason=no_key")
-        return _message(request, NO_KEY, 503, user)
+        return _home(request, user, 403)
     if not question.strip():
         log.info("ask kind=rejected reason=empty")
         return _home(request, user, 400, ask_message=EMPTY_QUESTION)
@@ -384,7 +400,7 @@ def _start_question(request: Request, user: User, question: str):
     if len(stored_question(question)) > MAX_QUESTION_CHARS:
         log.info("ask kind=rejected reason=too_long")
         return _home(request, user, 400, question=question, ask_message=TOO_LONG)
-    if runs_left(state.pool, settings.gemini_model, settings.gemini_rpd) < 1:
+    if runs_left(state.pool, settings.gemini_model, settings.gemini_rpd, user.id) < 1:
         log.info("ask kind=refused reason=daily_limit")
         return _home(request, user, 429, question=question,
                      ask_message=DAILY_LIMIT.format(reset=reset_time_ist(state.pool)))
@@ -405,9 +421,11 @@ def _start_question(request: Request, user: User, question: str):
         return _home(request, user, 409, question=question, ask_message=ACTIVE_RUN,
                      ask_link=link)
     log.info("ask kind=started run_id=%s", run_id)
+    state.run_keys.put(run_id, user.id, key)  # in memory, for the run's thread alone
     try:
         state.run_starter.start(run_id)
     except Exception as exc:  # noqa: BLE001 - a run that cannot start must not stay active
+        state.run_keys.drop(run_id)
         log.error("ask kind=start_failed error=%s", type(exc).__name__)
         finish_run(state.pool, run_id, "failed", "internal", None, None)
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
@@ -592,6 +610,8 @@ def run_page(request: Request, run_id: str, user: Annotated[User, Depends(curren
         "active": active,
         "question_paragraphs": [x.strip() for x in v.question.split("\n") if x.strip()],
         "outcome": None if active else _outcome_line(request, v),
+        "outcome_key_link": (not active and v.status == "failed"
+                             and v.error_kind in KEY_PAGE_KINDS),
         "view": view,
         "unreadable": unreadable,
         # The answer layout (N1 A): a finished run with a readable stored answer. Every other
@@ -667,6 +687,20 @@ def register(app: FastAPI) -> None:
         # Fixed kind only: the exception text can hold connection details.
         log.warning("kind=db_error")
         return _message(request, DB_DOWN, 503)
+
+    @app.middleware("http")
+    async def renew_key_cookie(request: Request, call_next):
+        """F7 (owner decision O3): the key stays until the doctor removes it. Browsers keep a
+        cookie at most 400 days, so every page a doctor loads sets the same sealed value again
+        with a fresh lifetime. Only an exact echo: nothing is opened or changed here."""
+        response = await call_next(request)
+        sealed = request.cookies.get(COOKIE_NAME)
+        if (sealed and request.method == "GET" and response.status_code == 200
+                and response.headers.get("content-type", "").startswith("text/html")
+                and not any(v.startswith(f"{COOKIE_NAME}=")
+                            for v in response.headers.getlist("set-cookie"))):
+            set_key_cookie(response, sealed)
+        return response
 
     @app.middleware("http")
     async def log_request(request: Request, call_next):

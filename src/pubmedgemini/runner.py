@@ -60,6 +60,7 @@ from typing import Protocol
 from uuid import UUID
 
 from psycopg_pool import ConnectionPool
+from pydantic import SecretStr
 
 from pubmedgemini.completeness import run_check
 from pubmedgemini.gemini.caller import ModelCaller, RunCapReached
@@ -123,6 +124,34 @@ STOPPED_EARLY_LINE = (
 NO_TIME_LINE = "Not enough time was left to write the answer"  # team.rs:519-524
 TRUNCATED_LINE = "The writer's answer was cut off by its output limit"  # team.rs:761-766
 UNREADABLE_LINE = "The writer's answer could not be read"  # team.rs:770
+
+
+class RunKeys:
+    """F7: hands a doctor's Gemini key from their request to their run's thread, in memory
+    only. `put` before the run starts; the run `take`s it once; `drop` when the run could not
+    start. Nothing here is ever written anywhere."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._keys: dict[UUID, tuple[int, SecretStr]] = {}
+
+    def __repr__(self) -> str:
+        return f"RunKeys(pending={self.pending()})"
+
+    def put(self, run_id: UUID, user_id: int, key: SecretStr) -> None:
+        with self._lock:
+            self._keys[run_id] = (user_id, key)
+
+    def take(self, run_id: UUID) -> tuple[int, SecretStr] | None:
+        with self._lock:
+            return self._keys.pop(run_id, None)
+
+    def drop(self, run_id: UUID) -> None:
+        self.take(run_id)
+
+    def pending(self) -> int:
+        with self._lock:
+            return len(self._keys)
 
 
 class RunStarter(Protocol):
