@@ -281,9 +281,11 @@ def test_get_ask_needs_sign_in_like_home(db_url):
         assert c.post("/ask", data={"question": "x"}).status_code == 401
         assert c.get(f"/runs/{uuid.uuid4()}").status_code == 401
         assert c.post(f"/runs/{uuid.uuid4()}/again").status_code == 401
+        # F7b: a stranger signed in by the gate is a new doctor: no key yet, no such run.
         h = {"x-forwarded-email": "stranger@example.com"}
-        assert c.post("/ask", data={"question": "x"}, headers=h).status_code == 403
-        assert c.get(f"/runs/{uuid.uuid4()}", headers=h).status_code == 403
+        r = c.post("/ask", data={"question": "x"}, headers=h)
+        assert r.status_code == 403 and NO_KEY in r.text
+        assert c.get(f"/runs/{uuid.uuid4()}", headers=h).status_code == 404
 
 
 @pytest.mark.parametrize("q,status,text", [

@@ -103,21 +103,23 @@ def test_get_search_not_signed_in_is_the_same_401_as_home(client_prod):
     assert (r.status_code, r.text) == (401, home.text) and home.status_code == 401
 
 
-def test_get_search_unknown_user_is_the_same_403_as_home(client_prod):
+def test_get_search_for_a_new_doctor_goes_home(client_prod):
+    """F7b: a stranger signed in by the gate is a new doctor; GET /search goes home as for
+    anyone signed in."""
     h = {"x-forwarded-email": "stranger@example.com"}
-    home = client_prod.get("/", headers=h)
     r = client_prod.get("/search", headers=h, follow_redirects=False)
-    assert (r.status_code, r.text) == (403, home.text) and home.status_code == 403
+    assert r.status_code in (302, 303, 307) and r.headers["location"] == "/"
 
 
 def test_search_needs_sign_in(client_prod):
     assert client_prod.post("/search", data={"q": "mesh"}).status_code == 401
 
 
-def test_search_needs_a_set_up_user(client_prod):
+def test_search_works_for_a_new_doctor(client_prod):
+    """F7b: no approved list; the first request makes the doctor's row."""
     r = client_prod.post("/search", data={"q": "mesh"},
                          headers={"x-forwarded-email": "stranger@example.com"})
-    assert r.status_code == 403
+    assert r.status_code != 403
 
 
 # ---------- results ----------

@@ -68,7 +68,10 @@ services:
       - --provider=google
       - --upstream=http://app:8000
       - --http-address=0.0.0.0:4180
-      - --authenticated-emails-file=/etc/gate/emails.txt
+      # F7b (owner decision 2A, 18 Nov 2026): every Google account may sign in; the app makes
+      # a 'user' row at first sign-in. v7.15.6's Google provider still refuses an address
+      # Google has not verified (providers/google.go).
+      - --email-domain=*
       - --pass-user-headers=true
       - --cookie-secure=true
       # Lax: the browser does not send the sign-in cookie with a form post another site
@@ -97,7 +100,6 @@ services:
       OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET:?set OAUTH2_PROXY_CLIENT_SECRET in .env}
       OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET:?set OAUTH2_PROXY_COOKIE_SECRET in .env}
     volumes:
-      - ./gate/emails.txt:/etc/gate/emails.txt:ro
       - ./gate/templates:/etc/gate/templates:ro
     depends_on:
       app:

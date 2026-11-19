@@ -68,14 +68,15 @@ def test_nav_is_inside_the_header(env):
     assert '<nav aria-label="Main">' in header
 
 
-def test_no_menu_when_not_set_up(env):
-    for path in ("/", "/library", "/activity"):
+def test_a_new_doctor_gets_the_menu(env):
+    """F7b: every signed-in Google account is a doctor (no approved list)."""
+    for path in ("/", "/library", "/activity", "/key"):
         r = env.c.get(path, headers={"x-dev-user-email": "stranger@example.com"})
-        assert r.status_code == 403
-        assert "haven&#39;t been set up yet" in r.text
-        assert "<nav" not in r.text
-        assert "<header" in r.text
-    # a message page reached with no known user (no sign-in) has none either
+        assert r.status_code == 200 and "<nav" in r.text
+
+
+def test_no_menu_when_not_signed_in(env):
+    # a message page reached with no sign-in has no menu
     r = env.c.get("/library")
     assert r.status_code == 401 and "<nav" not in r.text and "<header" in r.text
 

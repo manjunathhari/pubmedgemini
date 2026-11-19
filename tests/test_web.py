@@ -37,10 +37,25 @@ def test_dev_header_ignored_in_prod(client_prod):  # Review Focus 2
     assert r.status_code == 401
 
 
-def test_unknown_user_is_403_with_exact_message(client_prod):
-    r = client_prod.get("/", headers={"x-forwarded-email": "stranger@example.com"})
-    assert r.status_code == 403
-    assert NOT_SET_UP in r.text.replace("&#39;", "'")
+def test_a_new_doctor_gets_a_user_row_at_first_sign_in(client_prod):
+    """F7b: any Google account the gate lets in is a doctor, with role 'user'."""
+    r = client_prod.get("/", headers={"x-forwarded-email": "Stranger@Example.com"})
+    assert r.status_code == 200 and NOT_SET_UP not in r.text.replace("&#39;", "'")
+    pool = client_prod.app.state.pool
+    with pool.connection() as conn:
+        rows = conn.execute("SELECT email, role FROM users WHERE email <> %s",
+                            ("owner@example.com",)).fetchall()
+    assert rows == [("stranger@example.com", "user")]
+    client_prod.get("/library", headers={"x-forwarded-email": "stranger@example.com"})
+    with pool.connection() as conn:
+        assert conn.execute("SELECT count(*) FROM users").fetchone()[0] == 2  # no duplicate
+
+
+def test_the_owner_keeps_the_owner_role(client_prod):
+    client_prod.get("/", headers={"x-forwarded-email": "owner@example.com"})
+    with client_prod.app.state.pool.connection() as conn:
+        assert conn.execute("SELECT role FROM users WHERE email = 'owner@example.com'"
+                            ).fetchone()[0] == "owner"
 
 
 def test_healthz_ok(client_prod):
