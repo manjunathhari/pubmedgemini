@@ -37,8 +37,9 @@ _AAD_PREFIX = b"pmai_gk/v1|"
 _NONCE_BYTES = 12
 _TIME = struct.Struct(">Q")  # seconds since 1970, before the key in the sealed text
 RENEW_AFTER_SECONDS = 30 * 24 * 3600
-# Deliberately loose: the exact shape of AI Studio keys is not checked (plan, Not checked).
-KEY_PATTERN = re.compile(r"[A-Za-z0-9_-]{20,100}")
+# Deliberately loose: letters, digits, dot, underscore and hyphen. The older AI Studio keys
+# start "AIza"; Google's newer style starts "AQ." and has dots (owner's live key, 19 Nov 2026).
+KEY_PATTERN = re.compile(r"[A-Za-z0-9._-]{20,200}")
 
 
 def normalise_key(raw: str) -> str | None:
