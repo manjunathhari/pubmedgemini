@@ -21,21 +21,43 @@
 {% else %}
 <section class="card">
 <p class="saved">No key saved in this browser yet.</p>
-<h2>Get a free key (2 minutes)</h2>
-<ol class="key-steps">
-<li>Open <a href="https://aistudio.google.com/apikey" rel="noopener noreferrer">Google AI Studio, API keys</a> and sign in with any Google account.</li>
-<li>Press <b>Create API key</b>. Make it in a project with <b>billing turned off</b>: Google refuses free use on a project with billing on.</li>
-<li>Copy the key and paste it below.</li>
-</ol>
 </section>
-<section class="card">
-<form method="post" action="/key">
+<section class="card" id="key-steps">
+<h2>Get your free key in 3 steps</h2>
+<div class="wt-step"><span class="wt-num">1</span><div>
+<p class="wt-title">Open Google AI Studio and tap <b>Create API key</b></p>
+<p>Sign in with any Google account. If it asks for a project, choose one with <b>billing turned off</b>.</p>
+<form method="get" action="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" class="wt-open"><p><button type="submit">Open Google AI Studio</button></p></form>
+<p class="muted">Opens in a new tab; this page stays open.</p>
+<svg class="wt-pic" viewBox="0 0 300 160" role="img" aria-label="Sketch: the Create API key button on Google AI Studio's key page"><rect x="1" y="1" width="298" height="158" rx="10" fill="var(--card)" stroke="var(--faint)"/><rect x="12" y="12" width="276" height="22" rx="11" fill="var(--note)"/><text x="26" y="27" font-size="11" fill="var(--muted)" font-family="system-ui">aistudio.google.com/apikey</text><rect x="16" y="48" width="140" height="10" rx="5" fill="var(--faint)"/><rect x="16" y="66" width="220" height="8" rx="4" fill="var(--faint)" opacity=".6"/><rect x="16" y="96" width="150" height="36" rx="18" fill="var(--btn)"/><text x="91" y="119" text-anchor="middle" font-size="13" fill="var(--btn-ink)" font-family="system-ui">Create API key</text><rect x="10" y="90" width="162" height="48" rx="24" fill="none" stroke="var(--btn)" stroke-width="3"/></svg>
+</div></div>
+<div class="wt-step"><span class="wt-num">2</span><div>
+<p class="wt-title">Tap <b>Copy</b> next to your new key</p>
+<p>The key starts with <code>AQ.</code> or <code>AIza</code>.</p>
+<svg class="wt-pic" viewBox="0 0 300 160" role="img" aria-label="Sketch: the Copy button next to a new key"><rect x="1" y="1" width="298" height="158" rx="10" fill="var(--card)" stroke="var(--faint)"/><rect x="12" y="12" width="276" height="22" rx="11" fill="var(--note)"/><text x="26" y="27" font-size="11" fill="var(--muted)" font-family="system-ui">aistudio.google.com/apikey</text><rect x="16" y="50" width="268" height="44" rx="8" fill="var(--note)"/><text x="28" y="77" font-size="13" fill="var(--ink)" font-family="ui-monospace,monospace">AQ.Ab8R••••••••••</text><rect x="222" y="58" width="52" height="28" rx="6" fill="var(--card)" stroke="var(--faint)"/><text x="248" y="77" text-anchor="middle" font-size="12" fill="var(--ink)" font-family="system-ui">Copy</text><rect x="216" y="52" width="64" height="40" rx="10" fill="none" stroke="var(--btn)" stroke-width="3"/><rect x="16" y="108" width="180" height="8" rx="4" fill="var(--faint)" opacity=".6"/></svg>
+</div></div>
+<div class="wt-step"><span class="wt-num">3</span><div>
+<p class="wt-title">Come back here and tap <b>Paste</b></p>
+<p>Your key is checked and saved straight away.</p>
+<form method="post" action="/key" id="key-form">
 <p><label for="key">Your Gemini key</label></p>
-<p><input id="key" name="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="Paste your key here" required>
-<button type="submit">Save key</button></p>
+<div class="paste-row"><input id="key" name="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="Paste your key here" required><button type="button" id="key-paste" hidden>Paste</button></div>
+<p><button type="submit" class="quiet">Save key</button></p>
 </form>
-<p class="muted">We check the key with one tiny call to Google before saving it.</p>
+<p class="muted" id="key-paste-help" hidden>Long-press the box and choose Paste, then tap Save key.</p>
+</div></div>
 </section>
+<section class="card" id="key-checking" hidden>
+<div class="checking"><span class="dot"></span><span>Checking your key with Google…</span></div>
+<p class="muted">This takes a few seconds.</p>
+</section>
+<section class="card"><details class="help"{% if help_open %} open{% endif %}><summary>Key not accepted? Common fixes</summary>
+<dl>
+<dt>"This key's project has billing turned on"</dt><dd>In AI Studio, tap Create API key again and pick a project with billing off (or create a new project).</dd>
+<dt>"Google did not accept this key"</dt><dd>Copy it again with the Copy button; do not select it by hand.</dd>
+<dt>"Used today's free limit"</dt><dd>It is saved and works again after the time shown.</dd>
+</dl></details></section>
+<script>(function(){var f=document.getElementById("key-form"),k=document.getElementById("key"),b=document.getElementById("key-paste"),h=document.getElementById("key-paste-help"),s=document.getElementById("key-steps"),c=document.getElementById("key-checking");if(!f)return;f.addEventListener("submit",function(){s.hidden=true;c.hidden=false;});if(!(navigator.clipboard&&navigator.clipboard.readText))return;b.hidden=false;b.addEventListener("click",function(){navigator.clipboard.readText().then(function(t){t=(t||"").trim();if(!t){h.hidden=false;k.focus();return;}k.value=t;if(f.requestSubmit){f.requestSubmit();}else{s.hidden=true;c.hidden=false;f.submit();}},function(){h.hidden=false;k.focus();});});})();</script>
 {% endif %}
 <section class="card">
 <h2>Where your key is kept</h2>

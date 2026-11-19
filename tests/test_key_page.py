@@ -4,6 +4,7 @@ The doctor pastes their own free key; one tiny check call to Google decides whet
 saved, in their browser only (keycookie.py)."""
 
 import logging
+import re
 
 import httpx
 import pytest
@@ -55,10 +56,9 @@ def test_page_with_no_key(https_env):
     t = r.text
     assert "Run questions on your own free key" in t and NO_KEY_SAVED in t
     assert 'type="password"' in t and 'name="key"' in t and 'autocomplete="off"' in t
-    assert '<form method="post" action="/key">' in t and "Save key" in t
+    assert '<form method="post" action="/key" id="key-form">' in t and "Save key" in t
     assert "billing turned off" in t and "Where your key is kept" in t
     assert "It stays until you remove it." in t
-    assert 'href="https://aistudio.google.com/apikey"' in t
     assert 'href="https://ai.google.dev/gemini-api/terms"' in t
     assert 'href="/key" class="current" aria-current="page">Your key</a>' in t
     assert "Remove key from this browser" not in t
@@ -237,3 +237,57 @@ def test_the_key_check_waits_on_the_doctors_pacer(https_env):
     script(https_env, OK)
     save(https_env)
     assert len(waits) == 1
+
+
+
+# ---------- the guided walkthrough (frozen mock v2, 19 Nov 2026) ----------
+
+AI_STUDIO_FORM = ('<form method="get" action="https://aistudio.google.com/apikey" '
+                  'target="_blank" rel="noopener noreferrer" class="wt-open">')
+
+
+def test_the_walkthrough_has_three_steps(https_env):
+    t = https_env.c.get("/key", headers=H).text
+    assert "Get your free key in 3 steps" in t
+    assert t.count('<span class="wt-num">') == 3
+    assert "Open Google AI Studio and tap <b>Create API key</b>" in t
+    assert "Tap <b>Copy</b> next to your new key" in t
+    assert "Come back here and tap <b>Paste</b>" in t
+    assert "The key starts with <code>AQ.</code> or <code>AIza</code>." in t
+
+
+def test_open_ai_studio_is_a_button_in_a_new_tab(https_env):
+    t = https_env.c.get("/key", headers=H).text
+    assert AI_STUDIO_FORM in t
+    assert '<button type="submit">Open Google AI Studio</button>' in t
+
+
+def test_two_sketches_drawn_on_the_page(https_env):
+    t = https_env.c.get("/key", headers=H).text
+    sketches = re.findall(r'<svg class="wt-pic"[^>]*>', t)
+    assert len(sketches) == 2 and all('role="img"' in s and "aria-label=" in s for s in sketches)
+    assert "<image" not in t and "googleusercontent" not in t  # drawings, not copies
+
+
+def test_paste_button_waits_for_the_script(https_env):
+    """Without JavaScript the Paste button stays hidden and Save key does the job."""
+    t = https_env.c.get("/key", headers=H).text
+    assert '<button type="button" id="key-paste" hidden>Paste</button>' in t
+    assert '<button type="submit" class="quiet">Save key</button>' in t
+    assert re.findall(r"<script\b[^>]*>", t).count("<script>") == 3  # theme x2 + this page's
+    assert not re.search(r"<[^>]*\son[a-z]+\s*=", t)  # no inline event attributes
+
+
+def test_common_fixes_are_folded_until_a_key_is_refused(https_env):
+    t = https_env.c.get("/key", headers=H).text
+    assert '<details class="help">' in t and "Key not accepted? Common fixes" in t
+    script(https_env, error(402, "X"))
+    r = save(https_env)
+    assert '<details class="help" open>' in r.text and BILLING in r.text
+
+
+def test_a_saved_key_shows_no_walkthrough(https_env):
+    script(https_env, OK)
+    t = save(https_env).text
+    assert "Get your free key in 3 steps" not in t and 'id="key-paste"' not in t
+    assert t.count("<script>") == 2  # only the day/night switch's two; no page script

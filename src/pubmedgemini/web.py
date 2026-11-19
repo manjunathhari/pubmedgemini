@@ -698,7 +698,9 @@ def _key_page(request: Request, user: User, status_code: int = 200, *,
     state = request.app.state
     settings = state.settings
     key = None if removed else (saved_key or user_key(request, user))
-    context: dict[str, Any] = {"nav": "key", "message": message, "has_key": key is not None}
+    context: dict[str, Any] = {"nav": "key", "message": message, "has_key": key is not None,
+                               # a refused key opens the common fixes (frozen mock v2)
+                               "help_open": status_code >= 400}
     if key is not None:
         context["tail"] = key_tail(key.get_secret_value())
         context["runs_left"] = runs_left(state.pool, settings.gemini_model, settings.gemini_rpd,
