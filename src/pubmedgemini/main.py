@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -10,13 +11,19 @@ import psycopg
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from psycopg_pool import ConnectionPool, PoolTimeout
+from pydantic import SecretStr
 
 from pubmedgemini import web
 from pubmedgemini.config import Settings, load_settings
 from pubmedgemini.db import is_healthy, open_pool
 from pubmedgemini.gemini.caller import ModelCaller
-from pubmedgemini.gemini.client import GeminiClient
-from pubmedgemini.gemini.quota import GeminiPacer
+from pubmedgemini.gemini.client import GeminiClient, GeminiError
+from pubmedgemini.gemini.quota import (
+    PacerBook,
+    estimate_tokens,
+    finish_attempt,
+    record_attempt,
+)
 from pubmedgemini.identity import ensure_owner
 from pubmedgemini.lit.cache import prune as prune_paper_cache
 from pubmedgemini.lit.europepmc import EuropePmc
@@ -25,8 +32,8 @@ from pubmedgemini.lit.pubmed import PubMed
 from pubmedgemini.lit.tools import LitTools
 from pubmedgemini.logging_setup import configure_logging
 from pubmedgemini.migrate import apply_migrations
-from pubmedgemini.runner import RunStarter, ThreadStarter, run_one
-from pubmedgemini.runs import stop_unfinished
+from pubmedgemini.runner import RunKeys, RunStarter, ThreadStarter, run_one
+from pubmedgemini.runs import finish_run, stop_unfinished
 from pubmedgemini.web import NotReady
 
 log = logging.getLogger("pubmedgemini.main")
@@ -39,6 +46,16 @@ runs_log = logging.getLogger("pubmedgemini.runs")
 RETRY_BACKOFF_SECONDS = 5.0
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# F7 /key: the smallest request that proves a key works (about 5 output tokens).
+KEY_CHECK_BODY = {
+    "contents": [{"role": "user", "parts": [{"text": "Reply with the word OK."}]}],
+    "generationConfig": {"maxOutputTokens": 5},
+}
+KEY_CHECK_TIMEOUT_SECONDS = 20.0
+# Review Important 3 (18 Nov): a doctor may check at most this many keys in this many minutes.
+KEY_CHECKS_PER_WINDOW = 5
+KEY_CHECK_WINDOW_MINUTES = 10
 
 
 def _failure_kind(pool: ConnectionPool, exc: psycopg.Error) -> str:
@@ -115,34 +132,89 @@ def create_app(
         lit_log.info("literature ncbi_api_key=%s", "true" if key else "false")
         return client
 
-    def open_gemini(app: FastAPI) -> GeminiClient | None:
-        """With a key: one client, one pacer and one caller for the whole process. Without
-        one, questions are off and the rest of the app works."""
-        key = settings.gemini_api_key
+    def open_gemini(app: FastAPI) -> None:
+        """F7: no Gemini key on the server. Each doctor's own key comes from their cookie
+        (keycookie.py), is handed to their run in memory (RunKeys), and a client, a caller and
+        that doctor's pacer are put together for the run alone (`run_question`)."""
         gemini_log.info(
-            "gemini api_key=%s model=%s rpm=%d tpm=%d rpd=%d", "true" if key else "false",
+            "gemini own_keys=true model=%s rpm=%d tpm=%d rpd=%d max_active_runs=%d",
             settings.gemini_model, settings.gemini_rpm, settings.gemini_tpm, settings.gemini_rpd,
+            settings.max_active_runs,
         )
-        if key is None:
-            app.state.gemini_caller = None
-            return None
+        app.state.pacers = PacerBook(settings.gemini_rpm, settings.gemini_tpm, sleep=gemini_sleep)
+        app.state.run_keys = RunKeys()
+        secret = settings.key_cookie_secret_bytes()
+        if secret is None:  # dev and tests only: compose makes it required in production
+            secret = os.urandom(32)
+        gemini_log.info("gemini key_cookie_secret=%s",
+                        "set" if settings.key_cookie_secret is not None else "random")
+        app.state.key_secret = secret
+
+    def caller_for(user_id: int, key: SecretStr) -> tuple[ModelCaller, GeminiClient]:
         client = GeminiClient(key, settings.gemini_model, gemini_transport)
-        pacer = GeminiPacer(settings.gemini_rpm, settings.gemini_tpm, sleep=gemini_sleep)
-        app.state.gemini_caller = ModelCaller(
-            client, pacer, app.state.pool, settings.gemini_model, sleep=gemini_sleep
-        )
-        return client
+        caller = ModelCaller(client, app.state.pacers.get(user_id), app.state.pool,
+                             settings.gemini_model, sleep=gemini_sleep, user_id=user_id)
+        return caller, client
+
+    def check_key(user_id: int, key: SecretStr) -> str:
+        """F7 /key: one tiny call on the doctor's key before it is saved. Returns `ok` or the
+        GeminiError kind. Counted on that doctor's day (step `key_check`). At most
+        KEY_CHECKS_PER_WINDOW checks in KEY_CHECK_WINDOW_MINUTES per doctor (`too_many`, no call;
+        review Important 3), and each waits on that doctor's pacer like a run's call."""
+        with app.state.pool.connection() as conn:
+            recent = conn.execute(
+                "SELECT count(*) FROM model_calls WHERE user_id = %s AND step = 'key_check' "
+                "AND called_at > now() - make_interval(mins => %s)",
+                (user_id, KEY_CHECK_WINDOW_MINUTES)).fetchone()[0]
+        if recent >= KEY_CHECKS_PER_WINDOW:
+            return "too_many"
+        if not app.state.pacers.get(user_id).wait(estimate_tokens(KEY_CHECK_BODY),
+                                                  clock() + KEY_CHECK_TIMEOUT_SECONDS):
+            return "pacer_busy"
+        client = GeminiClient(key, settings.gemini_model, gemini_transport)
+        call_id = record_attempt(app.state.pool, model=settings.gemini_model, run_id=None,
+                                 step="key_check", attempt=1, user_id=user_id)
+        started = clock()
+        kind, usage = "ok", None
+        try:
+            usage = client.generate(KEY_CHECK_BODY, KEY_CHECK_TIMEOUT_SECONDS).usage
+        except GeminiError as e:
+            kind = e.kind
+        finally:
+            client.close()
+        try:
+            finish_attempt(app.state.pool, call_id, status_kind=kind, usage=usage,
+                           latency_ms=int((clock() - started) * 1000))
+        except psycopg.Error:
+            gemini_log.warning("gemini kind=count_not_finished")
+        return kind
 
     def run_question(run_id) -> None:
-        run_one(run_id, pool=app.state.pool, tools=app.state.lit,
-                caller=app.state.gemini_caller, model=settings.gemini_model)
+        handed = app.state.run_keys.take(run_id)
+        if handed is None:  # the key went with a restart, or never came: nothing is sent
+            if finish_run(app.state.pool, run_id, "failed", "key_missing", None, None):
+                runs_log.info("run kind=finished run_id=%s status=failed error_kind=key_missing",
+                              run_id)
+            return
+        user_id, key = handed
+        try:
+            caller, client = caller_for(user_id, key)
+        except Exception as e:  # noqa: BLE001 - the run must not stay queued, holding a slot
+            runs_log.error("run kind=internal error=%s", type(e).__name__)
+            finish_run(app.state.pool, run_id, "failed", "internal", None, None)
+            return
+        try:
+            run_one(run_id, pool=app.state.pool, tools=app.state.lit, caller=caller,
+                    model=settings.gemini_model)
+        finally:
+            client.close()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.pool = open_pool(settings.database_url)
         app.state.ready = False
         lit_client = open_literature(app)
-        gemini_client = open_gemini(app)
+        open_gemini(app)
         starter = run_starter if run_starter is not None else ThreadStarter()
         if getattr(starter, "run", None) is None:
             starter.run = run_question
@@ -152,8 +224,6 @@ def create_app(
             yield
         finally:
             lit_client.close()
-            if gemini_client is not None:
-                gemini_client.close()
             app.state.pool.close()
 
     app = FastAPI(
@@ -186,6 +256,9 @@ def create_app(
             state_lock.release()
 
     app.state.ensure_ready = ensure_ready
+    app.state.caller_for = caller_for
+    app.state.check_key = check_key
+    app.state.run_question = run_question
     web.register(app)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app

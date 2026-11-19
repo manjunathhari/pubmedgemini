@@ -17,7 +17,7 @@ import httpx
 from pubmedgemini.gemini.client import GEMINI_HOST
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "gemini"
-FAKE_KEY = "test-key-not-real"
+FAKE_KEY = "test-key-not-real-0000"  # F7: key-shaped (keycookie.KEY_PATTERN)
 
 Step = httpx.Response | dict | Callable[[httpx.Request], httpx.Response]
 

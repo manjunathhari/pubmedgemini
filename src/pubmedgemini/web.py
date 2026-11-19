@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -12,16 +13,35 @@ import psycopg
 from fastapi import APIRouter, Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import SecretStr
 
 from pubmedgemini import intro
 from pubmedgemini.answer_page import answer_view, fmt_pct, pill_class
 from pubmedgemini.db import is_healthy
 from pubmedgemini.gemini.quota import reset_time_ist, runs_left
-from pubmedgemini.identity import NotSetUp, NotSignedIn, User, current_user
+from pubmedgemini.identity import (
+    NotSetUp,
+    NotSignedIn,
+    User,
+    current_user,
+    email_from_headers,
+)
+from pubmedgemini.keycookie import (
+    COOKIE_NAME,
+    RENEW_AFTER_SECONDS,
+    clear_key_cookie,
+    key_tail,
+    normalise_key,
+    open_,
+    open_with_age,
+    seal,
+    set_key_cookie,
+)
 from pubmedgemini.lit.query import query_rejected_message
 from pubmedgemini.lit.text import clean_text, drop_invisible
 from pubmedgemini.runs import (
     ActiveRunExists,
+    AppBusy,
     QuestionBlocked,
     RunView,
     SelectedView,
@@ -71,18 +91,24 @@ SOURCE_NAMES = {"pubmed": "PubMed", "europepmc": "Europe PMC"}
 MAX_QUESTION_CHARS = 4000  # Incisive ask.rs MAX_QUESTION_CHARS
 EMPTY_QUESTION = "Please type your clinical question."  # Incisive ask.rs EMPTY_MESSAGE
 TOO_LONG = "That question is too long (4,000 characters max). Please shorten it."
-NO_KEY = "Questions are not set up yet: the Gemini key is missing on the server."
+# F7: each doctor's own key, from their cookie; none on the server.
+NO_KEY_YET = "To ask questions, add your own free Gemini key."
 ACTIVE_RUN = "A question is already running. Please wait for it to finish, then ask again."
+# F7 (owner decision O2): MAX_ACTIVE_RUNS questions are running for the whole app.
+BUSY = "PubMed Ai is busy with other questions. Try again in a minute."
 RUN_NOT_FOUND = "That question wasn't found. It may have been deleted."  # runs/mod.rs
 DAILY_LIMIT = "Daily free limit reached. Resets at {reset} IST."  # spec section 8
 STOPPED = "This run was stopped because the app restarted."
 GEMINI_UNAVAILABLE = "Gemini could not be reached or refused the request. Please try again in a minute."
+# F7: these outcomes end with a link to the key page, "Your key".
+KEY_PAGE_KINDS = frozenset({"key_refused", "billing_refused"})
 # The plain message for each fixed kind a failed run can end with (plan Task 9).
 KIND_MESSAGES = {
-    "key_refused": "Google refused the Gemini key. The owner needs to check it on the server.",
+    # F7: the doctor's own key; the page adds a link to the key page (KEY_PAGE_KINDS).
+    "key_refused": "Google refused your Gemini key. Check it on the",
     "billing_refused": (
-        "Google refused the Gemini key because its Google project is linked to billing. "
-        "Make a key in a project with billing turned off."
+        "Google refused your Gemini key because its Google project is linked to billing. "
+        "Make a key in a project with billing turned off, then save it on the"
     ),
     "rate_limited": (
         "The free Gemini limit stayed busy, so the run could not finish. "
@@ -215,16 +241,25 @@ class ListedRun:
     status_word: str
 
 
+def user_key(request: Request, user: User) -> SecretStr | None:
+    """F7: the signed-in doctor's own Gemini key from their cookie, or None. A cookie sealed
+    for another account, under another secret, or changed in any way is no key."""
+    sealed = request.cookies.get(COOKIE_NAME)
+    if not sealed:
+        return None
+    return open_(sealed, user.email, request.app.state.key_secret)
+
+
 def _home(request: Request, user: User, status_code: int = 200, *, question: str = "",
           ask_message: str | None = None, ask_found=None, ask_link: str | None = None):
     """The home page. `question` refills the box; it is only ever in this response body."""
     state = request.app.state
     settings = state.settings
-    enabled = state.gemini_caller is not None
+    enabled = user_key(request, user) is not None
     context = {"email": user.email, "nav": "ask", "ask_enabled": enabled, "question": question,
                "ask_message": ask_message, "ask_found": ask_found, "ask_link": ask_link}
     if enabled:
-        left = runs_left(state.pool, settings.gemini_model, settings.gemini_rpd)
+        left = runs_left(state.pool, settings.gemini_model, settings.gemini_rpd, user.id)
         context["runs_left"] = left
         context["reset_time"] = reset_time_ist(state.pool) if left < 1 else None
     return templates.TemplateResponse(request, "home.html", context, status_code=status_code)
@@ -370,9 +405,10 @@ def _start_question(request: Request, user: User, question: str):
     question box: never in a URL, a redirect, a log line, or storage unless it passed."""
     state = request.app.state
     settings = state.settings
-    if state.gemini_caller is None:
+    key = user_key(request, user)
+    if key is None:
         log.info("ask kind=refused reason=no_key")
-        return _message(request, NO_KEY, 503, user)
+        return _home(request, user, 403)
     if not question.strip():
         log.info("ask kind=rejected reason=empty")
         return _home(request, user, 400, ask_message=EMPTY_QUESTION)
@@ -381,26 +417,32 @@ def _start_question(request: Request, user: User, question: str):
     if len(stored_question(question)) > MAX_QUESTION_CHARS:
         log.info("ask kind=rejected reason=too_long")
         return _home(request, user, 400, question=question, ask_message=TOO_LONG)
-    if runs_left(state.pool, settings.gemini_model, settings.gemini_rpd) < 1:
+    if runs_left(state.pool, settings.gemini_model, settings.gemini_rpd, user.id) < 1:
         log.info("ask kind=refused reason=daily_limit")
         return _home(request, user, 429, question=question,
                      ask_message=DAILY_LIMIT.format(reset=reset_time_ist(state.pool)))
     try:
-        run_id = create_run(state.pool, user.id, question, settings.gemini_model)
+        run_id = create_run(state.pool, user.id, question, settings.gemini_model,
+                            max_active=settings.max_active_runs)
     except QuestionBlocked as exc:  # logged by create_run: categories and counts only
         found = [(label, n) for label, (_, n) in zip(exc.outcome.labels, exc.outcome.categories,
                                                        strict=True)]
         return _home(request, user, 400, question=question, ask_message=exc.outcome.message,
                      ask_found=found)
+    except AppBusy:
+        log.info("ask kind=refused reason=busy")
+        return _home(request, user, 503, question=question, ask_message=BUSY)
     except ActiveRunExists as exc:
         log.info("ask kind=refused reason=active")
         link = f"/runs/{exc.run_id}" if exc.own and exc.run_id is not None else None
         return _home(request, user, 409, question=question, ask_message=ACTIVE_RUN,
                      ask_link=link)
     log.info("ask kind=started run_id=%s", run_id)
+    state.run_keys.put(run_id, user.id, key)  # in memory, for the run's thread alone
     try:
         state.run_starter.start(run_id)
     except Exception as exc:  # noqa: BLE001 - a run that cannot start must not stay active
+        state.run_keys.drop(run_id)
         log.error("ask kind=start_failed error=%s", type(exc).__name__)
         finish_run(state.pool, run_id, "failed", "internal", None, None)
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
@@ -585,6 +627,8 @@ def run_page(request: Request, run_id: str, user: Annotated[User, Depends(curren
         "active": active,
         "question_paragraphs": [x.strip() for x in v.question.split("\n") if x.strip()],
         "outcome": None if active else _outcome_line(request, v),
+        "outcome_key_link": (not active and v.status == "failed"
+                             and v.error_kind in KEY_PAGE_KINDS),
         "view": view,
         "unreadable": unreadable,
         # The answer layout (N1 A): a finished run with a readable stored answer. Every other
@@ -624,6 +668,97 @@ def run_again(request: Request, run_id: str, user: Annotated[User, Depends(curre
     return _start_question(request, user, v.question)
 
 
+# ---------- F7: the doctor's own Gemini key (/key; frozen mock v1, 18 Nov 2026) ----------
+
+KEY_SAVED = "Key saved in this browser."
+KEY_SAVED_LIMIT = ("Key saved. It has used today's free limit and will work again after "
+                   "{reset} IST.")
+KEY_REMOVED = "Key removed from this browser."
+KEY_NOT_KEY = ("Not saved. That does not look like a Gemini key. Copy it again from Google AI "
+               "Studio.")
+KEY_REFUSED = "Not saved. Google did not accept this key. Copy it again from Google AI Studio."
+KEY_BILLING = ("Not saved. This key's project has billing turned on. Make a key in a project "
+               "with billing turned off, then paste it again.")
+KEY_UNREACHABLE = "Not saved. Google could not be reached. Please try again in a minute."
+KEY_TOO_MANY = "Not saved. Too many keys tried. Please wait 10 minutes and try again."
+# What the one check call's result means: saved (and how it is said), or not saved.
+_SAVED_CHECKS = {"ok": "saved", "rate_limited": "saved", "daily_limit": "saved_limit"}
+_REFUSED_CHECKS = {"key_refused": KEY_REFUSED, "billing_refused": KEY_BILLING}
+
+
+def refuse_cross_site_key(request: Request) -> None:
+    _refuse_cross_site(request, "key")
+
+
+def _key_page(request: Request, user: User, status_code: int = 200, *,
+              message: str | None = None, saved_key: SecretStr | None = None,
+              removed: bool = False) -> HTMLResponse:
+    """`saved_key` is the key just saved (its cookie is set on this response); otherwise the
+    cookie decides. Only the last four characters of a key are ever shown."""
+    state = request.app.state
+    settings = state.settings
+    key = None if removed else (saved_key or user_key(request, user))
+    context: dict[str, Any] = {"nav": "key", "message": message, "has_key": key is not None}
+    if key is not None:
+        context["tail"] = key_tail(key.get_secret_value())
+        context["runs_left"] = runs_left(state.pool, settings.gemini_model, settings.gemini_rpd,
+                                         user.id)
+    return templates.TemplateResponse(request, "key.html", context, status_code=status_code)
+
+
+@router.get("/key", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
+def key_page(request: Request, user: Annotated[User, Depends(current_user)], done: str = ""):
+    message = None
+    if done == "saved":
+        message = KEY_SAVED
+    elif done == "saved_limit":
+        message = KEY_SAVED_LIMIT.format(reset=reset_time_ist(request.app.state.pool))
+    elif done == "removed":
+        message = KEY_REMOVED
+    return _key_page(request, user, message=message)
+
+
+@router.post(
+    "/key",
+    response_class=HTMLResponse,
+    dependencies=[Depends(refuse_cross_site_key), Depends(require_ready)],
+)
+def key_save(request: Request, user: Annotated[User, Depends(current_user)],
+             key: Annotated[str, Form()] = ""):
+    """One check call on the pasted key; saved in the doctor's cookie only if it works. The
+    key is in this request's body and memory only: never in a URL, a log line or a table."""
+    state = request.app.state
+    normalised = normalise_key(key)
+    if normalised is None:
+        log.info("key kind=not_saved check=not_key_shaped")
+        return _key_page(request, user, 400, message=KEY_NOT_KEY)
+    secret = SecretStr(normalised)
+    check = state.check_key(user.id, secret)
+    if check == "too_many":
+        log.info("key kind=not_saved check=too_many")
+        return _key_page(request, user, 429, message=KEY_TOO_MANY)
+    done = _SAVED_CHECKS.get(check)
+    if done is None:
+        log.info("key kind=not_saved check=%s", check)
+        return _key_page(request, user, 400, message=_REFUSED_CHECKS.get(check, KEY_UNREACHABLE))
+    log.info("key kind=saved check=%s", check)
+    response = RedirectResponse(f"/key?done={done}", status_code=303)
+    set_key_cookie(response, seal(normalised, user.email, state.key_secret))
+    return response
+
+
+@router.post(
+    "/key/remove",
+    response_class=HTMLResponse,
+    dependencies=[Depends(refuse_cross_site_key), Depends(require_ready)],
+)
+def key_remove(request: Request, user: Annotated[User, Depends(current_user)]):
+    log.info("key kind=removed")
+    response = RedirectResponse("/key?done=removed", status_code=303)
+    clear_key_cookie(response)
+    return response
+
+
 @router.get("/healthz")
 def healthz(request: Request):
     try:
@@ -660,6 +795,28 @@ def register(app: FastAPI) -> None:
         # Fixed kind only: the exception text can hold connection details.
         log.warning("kind=db_error")
         return _message(request, DB_DOWN, 503)
+
+    @app.middleware("http")
+    async def renew_key_cookie(request: Request, call_next):
+        """F7 (owner decision O3): the key stays until the doctor removes it, and browsers
+        keep a cookie at most 400 days. A signed-in page renews a seal that opens for this
+        doctor and is over RENEW_AFTER_SECONDS old: sealed again with a fresh time. A fresh
+        seal is never set again, so a page reload already on its way cannot undo a Remove or
+        a new key (review, 18 Nov); one for another account, or junk, is left to expire."""
+        response = await call_next(request)
+        sealed = request.cookies.get(COOKIE_NAME)
+        if not (sealed and request.method == "GET" and response.status_code == 200
+                and response.headers.get("content-type", "").startswith("text/html")
+                and not any(v.startswith(f"{COOKIE_NAME}=")
+                            for v in response.headers.getlist("set-cookie"))):
+            return response
+        email = email_from_headers(request.headers, request.app.state.settings.app_env)
+        opened = None if email is None else open_with_age(sealed, email,
+                                                           request.app.state.key_secret)
+        if opened is not None and time.time() - opened[1] > RENEW_AFTER_SECONDS:
+            set_key_cookie(response, seal(opened[0].get_secret_value(), email,
+                                          request.app.state.key_secret))
+        return response
 
     @app.middleware("http")
     async def log_request(request: Request, call_next):

@@ -14,6 +14,7 @@ dependencies = [
     "pydantic-settings",
     "httpx",
     "python-multipart",
+    "cryptography",
 ]
 
 [project.optional-dependencies]

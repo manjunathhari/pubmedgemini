@@ -1100,7 +1100,7 @@ def test_a_blocked_question_reaches_neither_google_nor_the_literature(db_url, up
     # The check is local: with the real app wiring (Gemini key, fake transports, a run starter
     # that would run at once), a blocked question makes no request to either side.
     from fastapi.testclient import TestClient
-    from gemini_fakes import FAKE_KEY, FakeGemini
+    from gemini_fakes import FakeGemini
 
     from pubmedgemini.config import Settings
     from pubmedgemini.main import create_app
@@ -1109,7 +1109,7 @@ def test_a_blocked_question_reaches_neither_google_nor_the_literature(db_url, up
 
     g = FakeGemini([])
     app = create_app(Settings(app_env="dev", database_url=db_url,
-                              owner_email="owner@example.com", gemini_api_key=FAKE_KEY),
+                              owner_email="owner@example.com"),
                      lit_transport=upstream.transport, ncbi_gap_seconds=0,
                      gemini_transport=g.transport, gemini_sleep=lambda s: None,
                      run_starter=InlineStarter())

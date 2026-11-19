@@ -34,6 +34,7 @@ from pubmedgemini.runs import (
     NO_EVIDENCE,
     STOPPED_NO_ANSWER,
     ActiveRunExists,
+    AppBusy,
     active_run,
     add_search,
     add_seen,
@@ -198,30 +199,91 @@ def test_the_run_is_running_while_it_works(run_app):
     assert status == [("running", True)]
 
 
-# ---------- one at a time ----------
+# ---------- one at a time per doctor, MAX_ACTIVE_RUNS for the app (F7) ----------
+
+def _user(pool, email):
+    with pool.connection() as conn:
+        return conn.execute("INSERT INTO users (email, role) VALUES (%s, 'user') RETURNING id",
+                            (email,)).fetchone()[0]
+
 
 def test_second_run_is_refused_while_one_runs(run_app):
     rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
     with pytest.raises(ActiveRunExists) as e:
         create_run(run_app.pool, run_app.owner_id, "another question", MODEL)
     assert (e.value.run_id, e.value.own) == (rid, True)
-    assert active_run(run_app.pool) == (rid, run_app.owner_id)
+    assert active_run(run_app.pool, run_app.owner_id) == (rid, run_app.owner_id)
     assert rows(run_app.pool, "SELECT count(*) FROM runs")[0][0] == 1
 
 
-def test_another_users_active_run_is_not_own(run_app):
-    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
-    with run_app.pool.connection() as conn:
-        other = conn.execute("INSERT INTO users (email, role) VALUES ('b@example.com', 'surgeon')"
-                             " RETURNING id").fetchone()[0]
+def test_another_doctor_can_run_at_the_same_time(run_app):
+    """F7: one run at a time per doctor, not for the whole app."""
+    a = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    other = _user(run_app.pool, "b@example.com")
+    b = create_run(run_app.pool, other, QUESTION, MODEL)
+    assert a != b
+    assert active_run(run_app.pool, other) == (b, other)
+
+
+def test_the_app_cap_refuses_a_third_doctor(run_app):
+    create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL, max_active=2)
+    create_run(run_app.pool, _user(run_app.pool, "b@example.com"), QUESTION, MODEL, max_active=2)
+    third = _user(run_app.pool, "c@example.com")
+    with pytest.raises(AppBusy):
+        create_run(run_app.pool, third, QUESTION, MODEL, max_active=2)
+    assert rows(run_app.pool, "SELECT count(*) FROM runs")[0][0] == 2
+    assert active_run(run_app.pool, third) is None
+
+
+def test_the_cap_of_1_is_one_for_the_whole_app(run_app):
+    create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL, max_active=1)
+    with pytest.raises(AppBusy):
+        create_run(run_app.pool, _user(run_app.pool, "b@example.com"), QUESTION, MODEL,
+                   max_active=1)
+
+
+def test_own_active_run_is_reported_before_the_cap(run_app):
+    rid = create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL, max_active=1)
     with pytest.raises(ActiveRunExists) as e:
-        create_run(run_app.pool, other, QUESTION, MODEL)
-    assert (e.value.run_id, e.value.own) == (rid, False)
+        create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL, max_active=1)
+    assert e.value.run_id == rid
+
+
+def test_many_clicks_at_once_never_pass_the_cap(run_app):
+    users = [_user(run_app.pool, f"u{i}@example.com") for i in range(6)]
+    results = []
+
+    def go(uid):
+        try:
+            create_run(run_app.pool, uid, QUESTION, MODEL, max_active=2)
+            results.append("ok")
+        except AppBusy:
+            results.append("busy")
+        except ActiveRunExists:
+            results.append("own")
+
+    threads = [threading.Thread(target=go, args=(u,)) for u in users * 2]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert results.count("ok") == 2
+    assert rows(run_app.pool, "SELECT count(*) FROM runs WHERE status IN ('queued', 'running')"
+                )[0][0] == 2
+
+
+def test_the_database_keeps_one_active_run_per_doctor(run_app):
+    """The per-doctor index backs the code's check up."""
+    create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
+    with pytest.raises(psycopg.errors.UniqueViolation) as e, run_app.pool.connection() as conn:
+        conn.execute("INSERT INTO runs (id, user_id, question, model) VALUES (%s, %s, %s, %s)",
+                     (uuid.uuid4(), run_app.owner_id, QUESTION, MODEL))
+    assert e.value.diag.constraint_name == "runs_one_active_per_user"
 
 
 def test_a_finished_run_frees_the_slot(run_app):
     run_app.start(script=[END, EMPTY])
-    assert active_run(run_app.pool) is None
+    assert active_run(run_app.pool, run_app.owner_id) is None
     create_run(run_app.pool, run_app.owner_id, QUESTION, MODEL)
 
 
@@ -259,25 +321,27 @@ def test_stop_unfinished_counts_queued_and_running(run_app):
     assert stop_unfinished(run_app.pool) == 1 and stop_unfinished(run_app.pool) == 0
 
 
-def test_start_up_logs_whether_a_key_is_set(db_url, caplog):
+def test_start_up_logs_own_keys_and_whether_the_secret_is_set(db_url, caplog):
+    """F7: no server key; the line says only that keys are the doctors' own and whether the
+    cookie secret is set (never its value)."""
+    secret = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
     caplog.set_level(logging.INFO)
     with TestClient(create_app(Settings(app_env="dev", database_url=db_url, owner_email=OWNER,
-                                        gemini_api_key="gk-q7"))) as c:
-        assert c.app.state.gemini_caller is not None
+                                        key_cookie_secret=secret))) as c:
+        assert c.app.state.key_secret == bytes(range(32))
     msgs = [r.getMessage() for r in caplog.records]
-    assert "gemini api_key=true model=gemini-3.5-flash-lite rpm=10 tpm=250000 rpd=500" in msgs
-    assert "gk-q7" not in caplog.text
+    assert ("gemini own_keys=true model=gemini-3.5-flash-lite rpm=10 tpm=250000 rpd=500 "
+            "max_active_runs=2") in msgs
+    assert "gemini key_cookie_secret=set" in msgs and secret not in caplog.text
     caplog.clear()
     with TestClient(create_app(Settings(app_env="dev", database_url=db_url,
                                         owner_email=OWNER))) as c:
-        assert c.app.state.gemini_caller is None
-    assert "gemini api_key=false model=gemini-3.5-flash-lite rpm=10 tpm=250000 rpd=500" in \
-        [r.getMessage() for r in caplog.records]
+        assert len(c.app.state.key_secret) == 32
+    assert "gemini key_cookie_secret=random" in [r.getMessage() for r in caplog.records]
 
 
 def test_app_runs_a_question_with_the_inline_starter(db_url, upstream):
-    settings = Settings(app_env="dev", database_url=db_url, owner_email=OWNER,
-                        gemini_api_key=FAKE_KEY)
+    settings = Settings(app_env="dev", database_url=db_url, owner_email=OWNER)
     g = RunGemini([END, EMPTY])  # F3c: the Introduction, on its own thread, by its route
     starter = InlineStarter()
     app = create_app(settings, lit_transport=upstream.transport, ncbi_gap_seconds=0,
@@ -288,8 +352,10 @@ def test_app_runs_a_question_with_the_inline_starter(db_url, upstream):
         with pool.connection() as conn:
             uid = conn.execute("SELECT id FROM users").fetchone()[0]
         rid = create_run(pool, uid, QUESTION, MODEL)
+        c.app.state.run_keys.put(rid, uid, SecretStr(FAKE_KEY))  # F7: as /ask hands it over
         c.app.state.run_starter.start(rid)
         v = get_run(pool, rid, uid)
+        assert c.app.state.run_keys.pending() == 0
     assert v.status == "done" and len(g.sent) == 2 and starter.started == [rid]
     assert g.sent[0].headers["x-goog-api-key"] == FAKE_KEY
     assert len(g.intro_sent) == 1 and v.intro is not None  # the real thread, joined
@@ -2188,7 +2254,7 @@ def test_a_failing_check_never_changes_the_run(run_app, monkeypatch, caplog, cas
     assert not any(m.startswith("run kind=internal") for m in msgs)
     assert "zq7" not in caplog.text and "Traceback" not in caplog.text
     # the next question is not held up
-    assert active_run(run_app.pool) is None
+    assert active_run(run_app.pool, run_app.owner_id) is None
 
 
 def test_run_check_never_raises_and_does_nothing_without_a_row(run_app, caplog):

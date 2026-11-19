@@ -56,7 +56,7 @@ def test_menu_on_signed_in_pages(env):
         assert r.status_code == 200, name
         links = nav_links(r.text)
         assert [(h, t) for h, _, t in links] == [("/", "Ask"), ("/library", "Library"),
-                                                 ("/activity", "Activity")], name
+                                                 ("/activity", "Activity"), ("/key", "Your key")], name
         assert current_of(r.text) == [current], name
         assert 'class="current"' in nav_of(r.text), name
         assert r.text.count("<nav") == 1 and "<script" not in without_theme_scripts(r.text), name
@@ -85,10 +85,11 @@ def test_menu_on_message_page_for_signed_in_user(env):
         r = env.c.get(path, headers=H)
         assert r.status_code == 404 and "That question wasn&#39;t found" in r.text
         assert [(h, t) for h, _, t in nav_links(r.text)] == [
-            ("/", "Ask"), ("/library", "Library"), ("/activity", "Activity")]
+            ("/", "Ask"), ("/library", "Library"), ("/activity", "Activity"),
+            ("/key", "Your key")]
         assert current_of(r.text) == [] and 'class="current"' not in r.text
     again = env.c.post(f"/runs/{uuid.uuid4()}/again", headers=H)
-    assert again.status_code == 404 and len(nav_links(again.text)) == 3
+    assert again.status_code == 404 and len(nav_links(again.text)) == 4
 
 
 # ---------- Library ----------

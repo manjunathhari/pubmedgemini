@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<div><p class="sai-label">Your Gemini key</p><h1>Run questions on your own free key</h1></div>
+{% if message %}
+<section class="card"><p><strong>{{ message }}</strong></p></section>
+{% endif %}
+{% if has_key %}
+<section class="card">
+<p class="saved">A key is saved in this browser (ends ••••{{ tail }}).</p>
+<p class="muted">Free runs left today on your key: about {{ runs_left }}</p>
+<form method="post" action="/key/remove"><p><button type="submit" class="quiet">Remove key from this browser</button></p></form>
+</section>
+<section class="card">
+<h2>Change key</h2>
+<form method="post" action="/key">
+<p><label for="key">New key</label></p>
+<p><input id="key" name="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="Paste your new key here" required>
+<button type="submit">Save new key</button></p>
+</form>
+</section>
+{% else %}
+<section class="card">
+<p class="saved">No key saved in this browser yet.</p>
+<h2>Get a free key (2 minutes)</h2>
+<ol class="key-steps">
+<li>Open <a href="https://aistudio.google.com/apikey" rel="noopener noreferrer">Google AI Studio, API keys</a> and sign in with any Google account.</li>
+<li>Press <b>Create API key</b>. Make it in a project with <b>billing turned off</b>: Google refuses free use on a project with billing on.</li>
+<li>Copy the key and paste it below.</li>
+</ol>
+</section>
+<section class="card">
+<form method="post" action="/key">
+<p><label for="key">Your Gemini key</label></p>
+<p><input id="key" name="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="Paste your key here" required>
+<button type="submit">Save key</button></p>
+</form>
+<p class="muted">We check the key with one tiny call to Google before saving it.</p>
+</section>
+{% endif %}
+<section class="card">
+<h2>Where your key is kept</h2>
+<p>Only in this browser, encrypted, and only for your Google sign-in. It stays until you remove it. Our server uses it while your question runs and never saves it.</p>
+<p class="muted">On a new phone or another browser, paste it once more. Clearing this browser's data also removes it.</p>
+</section>
+<p class="sai-note"><span>On Google's free tier, Google may use what is sent to improve its products, and its reviewers may read it. Do not type anything that identifies a patient. <a href="https://ai.google.dev/gemini-api/terms" rel="noopener noreferrer">Google's Gemini API terms</a></span></p>
+{% endblock %}

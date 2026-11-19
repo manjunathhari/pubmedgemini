@@ -2,6 +2,18 @@
 
 Live: F0, F1, F2, the look, Library and Activity (merged and deployed on 10 and 11 Nov 2026), F3a (the writer) and F3b (the answer page). F3c (the Introduction and the early summary) is live too (merged 12 Nov). Entries start with the first merge to `main` that changes the running app.
 
+## F7a: each doctor's own Gemini key (branch `f7a-own-keys`, not merged yet)
+
+- There is no Gemini key on the server any more. Each doctor pastes their own free key once on a new page, **Your key** (fourth tab, after Activity). The key is kept only in their browser, encrypted, and only for their Google sign-in; it stays until they remove it. The server uses it while their question runs and never writes it to the database, a log or a file.
+- Saving a key makes one tiny call to Google on that key. A key Google refuses, or one from a project with billing on, is not saved and the page says what to do. A key that has used today's free limit is saved, with the time it works again.
+- Without a key, the home page shows "To ask questions, add your own free Gemini key." with an **Add your free key** button. Key-word search works as before.
+- Each doctor has their own "Free runs left today" (counted on their own key), and can run one question at a time. Up to 2 questions run at once for the whole app (`MAX_ACTIVE_RUNS`); a third doctor sees "PubMed Ai is busy with other questions. Try again in a minute." with their question kept in the box.
+- If Google refuses a doctor's key during a run, the run page says so and links to Your key.
+- Sign-in is unchanged in F7a: still only the approved list. Opening it to every Google account is F7b, a separate change.
+- **Before the merge:** add `KEY_COOKIE_SECRET` to the server's `.env` (infra/README.md, "Each doctor's own Gemini key"). Without it the deploy stops before anything changes. After the deploy, remove the old `GEMINI_API_KEY` line and paste your own key on Your key.
+- Never logged: a key or any part of it. Log lines say only `key kind=saved check=ok`, `key kind=not_saved check=<kind>` or `key kind=removed`.
+- New table column and index (migration 0008), added at start-up.
+
 ## F4a: the completeness check (merged to `main` on the owner's word, 13 Nov 2026)
 
 - A finished answer now ends with one small box, the last on the page: "Completeness check", then Pending › Running › Done, and at Done one line such as "16 of 16 numbers found · 4 of 4 trial names match". The check runs after the answer is stored and shown, so reading is never held up. It takes a blink, so the page will nearly always show Done at once.

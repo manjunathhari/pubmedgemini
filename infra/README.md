@@ -428,102 +428,83 @@ docker compose ps
 
 To remove the key, delete the two lines (step 2 first) and run step 5 again.
 
-## The Gemini key (for questions)
+## Each doctor's own Gemini key (F7)
 
-Without this key the app works as before: the key-word search works and the
-question box says "Questions are not set up yet: the Gemini key is missing on
-the server." With the key, "Ask a question" works.
+Since F7 there is **no Gemini key on the server**. Each doctor pastes their own
+free key on the app's "Your key" page; it is kept only in their browser,
+sealed with `KEY_COOKIE_SECRET`, and used only while their question runs. The
+server never writes a doctor's key anywhere.
 
-The key is typed only into the VPS's web console, with typing hidden. It never
-appears on screen, in the shell history, in this repo or in chat. The checks
-below say only whether it is there, never what it is. The app's logs only ever
-say `gemini api_key=true` or `false`.
+### Before you say "merge it" for F7 (one time)
 
-1. In Google AI Studio, make an API key **in a Google project that has billing
-turned off**. Google refuses a key from a project linked to billing (it
-answers "prepayment credits are depleted"; seen on 10 Nov 2026), and the run
-page then says "Google refused the Gemini key because its Google project is
-linked to billing." Keep the key in AI Studio's window for step 4; do not paste
-it anywhere else.
+The deploy stops, before anything changes, if `KEY_COOKIE_SECRET` is missing
+from `.env`. So add it first.
 
-2. Open the VPS's web console and go to the folder:
+1. Open the VPS's web console and go to the folder:
 
 ```
 cd /opt/pubmedgemini
 ```
 
-3. Check for `.env.previous` exactly as in step 2 of "Rollback" below, and
+2. Check for `.env.previous` exactly as in step 2 of "Rollback" below, and
 remove it if it is there:
 
 ```
 ls -l .env.previous
 ```
 
-4. Type this, press Enter, paste the key, press Enter. Nothing is shown while
-you paste; that is on purpose:
+3. Add a new random secret (it is never shown):
 
 ```
-read -rs k
+echo "KEY_COOKIE_SECRET=$(openssl rand -base64 32)" >> .env
 ```
 
-5. Add it to `.env` and forget it in the shell:
+4. Counting check. It must print `1`:
 
 ```
-printf '\nGEMINI_API_KEY=%s\n' "$k" >> .env && unset k
+grep -c '^KEY_COOKIE_SECRET=' .env
 ```
 
-6. Counting check. It must print `1`:
+If it prints `2` or more, open `nano .env`, delete every `KEY_COOKIE_SECRET=`
+line but the last, save, and run this step again.
+
+Keep this secret as it is from now on. If it is ever changed or lost, every
+doctor's saved key stops working and each one pastes their key again (nothing
+else is lost).
+
+### After the F7 deploy
+
+5. Remove your old server key; the app no longer reads it:
 
 ```
-grep -c '^GEMINI_API_KEY=' .env
+cd /opt/pubmedgemini && sed -i '/^GEMINI_API_KEY=/d' .env
 ```
 
-If it prints `2` or more, an older line is there too: open `nano .env`, delete
-every `GEMINI_API_KEY=` line but the last, save, and run this step again.
-
-7. Set or empty check. It must print `set` (it never prints the key):
+6. Check the app started with doctors' own keys. Each must print `1` or more:
 
 ```
-grep -q '^GEMINI_API_KEY=.' .env && echo set || echo EMPTY
+docker compose logs app | grep -c 'gemini own_keys=true'
+docker compose logs app | grep -c 'gemini key_cookie_secret=set'
 ```
 
-If it prints `EMPTY`, the paste in step 4 was empty: run step 3, then
-`sed -i '/^GEMINI_API_KEY=/d' .env`, then steps 4 to 7 again.
+If the second prints `0`, the secret did not reach the app: check step 4.
 
-8. Restart the app so it reads the key. This restarts only `app` (the database
-and the gate keep running) on the image `.env` already names:
+7. Open `https://<APP_HOST>`, tap **Your key**, paste your own key from
+Google AI Studio (made in a project with **billing turned off**) and tap
+**Save key**. The page says "Key saved in this browser." Then ask one
+question from the Ask page.
 
-```
-cd /opt/pubmedgemini && docker compose up -d app
-```
+### Settings you can change later
 
-9. Check that `app` says `healthy` (run it again after a few seconds if it says
-`starting`):
+Add a line the same way (step 2 first, then `nano .env`; these are not
+secrets), then restart the app with `docker compose up -d app` and check
+`docker compose ps` says `healthy`:
 
-```
-docker compose ps
-```
-
-10. Check the app saw a key. It must print `1`:
-
-```
-docker compose logs app | grep -c 'gemini api_key=true'
-```
-
-11. Open `https://<APP_HOST>`. The home page now shows "Ask a question" with a
-question box, "Free runs left today: about 21" and the line "Google may use
-what you type here, and its reviewers may read it (Gemini free tier). Do not
-type anything that identifies a patient." Below it, "Key-word search" works as
-before.
-
-To change the free limits later, add a line such as `GEMINI_RPD=400` the same
-way (step 3 first, then `nano .env`; no `read -rs` needed, these are not
-secrets) and run steps 8 and 9 again. The names are `GEMINI_RPM` (requests a
-minute, default 10), `GEMINI_TPM` (tokens a minute, default 250000) and
-`GEMINI_RPD` (requests a day, default 500).
-
-To remove the key: step 3, then `sed -i '/^GEMINI_API_KEY=/d' .env`, then steps
-8 and 9. The question box then shows "Questions are not set up yet".
+- `MAX_ACTIVE_RUNS`: questions running at once for the whole app (default 2,
+  from 1 to 10). A doctor who asks when it is full sees "PubMed Ai is busy
+  with other questions. Try again in a minute."
+- `GEMINI_RPM`, `GEMINI_TPM`, `GEMINI_RPD`: each doctor's free limits a
+  minute and a day (defaults 10, 250000 and 500).
 
 ## Rollback (go back to the previous version)
 

@@ -109,14 +109,16 @@ _RESET_SQL = (
 
 
 def record_attempt(
-    pool: ConnectionPool, *, model: str, run_id: UUID | None, step: str, attempt: int
+    pool: ConnectionPool, *, model: str, run_id: UUID | None, step: str, attempt: int,
+    user_id: int | None = None,
 ) -> int:
-    """Inserts a `sent` row before the request goes out; returns its id."""
+    """Inserts a `sent` row before the request goes out; returns its id. F7: `user_id` is the
+    doctor whose key the attempt uses (each key has its own free day)."""
     with pool.connection() as conn:
         row = conn.execute(
-            "INSERT INTO model_calls (model, run_id, step, attempt, status_kind)"
-            " VALUES (%s, %s, %s, %s, 'sent') RETURNING id",
-            (model, run_id, step, attempt),
+            "INSERT INTO model_calls (model, run_id, step, attempt, status_kind, user_id)"
+            " VALUES (%s, %s, %s, %s, 'sent', %s) RETURNING id",
+            (model, run_id, step, attempt, user_id),
         ).fetchone()
     return int(row[0])
 
@@ -146,13 +148,17 @@ def finish_attempt(
         )
 
 
-def calls_today(pool: ConnectionPool, model: str) -> int:
+def calls_today(pool: ConnectionPool, model: str, user_id: int | None = None) -> int:
     """Attempts on the current Pacific day for `model`, every status (429s included: whether
-    Google counts refused requests is not known)."""
+    Google counts refused requests is not known). F7: with `user_id`, that doctor's attempts
+    only (their own key's day); without it, every attempt (the whole app's)."""
+    where = "" if user_id is None else " AND user_id = %s"
+    params = (model,) if user_id is None else (model, user_id)
     with pool.connection() as conn:
         row = conn.execute(
-            f"SELECT count(*) FROM model_calls WHERE model = %s AND quota_day = {_PACIFIC_DAY}",
-            (model,),
+            f"SELECT count(*) FROM model_calls WHERE model = %s AND quota_day = {_PACIFIC_DAY}"
+            + where,
+            params,
         ).fetchone()
     return int(row[0])
 
@@ -171,9 +177,42 @@ def runs_left_for(rpd: int, used: int) -> int:
     return 1 + (room - RUN_ATTEMPTS) // RUN_CALLS
 
 
-def runs_left(pool: ConnectionPool, model: str, rpd: int) -> int:
-    """`runs_left_for` with today's count for `model`."""
-    return runs_left_for(rpd, calls_today(pool, model))
+def runs_left(pool: ConnectionPool, model: str, rpd: int, user_id: int | None = None) -> int:
+    """`runs_left_for` with today's count for `model` (F7: on `user_id`'s own key)."""
+    return runs_left_for(rpd, calls_today(pool, model, user_id))
+
+
+class PacerBook:
+    """F7: one GeminiPacer per doctor, since each key has its own per-minute limits. A pacer
+    not used for `idle_seconds` is dropped, so the book does not grow with every doctor."""
+
+    def __init__(
+        self,
+        rpm: int,
+        tpm: int,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+        idle_seconds: float = 600.0,
+    ) -> None:
+        self._rpm, self._tpm, self._sleep, self._clock = rpm, tpm, sleep, clock
+        self._idle = idle_seconds
+        self._lock = threading.Lock()
+        self._book: dict[int, tuple[GeminiPacer, float]] = {}
+
+    def get(self, user_id: int) -> GeminiPacer:
+        with self._lock:
+            now = self._clock()
+            for uid in [u for u, (_, t) in self._book.items() if now - t > self._idle]:
+                del self._book[uid]
+            pacer = self._book.get(user_id, (None, 0.0))[0]
+            if pacer is None:
+                pacer = GeminiPacer(self._rpm, self._tpm, clock=self._clock, sleep=self._sleep)
+            self._book[user_id] = (pacer, now)
+            return pacer
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._book)
 
 
 def reset_time_ist(pool: ConnectionPool) -> str:

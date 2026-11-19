@@ -4,6 +4,8 @@ from contextlib import contextmanager
 import httpx
 import pytest
 
+from pubmedgemini.keycookie import COOKIE_NAME, seal
+
 
 def test_no_email_in_logs(client_prod, caplog):
     caplog.set_level(logging.DEBUG)
@@ -249,7 +251,7 @@ ASK_LINE_PATTERNS = {
                            r"(?: [a-z_]+=[0-9]+)*",
     "started": rf"ask kind=started run_id={UUID}",
     "rejected": r"ask kind=rejected reason=(?:empty|too_long)",
-    "refused": r"ask kind=refused reason=(?:no_key|active|daily_limit)",
+    "refused": r"ask kind=refused reason=(?:no_key|active|busy|daily_limit)",
     "refused_cross_site": r"ask kind=refused_cross_site",
     "start_failed": r"ask kind=start_failed error=[A-Za-z_]+",
 }
@@ -360,7 +362,9 @@ WRITER_LINE_PATTERNS = [
 APP_LINE_PATTERNS = [
     *ASK_LINE_PATTERNS.values(),
     r"literature ncbi_api_key=(?:true|false)",
-    r"gemini api_key=(?:true|false) model=[a-z0-9.-]+ rpm=\d+ tpm=\d+ rpd=\d+",
+    (r"gemini own_keys=true model=[a-z0-9.-]+ rpm=\d+ tpm=\d+ rpd=\d+ "
+     r"max_active_runs=\d+"),
+    r"gemini key_cookie_secret=(?:set|random)",
     r"paper_cache pruned=\d+",
     r"paper_cache kind=prune_failed error=\w+ sqlstate=\w+",
     r"runs stopped_at_start=\d+",
@@ -417,6 +421,9 @@ APP_LINE_PATTERNS = [
 # What must never reach a log line: the question (zq7 and its words), the model's note (yq8),
 # its queries (xq9, and the refused vq3), the why (wq6), a reason (vq5), a contradiction note
 # (uq4), the searches the model reported (tq2), Google's error message (gm-q7), the Gemini key
+# F7: the doctor's own key is key-shaped (keycookie.KEY_PATTERN) and carries the gk-q7 marker.
+LEAK_KEY = "gk-q7-own-doctor-key-0000"
+LEAK_SECRET_B64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="  # bytes(range(32))
 # (gk-q7), the NCBI key and email (nk-q7, nq7), tool results (fixture titles and abstracts,
 # the source wrapper, tool error texts) and any URL or host.
 LEAKS = ("zq7", "recurrence", "inguinal", "yq8", "xq9", "vq3", "wq6", "vq5", "uq4", "tq2", "mq2",
@@ -455,7 +462,7 @@ def test_nothing_secret_or_private_is_logged_in_a_full_run(db_url, caplog, app_d
     from test_ask_page import H, ask_env
 
     caplog.set_level(logging.DEBUG)  # root: every logger that propagates
-    with ask_env(db_url, None, leak_script(), key="gk-q7", ncbi_api_key="nk-q7",
+    with ask_env(db_url, None, leak_script(), key=LEAK_KEY, ncbi_api_key="nk-q7",
                  ncbi_email="nq7@example.org", parts=leak_parts()) as env:
         app_debug()
         r = env.ask(LEAK_QUESTION)
@@ -493,7 +500,8 @@ def test_nothing_secret_or_private_is_logged_in_a_full_run(db_url, caplog, app_d
     assert any(re.fullmatch(r"writer part=outcomes attempt=first result=ok kind=none "
                             r"output_tokens=\d+", m) for m in msgs)
     assert any(m.startswith("run kind=answer run_id=") and " written=true " in m for m in msgs)
-    assert "gemini api_key=true model=gemini-3.5-flash-lite rpm=1000 tpm=250000 rpd=500" in msgs
+    assert ("gemini own_keys=true model=gemini-3.5-flash-lite rpm=1000 tpm=250000 rpd=500 "
+            "max_active_runs=2") in msgs
     kinds = [m.split()[1] for m in msgs if m.startswith("ask ")]
     assert kinds == ["kind=started", "kind=rejected", "kind=rejected",
                      "kind=blocked_identifiers", "kind=refused_cross_site"]
@@ -506,7 +514,7 @@ def test_failed_run_logs_kinds_only(db_url, caplog, app_debug):
 
     caplog.set_level(logging.DEBUG)
     script = [error(402, "X", message="gm-q7 secret text prepayment credits are depleted")]
-    with ask_env(db_url, None, script, key="gk-q7") as env:
+    with ask_env(db_url, None, script, key=LEAK_KEY) as env:
         app_debug()
         r = env.ask(LEAK_QUESTION)
         page = env.run_page(r.headers["location"]).text
@@ -616,7 +624,7 @@ def _run_question_under_uvicorn(db_url: str, mode: str) -> tuple[str, str, str]:
         "APP_ENV": "dev",
         "DATABASE_URL": db_url,
         "OWNER_EMAIL": "owner@example.com",
-        "GEMINI_API_KEY": "gk-q7",
+        "KEY_COOKIE_SECRET": LEAK_SECRET_B64,
         "GEMINI_RPM": "1000",
         "NCBI_API_KEY": "nk-q7",
         "NCBI_EMAIL": "nq7@example.org",
@@ -630,6 +638,8 @@ def _run_question_under_uvicorn(db_url: str, mode: str) -> tuple[str, str, str]:
     )
     base = f"http://127.0.0.1:{port}"
     h = {"x-dev-user-email": "owner@example.com"}
+    # F7: the doctor's own key, in their sealed cookie (no key on the server).
+    cookies = {COOKIE_NAME: seal(LEAK_KEY, "owner@example.com", bytes(range(32)))}
     try:
         deadline = time.monotonic() + 30
         while True:
@@ -641,7 +651,8 @@ def _run_question_under_uvicorn(db_url: str, mode: str) -> tuple[str, str, str]:
                     raise
                 time.sleep(0.2)
         assert health.status_code == 200
-        r = httpx.post(f"{base}/ask", data={"question": LEAK_QUESTION}, headers=h, timeout=30)
+        r = httpx.post(f"{base}/ask", data={"question": LEAK_QUESTION}, headers=h, timeout=30,
+                       cookies=cookies)
         assert r.status_code == 303, r.status_code
         page_url = base + r.headers["location"]
         deadline = time.monotonic() + 30
@@ -1081,7 +1092,7 @@ def ask_env_marked(db_url, parts, one_piece=(), script=None):
     from test_ask_page import ask_env
 
     with ask_env(db_url, marked_upstream(), leak_script() if script is None else script,
-                 key="gk-q7", parts=parts, one_piece=one_piece) as env:
+                 key=LEAK_KEY, parts=parts, one_piece=one_piece) as env:
         yield env
 
 
@@ -1221,7 +1232,7 @@ def check_env(db_url):
 
     # the year PubMed's record gives the first selected study (its `pubdate` starts with it)
     year = int(json.loads(fixture("esummary.json"))["result"][LEAK_ID2]["pubdate"][:4])
-    with ask_env(db_url, check_upstream(), leak_script(), key="gk-q7",
+    with ask_env(db_url, check_upstream(), leak_script(), key=LEAK_KEY,
                  parts=check_parts(year)) as env:
         yield env
 

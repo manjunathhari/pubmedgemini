@@ -104,7 +104,7 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 {% if outcome or run.status in ("stopped", "failed", "partial") %}
 <section class="card">
 {% if outcome %}
-<p><strong>{{ outcome }}</strong></p>
+<p><strong>{{ outcome }}{% if outcome_key_link %} <a href="/key">Your key</a> page.{% endif %}</strong></p>
 {% endif %}
 {% if run.status in ("stopped", "failed", "partial") %}
 <form method="post" action="/runs/{{ run.id }}/again">
@@ -371,7 +371,7 @@ Fixed words and counts only; nothing of the answer is printed here. -#}
 {% if outcome or run.status in ("stopped", "failed", "partial") %}
 <section class="card">
 {% if outcome %}
-<p><strong>{{ outcome }}</strong></p>
+<p><strong>{{ outcome }}{% if outcome_key_link %} <a href="/key">Your key</a> page.{% endif %}</strong></p>
 {% endif %}
 {% if run.status in ("stopped", "failed", "partial") %}
 <form method="post" action="/runs/{{ run.id }}/again">

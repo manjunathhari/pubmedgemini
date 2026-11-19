@@ -1,6 +1,9 @@
 <section class="card">
 {% if not ask_enabled %}
-<p>Questions are not set up yet: the Gemini key is missing on the server.</p>
+<h2>Ask a question</h2>
+<p>To ask questions, add your own free Gemini key. It takes about 2 minutes and costs nothing.</p>
+<form method="get" action="/key"><p><button type="submit">Add your free key</button></p></form>
+<p class="sai-runs">Key-word search works without a key.</p>
 {% else %}
 {% if ask_message %}
 <p><strong>{{ ask_message }}</strong></p>

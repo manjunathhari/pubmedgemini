@@ -209,3 +209,35 @@ def test_reset_time_is_the_next_pacific_midnight_in_ist(migrated_pool):
         winter = conn.execute(_RESET_SQL.replace("now()", "timestamptz '2026-11-11 07:59+00'"))
         summer = conn.execute(_RESET_SQL.replace("now()", "timestamptz '2026-07-01 12:00+00'"))
         assert (winter.fetchone()[0], summer.fetchone()[0]) == ("13:30", "12:30")
+
+
+# ---------- F7: one pacer per doctor ----------
+
+def test_pacer_book_gives_each_doctor_their_own_pacer():
+    from pubmedgemini.gemini.quota import PacerBook
+
+    book = PacerBook(10, 250_000, clock=lambda: 0.0)
+    a1, a2, b = book.get(1), book.get(1), book.get(2)
+    assert a1 is a2 and a1 is not b and len(book) == 2
+
+
+def test_pacer_book_drops_pacers_left_unused():
+    from pubmedgemini.gemini.quota import PacerBook
+
+    now = [0.0]
+    book = PacerBook(10, 250_000, clock=lambda: now[0], idle_seconds=600)
+    first = book.get(1)
+    book.get(2)
+    now[0] = 601.0
+    assert book.get(1) is not first and len(book) == 1  # both aged out; 1 made afresh
+
+
+def test_calls_today_per_doctor(migrated_pool):
+    with migrated_pool.connection() as conn:
+        a = conn.execute("INSERT INTO users (email, role) VALUES ('a@example.com', 'user')"
+                         " RETURNING id").fetchone()[0]
+        conn.execute("INSERT INTO model_calls (model, step, attempt, status_kind, user_id)"
+                     " SELECT 'm', 'researcher', 1, 'ok', %s FROM generate_series(1, 7)", (a,))
+    add_calls(migrated_pool, "m", 3)  # no user: older rows
+    assert calls_today(migrated_pool, "m", a) == 7
+    assert calls_today(migrated_pool, "m") == 10
