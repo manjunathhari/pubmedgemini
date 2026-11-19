@@ -96,7 +96,7 @@ def test_whitespace_around_a_pasted_key_is_trimmed(https_env):
 
 
 @pytest.mark.parametrize("bad", ["", "   ", "short", "not a key at all with spaces 12345",
-                                 "x" * 200])
+                                 "x" * 201])
 def test_something_not_key_shaped_is_refused_without_a_call(https_env, bad):
     r = save(https_env, key=bad)
     assert r.status_code == 400 and NOT_KEY in r.text

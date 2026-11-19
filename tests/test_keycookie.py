@@ -74,10 +74,19 @@ def test_opened_key_does_not_show_in_repr():
 @pytest.mark.parametrize("raw,expected", [
     (KEY, KEY), (f"  {KEY}\n", KEY), (f"\t{KEY} \r\n", KEY),
     ("short", None), ("", None), ("   ", None), ("has space inside 0123456789xx", None),
-    ("a" * 101, None), ("key/with/slash/0123456789", None), ("é" * 30, None),
+    ("a" * 201, None), ("key/with/slash/0123456789", None), ("é" * 30, None),
+    # Google's newer key style (owner's live key, 19 Nov 2026): starts "AQ." and has dots.
+    ("AQ.Ab8RN6ExampleNotReal-0123456789_abcdefghij", "AQ.Ab8RN6ExampleNotReal-0123456789_abcdefghij"),
+    ("  AQ.Ab8RN6ExampleNotReal.0123456789\n", "AQ.Ab8RN6ExampleNotReal.0123456789"),
+    ("AQ.has space 0123456789012345", None), ("AQ.semi;colon0123456789012345", None),
 ])
 def test_normalise_key(raw, expected):
     assert normalise_key(raw) == expected
+
+
+def test_a_newer_style_key_round_trips():
+    new = "AQ.Ab8RN6ExampleNotReal-0123456789_abcdefghij"
+    assert open_(seal(new, EMAIL, SECRET), EMAIL, SECRET).get_secret_value() == new
 
 
 def test_key_tail_is_last_four():
