@@ -349,13 +349,18 @@ def test_no_script_tags_but_the_switch(pages):
         assert "<script" not in bare, name
         assert not re.search(r"<[^>]*\son[a-z]+\s*=", text), name  # no inline event attributes
         assert "javascript:" not in bare, name
-    # the templates hold exactly the two scripts, both in base.html, neither loads a file
+    # the templates hold exactly the two scripts, both in base.html, neither loads a file;
+    # plus, since the key walkthrough (frozen mock v2, owner, 19 Nov 2026), one small script on
+    # the key page only: the Paste button and the "Checking" card. It loads no file either.
     templates = ROOT / "src" / "pubmedgemini" / "templates"
     for f in templates.glob("*.html"):
         text = f.read_text(encoding="utf-8")
         if f.name == "base.html":
             assert re.findall(r"<script\b[^>]*>", text) == ["<script>", "<script>"]
             assert text.count(HEAD_SCRIPT) == 1 and "src=" not in text
+        elif f.name == "key.html":
+            assert re.findall(r"<script\b[^>]*>", text) == ["<script>"]
+            assert "src=" not in text.split("<script>", 1)[1] and "fetch(" not in text
         else:
             assert "<script" not in text.lower(), f.name
 
