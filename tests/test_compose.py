@@ -42,7 +42,7 @@ GATE_FLAGS = [
     "--provider",
     "--upstream",
     "--http-address",
-    "--authenticated-emails-file",
+    "--email-domain",
     "--pass-user-headers",
     "--cookie-secure",
     "--cookie-samesite",
@@ -75,10 +75,17 @@ def test_gate_uses_our_pages_read_only_and_the_account_chooser():
     gate = _gate()
     assert "--custom-templates-dir=/etc/gate/templates" in gate["command"]
     assert "--prompt=select_account" in gate["command"]
-    assert gate["volumes"] == [
-        "./gate/emails.txt:/etc/gate/emails.txt:ro",
-        "./gate/templates:/etc/gate/templates:ro",
-    ]
+    assert gate["volumes"] == ["./gate/templates:/etc/gate/templates:ro"]
+
+
+def test_gate_admits_every_google_account():
+    """F7b (owner decision 2A, 18 Nov 2026): no approved list. oauth2-proxy v7.15.6:
+    `--email-domain=*` allows every address (validator.go, allowAll), and the Google provider
+    refuses an address Google has not verified (providers/google.go, ErrEmailNotVerified)."""
+    command = _gate()["command"]
+    assert "--email-domain=*" in command
+    assert not any("authenticated-emails-file" in arg for arg in command)
+    assert not any("emails.txt" in v for v in _gate()["volumes"])
 
 
 def test_gate_cookie_is_samesite_lax():

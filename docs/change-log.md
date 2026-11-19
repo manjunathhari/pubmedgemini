@@ -2,7 +2,12 @@
 
 Live: F0, F1, F2, the look, Library and Activity (merged and deployed on 10 and 11 Nov 2026), F3a (the writer) and F3b (the answer page). F3c (the Introduction and the early summary) is live too (merged 12 Nov). Entries start with the first merge to `main` that changes the running app.
 
-## F7a: each doctor's own Gemini key (branch `f7a-own-keys`, not merged yet)
+## F7b: sign-in open to every Google account
+
+- The gate no longer reads an approved list: any Google account whose address Google has verified may sign in. On a first visit the app makes the doctor's row (role `user`). Everything else is as in F7a: each doctor uses their own key.
+- One step in Google Cloud Console: the sign-in screen's publishing status must be **In production** (infra/README.md, step 8 of "Each doctor's own Gemini key").
+
+## F7a: each doctor's own Gemini key (merged and deployed 19 Nov 2026)
 
 - There is no Gemini key on the server any more. Each doctor pastes their own free key once on a new page, **Your key** (fourth tab, after Activity). The key is kept only in their browser, encrypted, and only for their Google sign-in; it stays until they remove it. The server uses it while their question runs and never writes it to the database, a log or a file.
 - Saving a key makes one tiny call to Google on that key. A key Google refuses, or one from a project with billing on, is not saved and the page says what to do. A key that has used today's free limit is saved, with the time it works again.

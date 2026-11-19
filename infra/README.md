@@ -86,7 +86,7 @@ docker network create pubmedgemini-edge
 docker network inspect pubmedgemini-edge --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'
 ```
 
-### Step 3. Make the folder, the allow list and `.env`
+### Step 3. Make the folder and `.env`
 
 On the VPS, one command per line below.
 
@@ -96,11 +96,9 @@ On the VPS, one command per line below.
 mkdir -p /opt/pubmedgemini/gate
 ```
 
-3b. Add each Google address that may sign in (run once per address):
-
-```
-echo 'owner@example.com' >> /opt/pubmedgemini/gate/emails.txt
-```
+3b. (Before F7b only.) There is no approved list any more: since F7b every
+Google account Google has verified may sign in. An old `gate/emails.txt` is not
+read and can stay.
 
 3c. Make `.env` private from the start:
 
@@ -493,6 +491,17 @@ If the second prints `0`, the secret did not reach the app: check step 4.
 Google AI Studio (made in a project with **billing turned off**) and tap
 **Save key**. The page says "Key saved in this browser." Then ask one
 question from the Ask page.
+
+### Opening sign-in to everyone (F7b), one time
+
+8. In Google Cloud Console, open the project whose sign-in client the gate uses
+(Incisive), then **Google Auth Platform**, then **Audience**. If **Publishing
+status** says **Testing**, press **Publish app** and confirm. In Testing, only
+the listed test users can sign in. The app asks Google only for the email
+address and basic profile.
+
+9. After the F7b deploy, open the site in a private window and sign in with a
+Google account that was never on the old list. It must reach the home page.
 
 ### Settings you can change later
 

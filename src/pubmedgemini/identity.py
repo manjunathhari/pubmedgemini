@@ -65,5 +65,20 @@ def current_user(request: Request) -> User:
         raise NotSignedIn
     user = find_user(request.app.state.pool, email)
     if user is None:
+        # F7b: the gate admits every verified Google account; a first visit makes the row.
+        user = add_user(request.app.state.pool, email)
+    return user
+
+
+def add_user(pool: ConnectionPool, email: str) -> User:
+    """The row for `email`, made with role 'user' if there is none (F7b). Two first requests
+    at once make one row."""
+    with pool.connection(timeout=QUICK_CHECK_TIMEOUT_SECONDS) as conn:
+        conn.execute(
+            "INSERT INTO users (email, role) VALUES (%s, 'user') ON CONFLICT (email) DO NOTHING",
+            (normalise_email(email),),
+        )
+    user = find_user(pool, email)
+    if user is None:  # deleted between the two statements: treat as not set up
         raise NotSetUp
     return user
