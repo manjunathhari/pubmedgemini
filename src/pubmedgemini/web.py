@@ -213,6 +213,28 @@ def is_cross_site(headers: Mapping[str, str]) -> bool:
     return _host_key(origin_host) != _host_key(own)
 
 
+_HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+
+
+def home_url_for(headers: Any) -> str | None:
+    """The SurgeryAi home page: this app's own host (X-Forwarded-Host, else Host) without its
+    first label, over https, e.g. pubmedai.<site> → https://<site>/ (owner, 20 Nov 2026). The
+    public repo holds no domain. None when there is no parent site: localhost, an IP, a name
+    with fewer than three labels, or anything that is not a plain host name."""
+    own = ((headers.get("x-forwarded-host") or "").split(",")[0]
+           or headers.get("host") or "").strip().lower()
+    host = own.rsplit(":", 1)[0] if own.count(":") == 1 else own
+    labels = host.split(".")
+    if len(labels) < 3 or not all(_HOST_LABEL.fullmatch(x) for x in labels):
+        return None
+    if labels[-1].isdigit():  # an IPv4 address
+        return None
+    return "https://" + ".".join(labels[1:]) + "/"
+
+
+templates.env.globals["home_url_for"] = home_url_for
+
+
 def _refuse_cross_site(request: Request, area: str) -> None:
     if is_cross_site(request.headers):
         log.info("%s kind=refused_cross_site", area)  # a fixed word; no header values

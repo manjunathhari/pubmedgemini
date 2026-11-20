@@ -12,6 +12,8 @@
 <link rel="apple-touch-icon" href="/static/icons/sai-badge-day-180.png">
 </head>
 <body>
+{% set home_url = home_url_for(request.headers) %}
+{% if home_url %}<div class="home-bar"><a href="{{ home_url }}">&larr; SurgeryAi home</a></div>{% endif %}
 <header class="site-header"><div class="site-header-inner">
 <a class="sai-brand" href="/" aria-label="PubMed Ai home">
 <span class="sai-badge" aria-hidden="true"><span class="sai-badge-in"><span class="sai-s">S</span>Ai</span></span>

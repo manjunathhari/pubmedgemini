@@ -575,6 +575,11 @@ main.home > .qc-row { max-width: none; }
   main.home:has(> .qc-row) > .sai-pair > section { margin-bottom: 16px; }
 }
 
+/* the way back to SurgeryAi: a slim line above the header (frozen mock v1, owner, 20 Nov 2026) */
+.home-bar { max-width: 72rem; margin: 0 auto; padding: 8px 16px 0; font-family: "Hanken Grotesk", system-ui, sans-serif; font-size: 13px; }
+.home-bar a { color: var(--muted); text-decoration: none; }
+.home-bar a:hover { color: var(--ink); }
+@media (min-width: 900px) { .home-bar { max-width: 1440px; padding: 10px 64px 0; } }
 /* ---- the completeness check (F4a): the .steps rules of docs/mocks/f4a-completeness-v3.html ---- */
 .steps{display:flex;flex-wrap:wrap;align-items:center;gap:3px;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:13px}
 .steps .name{font-weight:600;font-size:14px;margin-right:2px}
