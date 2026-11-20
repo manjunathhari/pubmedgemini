@@ -59,7 +59,10 @@ def test_menu_on_signed_in_pages(env):
                                                  ("/activity", "Activity"), ("/key", "Your key")], name
         assert current_of(r.text) == [current], name
         assert 'class="current"' in nav_of(r.text), name
-        assert r.text.count("<nav") == 1 and "<script" not in without_theme_scripts(r.text), name
+        assert r.text.count("<nav") == 1, name
+        # no page script, except the home page's question check (owner, 20 Nov 2026)
+        scripts = re.findall(r"<script\b[^>]*>", without_theme_scripts(r.text))
+        assert scripts == (["<script>"] if name == "home" else []), name
 
 
 def test_nav_is_inside_the_header(env):
