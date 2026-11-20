@@ -759,3 +759,21 @@ def test_search_box_and_button_line_up_with_the_ask_ones_on_desktop():
     assert "position: absolute" in _rule_body('.sai-pair p:has(> label[for="q"])', wide)
     assert "height: 116px" in _rule_body(".sai-pair textarea, .sai-pair input#q", wide)
     assert "margin-top: -10px" in _rule_body(".sai-pair .card > h2 + form", wide)
+
+
+BRAND_LINK = '<a class="sai-brand" href="/" aria-label="PubMed Ai home">'
+
+
+def test_the_brand_goes_home_from_every_page(pages):
+    """Owner (20 Nov 2026): tapping PubMed Ai in the header brings you to the home page."""
+    for name in ("home", "home_active", "results", "run", "run_done", "message"):
+        text = pages[name].text
+        assert text.count(BRAND_LINK) == 1, name
+        header = text.split("</header>", 1)[0]
+        assert '<div class="sai-brand">' not in header, name
+
+
+def test_the_brand_link_looks_as_before():
+    css = (STATIC / "app.css").read_text(encoding="utf-8")
+    assert re.search(r"a\.sai-brand\s*\{[^}]*text-decoration:\s*none", css)
+    assert re.search(r"a\.sai-brand\s*\{[^}]*color:\s*var\(--head-ink\)", css)
