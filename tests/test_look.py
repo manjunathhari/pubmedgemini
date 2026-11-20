@@ -9,7 +9,13 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
-from page_scripts import HEAD_LINKS, HEAD_SCRIPT, SWITCH_BUTTON, without_theme_scripts
+from page_scripts import (
+    CSS_VERSION,
+    HEAD_LINKS,
+    HEAD_SCRIPT,
+    SWITCH_BUTTON,
+    without_theme_scripts,
+)
 from test_ask_page import HAPPY_RUN, QUESTION, HoldStarter, ask_env
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -240,8 +246,15 @@ def pages(db_url, upstream):
 def test_base_links_stylesheet_and_has_no_inline_style(pages):
     for name in ("home", "results", "run", "run_done", "message"):
         text = pages[name].text
-        assert 'href="/static/app.css"' in text, name
+        assert f'href="/static/app.css?v={CSS_VERSION}"' in text, name
         assert "<style" not in text, name
+
+
+def test_the_css_address_changes_with_its_content():
+    from pubmedgemini.web import static_version
+
+    assert static_version(b"a { color: red; }") != static_version(b"a { color: blue; }")
+    assert re.fullmatch(r"[0-9a-f]{10}", static_version(b"x"))
 
 
 def test_static_css_is_served(pages):

@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 import time
@@ -59,6 +60,16 @@ from pubmedgemini.writer.answer import AnswerInvalid, read_body
 log = logging.getLogger("pubmedgemini.web")
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+def static_version(content: bytes) -> str:
+    """First 10 hex of SHA-256: the stylesheet's address changes whenever its content does, so
+    browsers never keep an old copy after a deploy (owner, 20 Nov 2026)."""
+    return hashlib.sha256(content).hexdigest()[:10]
+
+
+templates.env.globals["css_version"] = static_version(
+    (Path(__file__).parent / "static" / "app.css").read_bytes())
 
 
 def _pct(x: object) -> str:
