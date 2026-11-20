@@ -1,0 +1,51 @@
+/* F8: the answer PDF (frozen mock docs/mocks/f8-answer-pdf-v1.pdf). The SurgeryAi day colours and
+   the app's two fonts; A4. Read only by WeasyPrint on the server, never sent to a browser. */
+
+@font-face { font-family: "Hanken Grotesk"; src: url(fonts/hanken-grotesk-latin-wght-normal.woff2); font-weight: 100 900; }
+@font-face { font-family: "Source Serif 4"; src: url(fonts/source-serif-4-latin-wght-normal.woff2); font-weight: 200 900; }
+
+@page {
+  size: A4;
+  margin: 22mm 20mm;
+  @top-left { content: "PubMed Ai · Evidence summary"; font: 400 7.5pt "Hanken Grotesk"; color: #6E7884; }
+  @top-right { content: string(paperdate); font: 400 7.5pt "Hanken Grotesk"; color: #6E7884; }
+  @bottom-left { content: "Decision support from abstracts. The clinician decides."; font: 400 7.5pt "Hanken Grotesk"; color: #6E7884; }
+  @bottom-right { content: "Page " counter(page) " of " counter(pages); font: 400 7.5pt "Hanken Grotesk"; color: #6E7884; }
+}
+@page :first { @top-left { content: none; } @top-right { content: none; } }
+
+body { font: 400 10.5pt/1.5 "Source Serif 4", serif; color: #101A24; }
+h1, h2, h3, .kick, .by, .abs b, table, .tcap, .tnote, .cert, .end, svg { font-family: "Hanken Grotesk", sans-serif; }
+.kick { font-size: 8pt; letter-spacing: .08em; text-transform: uppercase; color: #1F6BD0; font-weight: 500; margin: 0 0 4pt; }
+h1 { font-size: 17pt; line-height: 1.25; font-weight: 500; margin: 0 0 6pt; }
+.by { font-size: 8.5pt; color: #5B6773; margin: 0 0 12pt; border-bottom: .6pt solid #E4DED0; padding-bottom: 8pt; }
+.date { string-set: paperdate content(); }
+.abs { background: #F7F4EC; border-left: 2pt solid #1F6BD0; padding: 8pt 11pt; margin: 0 0 14pt; font-size: 9.5pt; }
+.abs h2 { margin: 0 0 4pt; font-size: 10pt; }
+.abs p { margin: 0 0 4pt; }
+h2 { font-size: 12pt; font-weight: 500; margin: 16pt 0 4pt; color: #13263C; break-after: avoid; }
+h3 { font-size: 10pt; font-weight: 500; margin: 10pt 0 2pt; break-after: avoid; }
+p { margin: 0 0 6pt; text-align: justify; hyphens: auto; }
+b { font-weight: 600; }
+.cert { font-size: 7.5pt; border: .6pt solid #2C3E52; border-radius: 6pt; padding: 0 4pt; white-space: nowrap; }
+.why { color: #5B6773; font-size: 9pt; }
+.fig { break-inside: avoid; margin: 8pt 0; }
+table { width: 100%; border-collapse: collapse; font-size: 8pt; margin: 2pt 0 4pt; }
+thead { display: table-header-group; }
+tr { break-inside: avoid; }
+th { text-align: left; font-weight: 500; border-top: .9pt solid #101A24; border-bottom: .6pt solid #101A24; padding: 3pt 4pt; }
+td { padding: 3pt 4pt; border-bottom: .4pt solid #EEE8DC; vertical-align: top; }
+tbody tr:last-child td { border-bottom: .9pt solid #101A24; }
+tr.group td { font-weight: 500; color: #13263C; background: #F7F4EC; }
+td.n { white-space: nowrap; }
+.barcol { width: 225pt; padding: 3pt 0; }
+.src { color: #5B6773; font-size: 7pt; }
+.tcap { font-size: 8.5pt; margin: 10pt 0 2pt; break-after: avoid; }
+.tnote { font-size: 7.5pt; color: #5B6773; margin: 0 0 8pt; text-align: left; }
+ul { margin: 0 0 6pt; padding-left: 14pt; }
+ul.small { font-size: 8.5pt; }
+li { margin-bottom: 2pt; }
+ol.refs { font-size: 8.5pt; padding-left: 18pt; }
+ol.refs li { margin-bottom: 3pt; break-inside: avoid; }
+a { color: #1F6BD0; text-decoration: none; }
+.end { font-size: 7.5pt; color: #5B6773; border-top: .6pt solid #E4DED0; margin-top: 14pt; padding-top: 6pt; break-before: avoid; }

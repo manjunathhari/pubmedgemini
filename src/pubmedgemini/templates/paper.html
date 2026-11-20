@@ -1,0 +1,158 @@
+{#- F8 (frozen mock docs/mocks/f8-answer-pdf-v1.pdf): the answer as a short paper, made into a PDF
+by answer_pdf.py with static/paper.css. Model text is escaped text only (autoescape, no |safe);
+every word around it is fixed. No script. Left out by the owner: steps, abstracts, considered
+studies, contradictions, the completeness box. Ends with the references. -#}
+{%- import "_answer.html" as ans -%}
+{%- macro bar(r, scale) -%}
+<svg class="bar" width="300" height="18" viewBox="0 0 300 18" role="img" aria-label="{{ r.aria }}"><line x1="0" x2="300" y1="15" y2="15" stroke="#E4DED0" stroke-width="0.6"/><line stroke="#6E7884" stroke-width="0.8" stroke-dasharray="2 2" x1="{{ (r.null * 3)|pct }}" x2="{{ (r.null * 3)|pct }}" y1="0" y2="18"/><line stroke="#1F6BD0" stroke-width="2" x1="{{ (r.left * 3)|pct }}" x2="{{ ((r.left + r.width) * 3)|pct }}" y1="8" y2="8"/><rect fill="#13263C" x="{{ (r.est * 3 - 3.5)|pct }}" y="4.5" width="7" height="7"/></svg>
+{%- endmacro -%}
+{%- macro axis(scale) -%}
+<svg class="axis" width="300" height="11" viewBox="0 0 300 11" font-family="Hanken Grotesk" font-size="8" fill="#5B6773"><text x="1" y="9">{{ scale.lo_text }}</text><text text-anchor="middle" x="{{ (scale.null * 3)|pct }}" y="9">{{ scale.mid_text }}</text><text text-anchor="end" x="299" y="9">{{ scale.hi_text }}</text></svg>
+{%- endmacro -%}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>PubMed Ai evidence summary</title></head>
+<body>
+<p class="kick">PubMed Ai · Quick evidence summary</p>
+<h1>{% for para in question_paragraphs %}{{ para }}{% if not loop.last %}<br>{% endif %}{% endfor %}</h1>
+<p class="by">Written by PubMed Ai ({{ model }}) from PubMed and Europe PMC abstracts · <span class="date">{{ date }}</span></p>
+
+<div class="abs">
+<h2>{{ h["Summary"] }}</h2>
+<p><b>Methods.</b> PubMed and Europe PMC were searched; {{ n_selected }} {{ "study was" if n_selected == 1 else "studies were" }} selected and {{ "its abstract" if n_selected == 1 else "their abstracts" }} read. Certainty was graded High, Moderate, Low or Very low.</p>
+{%- if view.glance %}
+<p><b>Results.</b> {% if view.glance.verdict %}{{ ans.pieces(view.glance.verdict) }}{% endif %}{% for label, value in view.glance["keys"] %} {% if label %}{{ label }}: {% endif %}{{ ans.pieces(value) }}.{% endfor %}</p>
+{%- if view.glance.caveat %}
+<p><b>Main caveat.</b> {{ ans.pieces(view.glance.caveat) }}</p>
+{%- endif %}
+{%- endif %}
+<p><b>Conclusion.</b> {% for para in view.bottom.paragraphs %}{{ ans.pieces(para) }}{% if not loop.last %} {% endif %}{% endfor %} <span class="cert">{{ view.bottom.certainty }} certainty</span></p>
+</div>
+
+{%- if intro_paragraphs %}
+<h2>{{ h["Introduction"] }}</h2>
+{%- for para in intro_paragraphs %}
+<p>{{ para }}</p>
+{%- endfor %}
+{%- endif %}
+
+<h2>{{ h["Methods"] }}</h2>
+<p>PubMed and Europe PMC (free sources) were searched. Of {{ n_considered }} studies looked at, {{ n_selected }} {{ "study was" if n_selected == 1 else "studies were" }} selected, preferring meta-analyses, then randomised trials, then prospective and retrospective studies. Only abstracts were read. Each outcome’s certainty reflects the design, consistency and precision of its evidence. The answer was written by {{ model }} and every citation checked against the selected studies.</p>
+{%- if searches %}
+<p class="tcap"><b>Searches run</b></p>
+<ul class="small">
+{%- for source, query, hits in searches %}
+<li>{{ source }}: {{ query }} ({{ "{:,}".format(hits) }} found)</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+
+<h2>{{ h["Results"] }}</h2>
+{%- if studies %}
+<h3>Included studies</h3>
+<div class="fig">
+<p class="tcap"><b>Table 1.</b> Selected studies</p>
+<table><thead><tr><th>Ref</th><th>Study</th><th>Design</th><th>n</th><th>Setting</th><th>Comparison</th></tr></thead><tbody>
+{%- for s in studies %}
+<tr><td>{% if s.ref %}[{{ s.ref }}]{% else %}–{% endif %}</td><td>{{ s.label }}</td><td>{{ s.design }}</td><td class="n">{{ s.n }}</td><td>{{ s.setting }}</td><td>{{ s.comparison }}</td></tr>
+{%- endfor %}
+</tbody></table>
+<p class="tnote">Limitations: {% for s in studies if s.limits %}{{ s.limits }}{% if s.ref %} [{{ s.ref }}]{% endif %}{% if not loop.last %}; {% endif %}{% endfor %}.</p>
+</div>
+{%- endif %}
+
+<h3>Outcomes</h3>
+{%- for c in outcomes %}
+<p><b>{{ c.title }}</b> <span class="cert">{{ c.certainty }}</span>. {% for para in c.effect_paragraphs %}{{ ans.pieces(para) }}{% if not loop.last %} {% endif %}{% endfor %}{% if c.why_pieces %} <span class="why">Certainty: {{ ans.pieces(c.why_pieces) }}</span>{% endif %}</p>
+{%- endfor %}
+
+{%- if ratios or diffs %}
+<div class="fig">
+<p class="tcap"><b>Figure 1.</b> Every estimate with a 95% confidence interval</p>
+<table class="forest"><thead><tr><th>Outcome</th><th>Estimate (95% CI)</th><th class="barcol">Interval</th></tr></thead><tbody>
+{%- for r in ratios %}
+<tr><td>{{ r.label }}<br><span class="src">{{ ans.pieces(r.sub_pieces) }}</span></td><td class="n">{{ r.estimate_text }}</td><td class="barcol">{% if r.drawn %}{{ bar(r, ratio_axis) }}{% else %}<span class="src">Not drawn: {{ r.problem }}.</span>{% endif %}</td></tr>
+{%- endfor %}
+{%- if ratios and ratio_axis %}
+<tr class="axisrow"><td></td><td></td><td class="barcol">{{ axis(ratio_axis) }}</td></tr>
+{%- endif %}
+{%- for r in diffs %}
+<tr><td>{{ r.label }}<br><span class="src">{{ ans.pieces(r.sub_pieces) }}</span></td><td class="n">{{ r.estimate_text }}</td><td class="barcol">{% if r.drawn %}{{ bar(r, r.scale) }}{{ axis(r.scale) }}{% else %}<span class="src">Not drawn: {{ r.problem }}.</span>{% endif %}</td></tr>
+{%- endfor %}
+</tbody></table>
+<p class="tnote">Ratios on a log scale, marked at 1; differences centred on 0. A line crossing the mark is compatible with no difference.</p>
+</div>
+{%- endif %}
+
+{%- set rows = compare|map(attribute="rows")|sum(start=[]) %}
+{%- if rows %}
+<div class="fig">
+<p class="tcap"><b>Table 2.</b> Arm-by-arm results</p>
+<table><thead><tr><th>Outcome</th><th>Results by arm</th><th>Certainty</th><th>Source</th></tr></thead><tbody>
+{%- for g in compare %}
+<tr class="group"><td colspan="4">{{ g.label }}</td></tr>
+{%- for r in g.rows %}
+<tr><td>{{ r.label }}</td><td>{{ r.values_text }}</td><td>{{ r.certainty }}</td><td>{{ ans.pieces(r.study_pieces) }}{% if r.p_text %} · {{ r.p_text }}{% endif %}</td></tr>
+{%- endfor %}
+{%- endfor %}
+</tbody></table>
+<p class="tnote">Most arm results have no confidence interval in the abstract.</p>
+</div>
+{%- endif %}
+
+{%- if out100 %}
+<h3>Out of 100 patients</h3>
+{%- for it in out100 %}
+<p>{{ ans.pieces(it.sentence_pieces) }}</p>
+{%- endfor %}
+{%- endif %}
+
+<h2>{{ h["Discussion"] }}</h2>
+{%- for c in view.conflicts %}
+<p>{% if loop.first %}<b>Conflicting evidence.</b> {% endif %}{{ ans.pieces(c) }}</p>
+{%- endfor %}
+{%- if view.notable %}
+<p><b>Other findings.</b> {% for n in view.notable %}{{ ans.pieces(n) }}{% if not loop.last %} {% endif %}{% endfor %}</p>
+{%- endif %}
+{%- if view.applicability %}
+<p><b>Applicability.</b> {% for label, text in view.applicability %}{{ label }}: {{ ans.pieces(text) }}{% if not loop.last %} {% endif %}{% endfor %}</p>
+{%- endif %}
+{%- if view.would_change %}
+<p><b>What would change this answer.</b></p>
+<ul>
+{%- for c in view.would_change %}
+<li>{{ ans.pieces(c) }}</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+{%- if view.guidelines %}
+<p><b>Guidelines.</b> {% for body, statement, year, pmid, removed in view.guidelines %}{% if body %}{{ body }}{% if year is not none %} ({{ year }}){% endif %}: {% endif %}{% if statement %}{{ ans.pieces(statement) }}{% endif %}{% if not loop.last %} {% endif %}{% endfor %}</p>
+{%- endif %}
+{%- if not (view.conflicts or view.notable or view.applicability or view.would_change or view.guidelines) %}
+<p>The answer raised no conflicts, further findings or limits to applicability.</p>
+{%- endif %}
+
+<h2>{{ h["Conclusion and clinical practice"] }}</h2>
+{%- for para in view.bottom.paragraphs %}
+<p>{{ ans.pieces(para) }}</p>
+{%- endfor %}
+<p><span class="cert">{{ view.bottom.certainty }} certainty</span>{% if view.bottom.reason %} {{ ans.pieces(view.bottom.reason) }}{% endif %}</p>
+{%- if view.practice %}
+<ul>
+{%- for label, text in view.practice %}
+<li>{% if label %}<b>{{ label }}:</b> {% endif %}{{ ans.pieces(text) }}</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+
+<h2>{{ h["References"] }}</h2>
+{%- if view.references %}
+<ol class="refs">
+{%- for r in view.references %}
+<li id="ref-{{ r.n }}" value="{{ r.n }}">{{ r.text }} {% if r.pmid.isascii() and r.pmid.isdigit() %}<a href="https://pubmed.ncbi.nlm.nih.gov/{{ r.pmid }}/">PMID {{ r.pmid }}</a>{% else %}PMID {{ r.pmid }}{% endif %}{% if r.retracted %} <b>Retracted.</b>{% endif %}</li>
+{%- endfor %}
+</ol>
+{%- else %}
+<p>No references.</p>
+{%- endif %}
+<p class="end">Made by PubMed Ai from free PubMed and Europe PMC abstracts, written by an AI model. Check each reference before relying on it. Decision support only; the clinician decides.</p>
+</body></html>

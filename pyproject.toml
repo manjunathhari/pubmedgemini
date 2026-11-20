@@ -15,6 +15,7 @@ dependencies = [
     "httpx",
     "python-multipart",
     "cryptography",
+    "weasyprint",
 ]
 
 [project.optional-dependencies]

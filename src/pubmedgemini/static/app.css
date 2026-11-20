@@ -401,6 +401,10 @@ button:hover { background: var(--btn-hover); }
 /* F7: a quiet second button (Remove key) */
 button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--faint); }
 button.quiet:hover { background: var(--note); }
+/* F8: Download PDF on the answer page, a quiet pill like Remove key */
+a.pdf { display: inline-block; padding: 8px 18px; border: 1px solid var(--faint); border-radius: 20px;
+  color: var(--ink); text-decoration: none; font-weight: 500; font-size: 15px; }
+a.pdf:hover { background: var(--note); color: var(--ink); }
 input[type="password"] + button, input[type="password"] ~ button { margin-top: 10px; }
 /* the key walkthrough (frozen mock v2, 19 Nov 2026) */
 .wt-step { display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; }
