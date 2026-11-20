@@ -355,8 +355,9 @@ def test_favicons_are_the_sai_badge(pages):
 
 
 def test_no_script_tags_but_the_switch(pages):
-    """No JavaScript, except the day/night switch's two scripts, pinned in page_scripts."""
-    for name in ("home", "home_active", "results", "run", "run_done", "message"):
+    """No JavaScript, except the day/night switch's two scripts, pinned in page_scripts, and
+    the home page's question check (one script, owner, 20 Nov 2026; tested in test_ask_page)."""
+    for name in ("results", "run", "run_done", "message"):
         text = pages[name].text
         bare = without_theme_scripts(text).lower()
         assert "<script" not in bare, name
@@ -371,9 +372,9 @@ def test_no_script_tags_but_the_switch(pages):
         if f.name == "base.html":
             assert re.findall(r"<script\b[^>]*>", text) == ["<script>", "<script>"]
             assert text.count(HEAD_SCRIPT) == 1 and "src=" not in text
-        elif f.name == "key.html":
-            assert re.findall(r"<script\b[^>]*>", text) == ["<script>"]
-            assert "src=" not in text.split("<script>", 1)[1] and "fetch(" not in text
+        elif f.name in ("key.html", "home.html"):
+            assert re.findall(r"<script\b[^>]*>", text) == ["<script>"], f.name
+            assert "src=" not in text.split("<script>", 1)[1] and "fetch(" not in text, f.name
         else:
             assert "<script" not in text.lower(), f.name
 

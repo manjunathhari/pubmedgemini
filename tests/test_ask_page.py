@@ -172,12 +172,13 @@ def textarea(page):
 
 # ---------- the home page ----------
 
-def test_home_has_both_boxes_and_no_script(env):
+def test_home_has_both_boxes_and_only_the_question_check_script(env):
     r = env.c.get("/", headers=H)
     assert r.status_code == 200
     assert r.text.count('name="question"') == 1 and r.text.count('name="q"') == 1
     bare = without_theme_scripts(r.text)  # the day/night switch's two scripts, pinned
-    assert "<script" not in bare and "src=" not in bare
+    # since the question check (frozen mock v4, owner, 20 Nov 2026): one small page script
+    assert re.findall(r"<script\b[^>]*>", bare) == ["<script>"] and "src=" not in bare
     assert re.findall(r"<link[^>]*>", r.text) == HEAD_LINKS
     assert r.text.index("Ask a question") < r.text.index("Key-word search")
     assert "Your questions" not in r.text  # moved to the Library page
@@ -995,3 +996,37 @@ def test_guidelines_show_with_each_field_and_the_flag(env):
 
 def test_no_guidelines_section_when_the_list_is_empty(env):
     assert "<h2>Guidelines</h2>" not in answered(env, written=_written())
+
+
+
+# ---------- the question check (frozen mock v4, owner, 20 Nov 2026) ----------
+
+QC_TITLE = "Question check for better answers"
+
+
+def test_the_question_check_is_its_own_row_after_both_cards(env):
+    t = env.c.get("/", headers=H).text
+    assert '<div class="qc-row" id="qc" hidden>' in t  # shown by its script only
+    assert QC_TITLE in t
+    pair_end = t.index('<div class="qc-row"')
+    assert t.index("Ask a question") < pair_end and t.index("Key-word search") < pair_end
+    keys = re.findall(r'<button type="button" class="qc-item" data-k="([a-z])"', t)
+    assert keys == ["p", "i", "c", "o", "s", "n"]
+    for label in ("<b>P</b> Patients", "<b>I</b> Intervention", "<b>C</b> Comparison",
+                  "<b>O</b> Outcomes", "Specific enough", "No patient details"):
+        assert label in t
+    assert "Advice only: it never stops you asking." in t
+
+
+def test_the_question_check_never_blocks_asking(env):
+    """It is advice only: the form and the Ask button are untouched by it."""
+    t = env.c.get("/", headers=H).text
+    form = t[t.index('<form method="post" action="/ask">'):]
+    form = form[:form.index("</form>")]
+    assert "qc-item" not in form and "disabled" not in form
+
+
+def test_no_question_check_without_a_key(no_key):
+    t = no_key.c.get("/", headers=H).text
+    assert QC_TITLE not in t and 'id="qc"' not in t
+    assert "<script" not in without_theme_scripts(t)

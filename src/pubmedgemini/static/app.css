@@ -534,6 +534,47 @@ main summary:focus-visible { outline-color: var(--accent); }
 .card .steps .name { font-weight: 500; }
 .card .steps .st.now { font-weight: 500; }
 
+/* the question check: its own full-width row under the Ask and Key-word search cards (frozen
+   mock v4, owner, 20 Nov 2026); on a phone it sits straight after the Ask card */
+.qc-row { width: 100%; margin-top: 16px; }
+main.home > .qc-row { max-width: none; }
+.qc { margin: 0; padding: 10px 16px; border: 1px solid var(--faint); border-radius: 12px; background: var(--card); }
+.qc-head { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; font-family: "Hanken Grotesk", system-ui, sans-serif; }
+.qc-label { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.qc-count { font-size: 13px; font-weight: 500; }
+.qc-bar { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.qc-bar span { height: 4px; border-radius: 2px; background: var(--faint); }
+.qc-bar span.on { background: var(--btn); }
+.qc-items { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.qc-item {
+  width: auto; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; margin: 0;
+  min-height: 0; padding: 3px 10px; border-radius: 999px; border: 1px dashed var(--faint);
+  background: var(--card); color: var(--ink); font-family: "Hanken Grotesk", system-ui, sans-serif;
+  font-size: 13px; font-weight: 400; cursor: pointer;
+}
+.qc-item:hover { background: var(--card); }
+.qc-item b { font-weight: 500; }
+.qc-item .tick {
+  width: 14px; height: 14px; border-radius: 7px; border: 1.5px solid var(--muted);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1;
+}
+.qc-item.done { border-style: solid; border-color: var(--btn); }
+.qc-item.done .tick { background: var(--btn); border-color: var(--btn); color: var(--btn-ink); }
+.qc-item.warn { border: 2px solid var(--ink); font-weight: 500; }
+.qc-item.warn .tick { border-color: var(--ink); color: var(--ink); font-weight: 500; }
+.qc-line { margin: 6px 0 0; font-size: 13px; line-height: 1.35; color: var(--muted); }
+.qc-line .qc-hint { color: var(--ink); }
+@media (max-width: 640px) {
+  .qc-head { grid-template-columns: 1fr auto; row-gap: 6px; }
+  .qc-bar { grid-column: 1 / -1; grid-row: 2; }
+  main.home:has(> .qc-row) { display: flex; flex-direction: column; }
+  main.home:has(> .qc-row) > .sai-pair { display: contents; }
+  main.home:has(> .qc-row) > .sai-pair > section:first-child { order: 1; }
+  main.home:has(> .qc-row) > .qc-row { order: 2; margin-top: 0; }
+  main.home:has(> .qc-row) > .sai-pair > section:last-child { order: 3; }
+  main.home:has(> .qc-row) > .sai-pair > section { margin-bottom: 16px; }
+}
+
 /* ---- the completeness check (F4a): the .steps rules of docs/mocks/f4a-completeness-v3.html ---- */
 .steps{display:flex;flex-wrap:wrap;align-items:center;gap:3px;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:13px}
 .steps .name{font-weight:600;font-size:14px;margin-right:2px}

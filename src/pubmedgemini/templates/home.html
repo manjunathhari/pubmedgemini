@@ -15,4 +15,35 @@
 {% include "_search_form.html" %}
 </section>
 </div>
+{% if ask_enabled %}
+<div class="qc-row" id="qc" hidden>
+<div class="qc" aria-live="polite">
+<div class="qc-head"><span class="qc-label">Question check for better answers</span><div class="qc-bar" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div><span class="qc-count">0 of 6</span></div>
+<div class="qc-items">
+<button type="button" class="qc-item" data-k="p" data-add="In adults with "><span class="tick" aria-hidden="true"></span><b>P</b> Patients</button>
+<button type="button" class="qc-item" data-k="i" data-add="does [what you would do] "><span class="tick" aria-hidden="true"></span><b>I</b> Intervention</button>
+<button type="button" class="qc-item" data-k="c" data-add="compared with [the alternative] "><span class="tick" aria-hidden="true"></span><b>C</b> Comparison</button>
+<button type="button" class="qc-item" data-k="o" data-add="reduce [leak, recurrence, cost]"><span class="tick" aria-hidden="true"></span><b>O</b> Outcomes</button>
+<button type="button" class="qc-item" data-k="s"><span class="tick" aria-hidden="true"></span><span class="qc-words">Specific enough</span></button>
+<button type="button" class="qc-item" data-k="n"><span class="tick" aria-hidden="true"></span>No patient details</button>
+</div>
+<p class="qc-line"><span class="qc-hint">Sharper questions find better studies. Tap P, I, C or O to add a starter.</span> <span class="qc-foot">Advice only: it never stops you asking.</span></p>
+</div>
+</div>
+<script>(function(){var box=document.getElementById("qc"),q=document.getElementById("question");if(!box||!q)return;box.hidden=false;
+var R={p:/\b(patients?|adults?|children|child|infants?|neonates?|women|men|elderly|older|people|pregnan\w*|obese|with [a-z]+)\b/i,
+i:/\b(robotic|laparoscopic|open|endoscopic|surgery|surgical|repair|resection|therapy|treatment|drug|mesh|stent|drain|chemo\w*|radio\w*|\w+ectomy|\w+plasty|\w+otomy|\w+ostomy)\b/i,
+c:/\b(vs\.?|versus|compared (?:with|to)|than|instead of|over)\b/i,
+o:/\b(outcomes?|mortality|death|survival|recurrence|leaks?|leakage|complications?|pain|stay|cost|readmissions?|infection|morbidity|quality of life|function|return|conversion|blood loss|time)\b/i};
+var ID=/\b(Mr|Mrs|Ms|Dr)\.?\s+[A-Z][a-z]+|\b\d{6,}\b|\b(MRN|UHID|IP ?no|hospital (?:no|number))\b|\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\b|\+?\d[\d -]{8,}\d/i;
+var items=box.querySelectorAll(".qc-item"),bar=box.querySelectorAll(".qc-bar span"),cnt=box.querySelector(".qc-count"),words=box.querySelector(".qc-words"),hint=box.querySelector(".qc-hint");
+function check(){var t=q.value,n=(t.trim().match(/\S+/g)||[]).length,ok={},bad=ID.test(t),c=0;
+ok.p=R.p.test(t);ok.i=R.i.test(t);ok.c=R.c.test(t);ok.o=R.o.test(t);ok.s=n>=10;ok.n=t.trim()!==""&&!bad;
+items.forEach(function(el){var k=el.dataset.k,d=!!ok[k];el.classList.toggle("done",d);el.classList.toggle("warn",k==="n"&&bad);el.querySelector(".tick").textContent=d?"\u2713":(k==="n"&&bad?"!":"");if(d)c++;});
+bar.forEach(function(b,i){b.classList.toggle("on",i<c);});cnt.textContent=c+" of 6";
+words.textContent=n>=10?"Specific enough ("+n+" words)":(n?n+" words \u00b7 aim for 10":"Specific enough");
+hint.textContent=bad?"This looks like it has patient details. Take them out: ask about the evidence, not about a person.":c===6?"Looks clear. Press Ask.":"Sharper questions find better studies. Tap P, I, C or O to add a starter.";}
+items.forEach(function(el){el.addEventListener("click",function(){var a=el.dataset.add;if(!a||el.classList.contains("done"))return;var v=q.value;q.value=v+(v&&!/\s$/.test(v)?" ":"")+a;q.focus();check();});});
+q.addEventListener("input",check);check();})();</script>
+{% endif %}
 {% endblock %}
