@@ -3,7 +3,9 @@
 base.html, inline, word for word as pinned here, so nothing else can slip in. Tests that forbid
 scripts check the page with these two taken out (`without_theme_scripts`)."""
 
+import hashlib
 import re
+from pathlib import Path
 
 # in <head>: applies a saved choice before the first paint (the kit's key, wrapped in try/catch)
 HEAD_SCRIPT = ('<script>try{var t=localStorage.getItem("surgeryai-theme");'
@@ -21,9 +23,16 @@ SWITCH_BUTTON = ('<button type="button" class="sai-daynight" aria-label="Switch 
                  'night"><span data-for="day" aria-hidden="true"></span><span data-for="night" '
                  'aria-hidden="true"></span></button>')
 
+# The stylesheet's address carries the first 10 hex of its SHA-256, so each deploy that changes it
+# gives browsers a new address and no one keeps an old copy (owner, 20 Nov 2026: an old cached
+# app.css showed an underline under the header logo).
+CSS_VERSION = hashlib.sha256(
+    (Path(__file__).resolve().parents[1] / "src" / "pubmedgemini" / "static" / "app.css").read_bytes()
+).hexdigest()[:10]
+
 # the links in <head>: the stylesheet, then the SAi badge favicons (day, night) and the home-screen icon
 HEAD_LINKS = [
-    '<link rel="stylesheet" href="/static/app.css">',
+    f'<link rel="stylesheet" href="/static/app.css?v={CSS_VERSION}">',
     ('<link rel="icon" type="image/svg+xml" href="/static/icons/sai-badge-day.svg" '
      'media="(prefers-color-scheme: light)">'),
     ('<link rel="icon" type="image/svg+xml" href="/static/icons/sai-badge-night.svg" '
