@@ -174,7 +174,9 @@ def test_studies_folded(env, url):
 
 def test_main_is_wide_only_here(env, url):
     assert "<main class=\"wide\">" in page(env, url)
-    for other in ("/", "/library", "/activity", f"/runs/{insert_run(env)}",
+    # F9: the Library is wide too, for its two columns of cards (Incisive's grid)
+    assert '<main class="wide">' in page(env, "/library")
+    for other in ("/", "/activity", f"/runs/{insert_run(env)}",
                   f"/runs/{insert_run(env, status='running', error_kind=None)}"):
         t = page(env, other)
         main = '<main class="home">' if other == "/" else "<main>"  # the Ask page has its own layout

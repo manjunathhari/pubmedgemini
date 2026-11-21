@@ -683,6 +683,38 @@ def list_runs(pool: ConnectionPool, user_id: int, limit: int = 20) -> list[RunRo
     return [RunRow(i, q, t, s) for i, q, t, s in rows]
 
 
+def list_library(pool: ConnectionPool, user_id: int, limit: int = 100) -> list[tuple]:
+    """F9: the user's newest runs with what the Library cards need: id, question, status,
+    created, started and finished times, and the stored answer body (or None)."""
+    with pool.connection() as conn:
+        return conn.execute(
+            "SELECT r.id, r.question, r.status, r.created_at, r.started_at, r.finished_at, "
+            "a.body FROM runs r LEFT JOIN answers a ON a.run_id = r.id WHERE r.user_id = %s "
+            "ORDER BY r.created_at DESC, r.id LIMIT %s",
+            (user_id, limit),
+        ).fetchall()
+
+
+def delete_run(pool: ConnectionPool, user_id: int, run_id: UUID) -> bool:
+    """F9: delete one of the user's own runs (its steps, papers and answer go with it). A run
+    still waiting or running is kept. Usage counts are not changed (model_calls keep their
+    rows with no run). True when a run was deleted."""
+    with pool.connection() as conn:
+        cur = conn.execute(
+            "DELETE FROM runs WHERE id = %s AND user_id = %s "
+            "AND status NOT IN ('queued', 'running')", (run_id, user_id))
+        return cur.rowcount == 1
+
+
+def delete_all_runs(pool: ConnectionPool, user_id: int) -> int:
+    """F9: delete all the user's finished runs (any still working are kept); the count."""
+    with pool.connection() as conn:
+        cur = conn.execute(
+            "DELETE FROM runs WHERE user_id = %s AND status NOT IN ('queued', 'running')",
+            (user_id,))
+        return cur.rowcount
+
+
 def daily_question_counts(
     pool: ConnectionPool, user_id: int, now: datetime, days: int = 14
 ) -> list[tuple[date, int]]:

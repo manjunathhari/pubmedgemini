@@ -1,11 +1,81 @@
+{#- F9: the Library like Incisive's (frozen mock v3 + PDF, owner, 21 Nov 2026; Incisive
+library_page.rs). Cards grouped by question and IST day, a four-segment certainty spine, search
+and certainty filters in the page (one small script; without it every card shows), Copy, PDF and
+delete behind "Delete?". Model text is escaped text only. -#}
 {% extends "base.html" %}
+{% block main_class %} class="wide"{% endblock %}
 {% block content %}
-<h1>Library</h1>
-<section class="card">
-{% for r in runs %}
-<div class="item"><p><a href="/runs/{{ r.id }}">{{ r.short }}</a></p><p>{{ r.created_ist }} · {{ r.status_word }}</p></div>
-{% else %}
-<p>No questions yet.</p>
-{% endfor %}
+<div class="lib">
+<div class="lib-head">
+<div><h1>Library</h1>
+<p class="lib-intro">Every answer leads with its verdict. Only you can see these.</p></div>
+<p class="lib-new-row"><a class="lib-new" href="/">New question <span aria-hidden="true">&rarr;</span></a></p>
+</div>
+{% if deleted == "1" %}<p class="lib-done" role="status">Deleted.</p>
+{% elif deleted == "all" %}<p class="lib-done" role="status">Your history was deleted. Any question still working was kept.</p>{% endif %}
+{% if days %}
+<div class="lib-tools" id="lib-tools" hidden>
+<label for="lib-find" class="lib-sr">Search your answers</label>
+<input id="lib-find" type="search" placeholder="Search questions and verdicts" autocomplete="off">
+<div class="lib-filters" role="group" aria-label="Certainty">
+<button type="button" class="lib-filter" data-c="" aria-pressed="true">All</button>
+{%- for lv in (4, 3, 2, 1) %}
+<button type="button" class="lib-filter" data-c="{{ lv }}" aria-pressed="false">{{ lib.certainty_name(lv) }}</button>
+{%- endfor %}
+</div>
+</div>
+<p class="lib-empty" id="lib-none" hidden>Nothing matches. <a href="/">Ask it as a new question</a>.</p>
+{% for day in days %}
+<section class="lib-day">
+<div class="lib-dayhead"><h2>{{ day.heading }}</h2><span class="lib-daysum">{{ day.summary }}</span></div>
+<div class="lib-grid">
+{%- for g in day.groups %}{% set c = g.newest %}
+<article class="lib-card" data-q="{{ (c.question ~ ' ' ~ (c.verdict or ''))|lower }}" data-c="{{ c.certainty or '' }}">
+<span class="lib-spine{% if c.certainty is none %} none{% endif %}" aria-hidden="true">{% for on in lib.spine(c.certainty) %}<span{% if on %} class="on"{% endif %}></span>{% endfor %}</span>
+<div class="lib-body">
+<div class="lib-top"><span class="lib-mode">Quick</span><span>{{ lib.meta_line(c) }}</span>{% if c.certainty %}<span class="lib-cert"><span aria-hidden="true">{{ lib.pips(c.certainty) }}</span> {{ lib.certainty_name(c.certainty) }}<span class="lib-sr"> certainty</span></span>{% endif %}</div>
+<a class="lib-main" href="/runs/{{ c.id }}"><span class="lib-q">{{ c.question }}</span>{% if c.verdict %}<span class="lib-verdict">{{ c.verdict }}</span>{% else %}<span class="lib-verdict lib-status">{{ lib.no_answer_text(c.status) }}</span>{% endif %}</a>
+{%- if g.runs|length > 1 %}
+<details class="lib-thread">
+<summary><span class="lib-dots" aria-hidden="true">{% for _ in range([g.runs|length, 6]|min) %}<span></span>{% endfor %}</span><span class="lib-thread-n">Asked {{ g.runs|length }} times</span><span class="lib-thread-sub">newest shown</span><span class="lib-thread-toggle" aria-hidden="true"></span></summary>
+<ol>
+{%- for r in g.runs %}
+<li><span class="lib-thread-time">{{ lib.thread_time(r, c) }}</span><span class="lib-thread-note">{% if loop.first %}Latest · {% endif %}{{ status_words.get(r.status, r.status) }}</span><a href="/runs/{{ r.id }}">Open</a></li>
+{%- endfor %}
+</ol>
+</details>
+{%- endif %}
+<div class="lib-actions item">
+<a class="lib-read" href="/runs/{{ c.id }}">Read answer</a>
+<a href="/?q={{ c.question|urlencode }}">Edit &amp; re-run</a>
+{%- if c.has_answer %}
+<button type="button" class="lib-copy" data-id="{{ c.id }}" hidden>Copy</button>
+<a href="/runs/{{ c.id }}/pdf">PDF</a>
+{%- endif %}
+{%- if not c.active %}
+<details class="lib-del">
+<summary aria-label="Delete this answer"><span class="lib-bin" aria-hidden="true"></span></summary>
+<form method="post" action="/runs/{{ c.id }}/delete"><span class="lib-del-q" role="alert">Delete?</span><button type="button" class="lib-keep">Keep</button><button type="submit" class="lib-del-yes">Delete</button></form>
+</details>
+{%- endif %}
+</div>
+<textarea class="lib-copy-area" readonly tabindex="-1" aria-hidden="true" hidden></textarea>
+</div>
+</article>
+{%- endfor %}
+</div>
 </section>
+{% endfor %}
+{% else %}
+<p class="lib-empty">No questions yet. Ask one on the Ask page.</p>
+{% endif %}
+<p class="lib-foot">Times in IST. Decision support &mdash; the clinician decides.</p>
+{% if days %}
+<details class="lib-danger">
+<summary>Delete all my history</summary>
+<form method="post" action="/library/delete-all"><p>Delete all? This cannot be undone.</p><button type="submit" class="lib-del-yes">Yes, delete all</button><button type="button" class="lib-keep">Cancel</button></form>
+</details>
+{% endif %}
+</div>
+<script>(function(){var t=document.getElementById("lib-tools");if(!t)return;t.hidden=false;var q=document.getElementById("lib-find"),none=document.getElementById("lib-none"),f="",cards=[].slice.call(document.querySelectorAll(".lib-card")),pills=[].slice.call(document.querySelectorAll(".lib-filter"));function show(){var s=q.value.trim().toLowerCase().replace(/\s+/g," "),any=false;cards.forEach(function(c){var ok=(!f||c.getAttribute("data-c")===f)&&(!s||c.getAttribute("data-q").replace(/\s+/g," ").indexOf(s)>=0);c.hidden=!ok;if(ok)any=true;});[].forEach.call(document.querySelectorAll(".lib-day"),function(d){d.hidden=!d.querySelector(".lib-card:not([hidden])");});none.hidden=any;}q.addEventListener("input",show);pills.forEach(function(p){p.addEventListener("click",function(){f=p.getAttribute("data-c");pills.forEach(function(o){o.setAttribute("aria-pressed",o===p?"true":"false");});show();});});[].forEach.call(document.querySelectorAll(".lib-keep"),function(b){b.addEventListener("click",function(){var d=b.closest("details");if(d)d.open=false;});});[].forEach.call(document.querySelectorAll(".lib-copy"),function(b){b.hidden=false;b.addEventListener("click",function(){var a=b.closest(".lib-body").querySelector(".lib-copy-area");b.disabled=true;b.textContent="Copying…";fetch("/runs/"+b.getAttribute("data-id")+"/text",{credentials:"same-origin"}).then(function(r){if(!r.ok)throw 0;return r.text();}).then(function(x){function manual(){a.value=x;a.hidden=false;a.removeAttribute("aria-hidden");a.tabIndex=0;a.focus();a.select();b.textContent="Select the text below and copy it";}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(x).then(function(){b.textContent="Copied";},manual);}else{manual();}}).catch(function(){b.textContent="Couldn’t copy";}).then(function(){b.disabled=false;});});});})();</script>
 {% endblock %}
