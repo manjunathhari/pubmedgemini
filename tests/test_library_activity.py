@@ -60,9 +60,10 @@ def test_menu_on_signed_in_pages(env):
         assert current_of(r.text) == [current], name
         assert 'class="current"' in nav_of(r.text), name
         assert r.text.count("<nav") == 1, name
-        # no page script, except the home page's question check (owner, 20 Nov 2026)
+        # no page script, except the home page's question check (owner, 20 Nov 2026) and the
+        # Library's search, filters and Copy (F9, frozen mock v3, 21 Nov 2026)
         scripts = re.findall(r"<script\b[^>]*>", without_theme_scripts(r.text))
-        assert scripts == (["<script>"] if name == "home" else []), name
+        assert scripts == (["<script>"] if name in ("home", "library") else []), name
 
 
 def test_nav_is_inside_the_header(env):
@@ -99,30 +100,31 @@ def test_menu_on_message_page_for_signed_in_user(env):
 # ---------- Library ----------
 
 def test_library_lists_my_questions_newest_first(env):
+    """F9: cards, newest first; a run with no answer shows Incisive's status line."""
     first = insert_run(env, question="first question", status="done", error_kind=None)
     second = insert_run(env, question="second question", status="failed", error_kind="internal")
     r = env.c.get("/library", headers=H)
     assert r.status_code == 200 and "<h1>Library</h1>" in r.text
     assert r.text.index("second question") < r.text.index("first question")
     assert r.text.index(f'href="/runs/{second}"') < r.text.index(f'href="/runs/{first}"')
-    assert re.search(r"\d{1,2} [A-Z][a-z]{2} \d{4}, \d\d:\d\d · Failed", r.text)
-    assert "· Done" in r.text
+    assert "Didn\u2019t finish \u2014 no answer" in r.text
+    assert "Ended without an answer" in r.text
     assert "No questions yet." not in r.text
 
 
 def test_library_links_to_runs(env):
     rid = insert_run(env, question="w" * 130)
     page = env.c.get("/library", headers=H).text
-    assert f'<a href="/runs/{rid}">' + "w" * 120 + "\u2026</a>" in page
-    assert "w" * 121 not in page
+    # the whole question, clamped to three lines by the stylesheet (Incisive)
+    assert f'<a class="lib-main" href="/runs/{rid}"><span class="lib-q">' + "w" * 130 in page
     assert env.c.get(f"/runs/{rid}", headers=H).status_code == 200
 
 
-def test_library_shows_at_most_50(env):
-    for _ in range(52):
-        insert_run(env, question="q", status="done", error_kind=None)
+def test_library_shows_at_most_100(env):
+    for i in range(102):
+        insert_run(env, question=f"question {i}", status="done", error_kind=None)
     page = env.c.get("/library", headers=H).text
-    assert page.count('href="/runs/') == 50
+    assert page.count('<article class="lib-card"') == 100
 
 
 def test_library_does_not_show_another_users_questions(env):
@@ -271,5 +273,7 @@ def test_activity_does_not_show_another_users_counts_or_email(env):
 
 
 def test_no_script_tags_on_new_pages(env):
-    for path in ("/library", "/activity"):
-        assert "<script" not in without_theme_scripts(env.c.get(path, headers=H).text).lower(), path
+    assert "<script" not in without_theme_scripts(env.c.get("/activity", headers=H).text).lower()
+    # F9: the Library has one script (search, filters, Copy); it loads no file
+    lib = without_theme_scripts(env.c.get("/library", headers=H).text)
+    assert lib.count("<script>") == 1 and "src=" not in lib.split("<script>", 1)[1]

@@ -226,18 +226,20 @@ def test_library_lists_past_runs_newest_first(env):
                         error_kind="internal")
     page = env.c.get("/library", headers=H).text
     assert page.index(f'href="/runs/{second}"') < page.index(f'href="/runs/{first}"')
-    assert "w" * 120 + "\u2026" in page and "w" * 121 not in page
+    assert "w" * 130 in page
     assert "&lt;b&gt;second&lt;/b&gt; question" in page and "<b>second" not in page
-    assert re.search(r"\d{1,2} [A-Z][a-z]{2} \d{4}, \d\d:\d\d · Failed", page)
-    assert "· Done" in page
+    assert "Didn\u2019t finish \u2014 no answer" in page
 
 
-@pytest.mark.parametrize("status,word", [("queued", "Waiting"), ("running", "Running"),
-                                         ("done", "Done"), ("partial", "Partial"),
-                                         ("failed", "Failed"), ("stopped", "Stopped")])
-def test_status_words(env, status, word):
+@pytest.mark.parametrize("status,line", [
+    ("queued", "Waiting to start\u2026"), ("running", "Working on it\u2026"),
+    ("done", "Ended without an answer"), ("partial", "Ended without an answer"),
+    ("failed", "Didn\u2019t finish \u2014 no answer"), ("stopped", "Stopped \u2014 no answer")])
+def test_status_words(env, status, line):
+    """F9: a card with no answer shows Incisive's status line in place of the verdict."""
     insert_run(env, status=status, error_kind=None)
-    assert f"· {word}</p>" in env.c.get("/library", headers=H).text
+    assert f'<span class="lib-verdict lib-status">{line}</span>' in env.c.get(
+        "/library", headers=H).text
 
 
 def test_other_users_runs_are_not_listed(env):

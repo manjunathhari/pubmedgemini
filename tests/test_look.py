@@ -375,6 +375,13 @@ def test_no_script_tags_but_the_switch(pages):
         elif f.name in ("key.html", "home.html"):
             assert re.findall(r"<script\b[^>]*>", text) == ["<script>"], f.name
             assert "src=" not in text.split("<script>", 1)[1] and "fetch(" not in text, f.name
+        elif f.name == "library.html":
+            # F9 (frozen mock v3, 21 Nov 2026): search, filters and Copy; its one fetch is the
+            # run's own answer text on this site
+            assert re.findall(r"<script\b[^>]*>", text) == ["<script>"], f.name
+            body = text.split("<script>", 1)[1]
+            assert "src=" not in body and body.count("fetch(") == 1, f.name
+            assert 'fetch("/runs/"+' in body and '"/text"' in body, f.name
         else:
             assert "<script" not in text.lower(), f.name
 

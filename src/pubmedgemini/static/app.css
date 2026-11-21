@@ -588,6 +588,81 @@ main.home > .qc-row { max-width: none; }
 .home-bar a { color: var(--muted); text-decoration: none; }
 .home-bar a:hover { color: var(--ink); }
 @media (min-width: 900px) { .home-bar { max-width: 1440px; padding: 10px 64px 0; } }
+/* ---- the Library (F9, frozen mock v3 + PDF, owner, 21 Nov 2026): Incisive's Library
+   (library_page.rs, the .iv- rules in ivory.rs) in the SurgeryAi colours ---- */
+.lib { display: flex; flex-direction: column; gap: 16px; }
+.lib-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.lib-intro { color: var(--muted); margin-top: 6px; font-family: "Hanken Grotesk", system-ui, sans-serif; font-size: 15px; }
+a.lib-new { display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; line-height: 20px; border-radius: 14px; background: var(--btn); color: var(--btn-ink); font-family: "Hanken Grotesk", system-ui, sans-serif; font-size: 14px; font-weight: 500; text-decoration: none; }
+a.lib-new:hover { background: var(--btn-hover); color: var(--btn-ink); }
+.lib-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.lib-done { font-family: "Hanken Grotesk", system-ui, sans-serif; font-size: 14px; color: var(--strong); background: var(--note); border-radius: 12px; padding: 10px 14px; }
+.lib-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.lib-tools[hidden], .lib-day[hidden], .lib-card[hidden], .lib-empty[hidden] { display: none; }
+.lib-tools input { flex: 1 1 260px; min-width: 0; min-height: 44px; padding: 0 14px; border: 1px solid var(--line2); border-radius: 14px; background: var(--card); color: var(--ink); font-size: 15px; }
+.lib-filters { display: flex; gap: 6px; overflow-x: auto; max-width: 100%; }
+.lib-filters button.lib-filter { flex: none; width: auto; min-height: 40px; padding: 0 14px; border: 1px solid var(--line2); border-radius: 999px; background: var(--card); color: var(--strong); font-size: 13px; }
+.lib-filters button.lib-filter[aria-pressed="true"] { background: var(--btn); border-color: var(--btn); color: var(--btn-ink); }
+.lib-empty, .lib-foot { font-family: "Hanken Grotesk", system-ui, sans-serif; font-size: 14px; color: var(--muted); }
+.lib-dayhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 4px 2px 8px; }
+.lib-dayhead h2 { font-size: 12px; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+.lib-daysum { font-family: "Hanken Grotesk", system-ui, sans-serif; font-size: 13px; color: var(--faint); }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 12px; }
+.lib-card { display: flex; flex-direction: row; gap: 0; overflow: hidden; background: var(--card); border: 1px solid var(--line2); border-radius: 18px; }
+.lib-spine { width: 6px; flex: none; display: flex; flex-direction: column; gap: 2px; }
+.lib-spine span { flex: 1; background: var(--line2); }
+.lib-spine span.on { background: var(--btn); }
+.lib-body { flex: 1; min-width: 0; padding: 14px 16px 0; display: flex; flex-direction: column; gap: 8px; font-family: "Hanken Grotesk", system-ui, sans-serif; }
+.lib-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.lib-mode { font-weight: 500; color: var(--accent); background: var(--note); padding: 2px 9px; border-radius: 999px; }
+.lib-cert { margin-left: auto; color: var(--strong); }
+main a.lib-main { display: flex; flex-direction: column; gap: 4px; color: var(--ink); text-decoration: none; }
+.lib-q { font-size: 13px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.lib-verdict { font-size: 17px; line-height: 1.4; font-weight: 500; color: var(--ink); overflow-wrap: anywhere; }
+.lib-verdict.lib-status { font-size: 15px; font-weight: 400; color: var(--muted); }
+details.lib-thread { border: 1px solid var(--line); border-radius: 14px; background: var(--page); }
+details.lib-thread > summary { list-style: none; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; font-size: 13px; color: var(--ink); cursor: pointer; }
+details.lib-thread > summary::-webkit-details-marker, details.lib-del > summary::-webkit-details-marker, details.lib-danger > summary::-webkit-details-marker { display: none; }
+.lib-dots { display: inline-flex; gap: 3px; }
+.lib-dots span { width: 8px; height: 8px; border-radius: 999px; background: var(--line2); }
+.lib-dots span:first-child { background: var(--btn); }
+.lib-thread-n { font-weight: 500; }
+.lib-thread-sub { color: var(--muted); }
+.lib-thread-toggle { margin-left: auto; color: var(--accent); font-weight: 500; }
+.lib-thread-toggle::after { content: "Show runs"; }
+details.lib-thread[open] .lib-thread-toggle::after { content: "Hide"; }
+.lib-thread ol { list-style: none; margin: 0; padding: 4px 12px 8px; border-top: 1px solid var(--line); }
+.lib-thread li { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px dashed var(--line2); font-size: 13px; }
+.lib-thread li:last-child { border-bottom: 0; }
+.lib-thread-time { min-width: 52px; font-weight: 500; }
+.lib-thread-note { flex: 1; color: var(--strong); }
+.lib-thread li a { font-weight: 500; text-decoration: none; }
+.lib-actions.item { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: auto; padding-top: 0; border-top: 1px solid var(--line); }
+.lib-actions.item a { font-size: 13px; font-weight: 500; text-decoration: none; }
+.lib-actions button.lib-copy { display: inline-block; width: auto; min-height: 44px; padding: 10px 0; line-height: normal; vertical-align: top; border: 0; border-radius: 0; background: none; color: var(--accent); font-size: 13px; }
+.lib-actions button.lib-copy[hidden] { display: none; }
+details.lib-del { margin-left: auto; }
+details.lib-del > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; min-height: 44px; color: var(--faint); cursor: pointer; }
+details.lib-del > summary:hover { color: var(--ink); }
+.lib-bin { width: 17px; height: 17px; background: currentColor; -webkit-mask: url(icons/trash.svg) center / contain no-repeat; mask: url(icons/trash.svg) center / contain no-repeat; }
+details.lib-del[open] > summary { display: none; }
+details.lib-del form { display: inline-flex; align-items: center; gap: 6px; }
+.lib-del-q { font-size: 13px; font-weight: 500; color: var(--ink); }
+.lib button.lib-keep, .lib button.lib-del-yes { width: auto; min-height: 40px; padding: 0 14px; border-radius: 999px; font-size: 13px; }
+.lib button.lib-keep { border: 1px solid var(--line2); background: var(--card); color: var(--ink); }
+.lib button.lib-del-yes { border: 0; background: var(--btn); color: var(--btn-ink); }
+.lib-copy-area { width: 100%; height: 10rem; font-size: 13px; margin-bottom: 12px; }
+.lib-copy-area[hidden] { display: none; }
+details.lib-danger > summary { list-style: none; display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px; border: 1px solid var(--line2); border-radius: 999px; background: var(--card); color: var(--strong); font-family: "Hanken Grotesk", system-ui, sans-serif; font-size: 13px; cursor: pointer; }
+details.lib-danger[open] > summary { display: none; }
+details.lib-danger form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--line2); border-radius: 14px; padding: 12px 14px; }
+details.lib-danger form p { font-family: "Hanken Grotesk", system-ui, sans-serif; font-size: 14px; flex-basis: 100%; }
+@media (max-width: 600px) {
+  .lib-body { padding: 12px 14px 0; gap: 6px; }
+  .lib-verdict { font-size: 16px; }
+  .lib-verdict.lib-status { font-size: 14px; }
+}
+
 /* ---- the completeness check (F4a): the .steps rules of docs/mocks/f4a-completeness-v3.html ---- */
 .steps{display:flex;flex-wrap:wrap;align-items:center;gap:3px;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:13px}
 .steps .name{font-weight:600;font-size:14px;margin-right:2px}

@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import SecretStr
 
 from pubmedgemini import intro
+from pubmedgemini import library as lib
 from pubmedgemini.answer_page import answer_view, fmt_pct, pill_class
 from pubmedgemini.answer_pdf import paper_html, pdf_name, render_pdf
 from pubmedgemini.db import is_healthy
@@ -49,10 +50,12 @@ from pubmedgemini.runs import (
     SelectedView,
     create_run,
     daily_question_counts,
+    delete_all_runs,
+    delete_run,
     end_message,
     finish_run,
     get_run,
-    list_runs,
+    list_library,
     stored_question,
 )
 from pubmedgemini.search import BothUnreachable, PageResult, QueryRejected, run_page_search
@@ -164,8 +167,7 @@ def still_being_written(context: bool) -> str:
 
 STATUS_WORDS = {"queued": "Waiting", "running": "Running", "done": "Done", "partial": "Partial",
                 "failed": "Failed", "stopped": "Stopped"}
-LISTED_QUESTION_CHARS = 120
-LIBRARY_LIMIT = 50
+LIBRARY_LIMIT = 100
 ACTIVITY_DAYS = 14
 # A run id in a URL: the canonical lower-case form only, so one run has one address.
 RUN_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -267,14 +269,6 @@ def require_ready(request: Request) -> None:
     request.app.state.ensure_ready()
 
 
-@dataclass(frozen=True)
-class ListedRun:
-    id: uuid.UUID
-    short: str
-    created_ist: str
-    status_word: str
-
-
 def user_key(request: Request, user: User) -> SecretStr | None:
     """F7: the signed-in doctor's own Gemini key from their cookie, or None. A cookie sealed
     for another account, under another secret, or changed in any way is no key."""
@@ -299,25 +293,54 @@ def _home(request: Request, user: User, status_code: int = 200, *, question: str
     return templates.TemplateResponse(request, "home.html", context, status_code=status_code)
 
 
-def _shorten(question: str) -> str:
-    if len(question) <= LISTED_QUESTION_CHARS:
-        return question
-    return question[:LISTED_QUESTION_CHARS] + "\u2026"
-
-
 @router.get("/", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
 def home(request: Request, user: Annotated[User, Depends(current_user)]):
-    return _home(request, user)
+    # F9: the Library's Edit & re-run opens Ask with the question in the box; nothing starts
+    q = request.query_params.get("q", "")
+    return _home(request, user, question=q[:MAX_QUESTION_CHARS] if q.strip() else "")
 
 
 @router.get("/library", response_class=HTMLResponse, dependencies=[Depends(require_ready)])
 def library(request: Request, user: Annotated[User, Depends(current_user)]):
-    """The signed-in user's own questions, newest first (up to LIBRARY_LIMIT)."""
-    runs = [
-        ListedRun(r.id, _shorten(r.question), r.created_ist, STATUS_WORDS.get(r.status, r.status))
-        for r in list_runs(request.app.state.pool, user.id, LIBRARY_LIMIT)
-    ]
-    return templates.TemplateResponse(request, "library.html", {"nav": "library", "runs": runs})
+    """F9: the Library like Incisive's (frozen mock v3 + PDF): the user's newest runs as cards,
+    grouped by question and by IST day."""
+    rows = list_library(request.app.state.pool, user.id, LIBRARY_LIMIT)
+    groups = lib.group_runs([lib.card_from_row(r) for r in rows])
+    days = lib.days_of(groups, datetime.now(UTC))
+    return templates.TemplateResponse(request, "library.html", {
+        "nav": "library", "days": days, "lib": lib, "status_words": STATUS_WORDS,
+        "deleted": request.query_params.get("deleted")})
+
+
+@router.post("/runs/{run_id}/delete",
+             dependencies=[Depends(refuse_cross_site_ask), Depends(require_ready)])
+def run_delete(request: Request, run_id: str, user: Annotated[User, Depends(current_user)]):
+    """F9: delete one of the user's own finished runs, then back to the Library."""
+    if not RUN_ID.fullmatch(run_id) or not delete_run(request.app.state.pool, user.id,
+                                                     uuid.UUID(run_id)):
+        return _message(request, RUN_NOT_FOUND, 404, user)
+    return RedirectResponse("/library?deleted=1", status_code=303)
+
+
+@router.post("/library/delete-all",
+             dependencies=[Depends(refuse_cross_site_ask), Depends(require_ready)])
+def library_delete_all(request: Request, user: Annotated[User, Depends(current_user)]):
+    """F9: delete all the user's finished runs (any still working are kept)."""
+    delete_all_runs(request.app.state.pool, user.id)
+    return RedirectResponse("/library?deleted=all", status_code=303)
+
+
+@router.get("/runs/{run_id}/text", dependencies=[Depends(require_ready)])
+def run_text(request: Request, run_id: str, user: Annotated[User, Depends(current_user)]):
+    """F9: the answer as plain text, for the Library's Copy."""
+    v = _own_run(request, user, run_id)
+    text = None
+    if v is not None and v.answer is not None and v.status not in lib.ACTIVE:
+        text = lib.copy_text(v.question, v.answer)
+    if text is None:
+        return _message(request, RUN_NOT_FOUND, 404, user)
+    return Response(text, media_type="text/plain; charset=utf-8",
+                    headers={"cache-control": "no-store"})
 
 
 def _day_label(d: date) -> str:
