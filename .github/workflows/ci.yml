@@ -39,6 +39,9 @@ jobs:
         with:
           go-version: "1.24"
           cache: false
+      # F8: the answer PDF (WeasyPrint) needs Pango, as the Dockerfile installs it.
+      - name: Pango for the answer PDF
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
       - name: Install (runtime from the hashed lock, then the dev tools)
         run: |
           pip install --require-hashes -r requirements.lock

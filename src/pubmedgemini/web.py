@@ -12,12 +12,13 @@ from urllib.parse import urlsplit
 
 import psycopg
 from fastapi import APIRouter, Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import SecretStr
 
 from pubmedgemini import intro
 from pubmedgemini.answer_page import answer_view, fmt_pct, pill_class
+from pubmedgemini.answer_pdf import paper_html, pdf_name, render_pdf
 from pubmedgemini.db import is_healthy
 from pubmedgemini.gemini.quota import reset_time_ist, runs_left
 from pubmedgemini.identity import (
@@ -686,6 +687,26 @@ def run_page(request: Request, run_id: str, user: Annotated[User, Depends(curren
                   if active else None),
     }
     return templates.TemplateResponse(request, "run.html", context)
+
+
+@router.get("/runs/{run_id}/pdf", dependencies=[Depends(require_ready)])
+def run_pdf(request: Request, run_id: str, user: Annotated[User, Depends(current_user)]):
+    """F8: the finished answer as a PDF laid out as a short paper (frozen mock v1). Made on each
+    tap from the stored answer and not kept; the same 404 as the run page for a run that is not
+    this user's, and for one still working or with no readable answer."""
+    v = _own_run(request, user, run_id)
+    html = None
+    if v is not None:
+        try:
+            html = paper_html(v)
+        except AnswerInvalid as exc:
+            log.warning("run pdf answer kind=%s", exc.kind)
+    if html is None:
+        return _message(request, RUN_NOT_FOUND, 404, user)
+    when = v.finished_at or v.created_at
+    name = pdf_name(v.question, when.date().isoformat())
+    return Response(render_pdf(html), media_type="application/pdf", headers={
+        "content-disposition": f'attachment; filename="{name}"', "cache-control": "no-store"})
 
 
 @router.post(

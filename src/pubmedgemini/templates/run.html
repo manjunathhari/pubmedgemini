@@ -97,6 +97,9 @@ escaped text only (autoescape, no |safe); every word around it is fixed. -#}
 <p class="sai-label">PubMed Ai answer</p>
 <h1>{% for para in question_paragraphs %}{{ para }}{% if not loop.last %}<br>{% endif %}{% endfor %}</h1>
 <p class="sub">{{ status_word }} · Quick · Decision support. The clinician decides.</p>
+{% if view.answer %}
+<p class="row"><a class="pdf" href="/runs/{{ run.id }}/pdf">Download PDF</a></p>
+{% endif %}
 {{ scene_card("report") }}
 {% if intro_paragraphs -%}
 {{ intro_fold(True) }}
