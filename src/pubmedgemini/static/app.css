@@ -401,10 +401,14 @@ button:hover { background: var(--btn-hover); }
 /* F7: a quiet second button (Remove key) */
 button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--faint); }
 button.quiet:hover { background: var(--note); }
-/* F8: Download PDF on the answer page, a quiet pill like Remove key */
-a.pdf { display: inline-block; padding: 8px 18px; border: 1px solid var(--faint); border-radius: 20px;
-  color: var(--ink); text-decoration: none; font-weight: 500; font-size: 15px; }
-a.pdf:hover { background: var(--note); color: var(--ink); }
+/* F8b: Download PDF on the answer page, accent outline pill with a file icon (choice B, 21 Nov 2026).
+   The icon is icons/file-download.svg (Tabler, MIT) used as a mask, so it takes the text colour. */
+a.pdf { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; line-height: 20px;
+  border: 1.5px solid var(--accent); border-radius: 22px; background: var(--card); color: var(--accent);
+  font-family: "Hanken Grotesk", system-ui, sans-serif; font-size: 14px; font-weight: 500; text-decoration: none; }
+a.pdf:hover, a.pdf:focus-visible { background: var(--note); color: var(--accent); }
+a.pdf::before { content: ""; flex: none; width: 18px; height: 18px; background: currentColor;
+  -webkit-mask: url(icons/file-download.svg) center / contain no-repeat; mask: url(icons/file-download.svg) center / contain no-repeat; }
 input[type="password"] + button, input[type="password"] ~ button { margin-top: 10px; }
 /* the key walkthrough (frozen mock v2, 19 Nov 2026) */
 .wt-step { display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; }
