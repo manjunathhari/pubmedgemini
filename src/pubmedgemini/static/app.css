@@ -639,7 +639,10 @@ details.lib-thread[open] .lib-thread-toggle::after { content: "Hide"; }
 .lib-thread li a { font-weight: 500; text-decoration: none; }
 .lib-actions.item { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: auto; padding-top: 0; border-top: 1px solid var(--line); }
 .lib-actions.item a { font-size: 13px; font-weight: 500; text-decoration: none; }
-.lib-actions button.lib-copy { display: inline-block; width: auto; min-height: 44px; padding: 10px 0; line-height: normal; vertical-align: top; border: 0; border-radius: 0; background: none; color: var(--accent); font-size: 13px; }
+/* F9b: every item in the row is a 44px box with its label centred, so the links, Copy and the
+   bin line up on one line (owner, 21 Nov 2026) */
+.lib-actions.item a, .lib-actions button.lib-copy, details.lib-del > summary { display: inline-flex; align-items: center; min-height: 44px; padding: 0; line-height: 20px; vertical-align: middle; }
+.lib-actions button.lib-copy { width: auto; border: 0; border-radius: 0; background: none; color: var(--accent); font-size: 13px; }
 .lib-actions button.lib-copy[hidden] { display: none; }
 details.lib-del { margin-left: auto; }
 details.lib-del > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; min-height: 44px; color: var(--faint); cursor: pointer; }
